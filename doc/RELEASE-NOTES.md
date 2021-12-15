@@ -1,25 +1,31 @@
 UnrealIRCd 5.2.3-git Release Notes
 ===============================
 
-This release contains only a few changes.
+This release contains a couple of small changes.
 
 Important:
 * UnrealIRCd 6.x will be the new "stable" (release Dec 2021)
 * UnrealIRCd 5.2.x ("oldstable")
   [end of support dates](https://www.unrealircd.org/docs/UnrealIRCd_5_EOL):
-  * Bug fixes until June 1, 2022 (no more feature enhancements)
-  * Security fixes until June 1, 2023
+  * Bug fixes until July 1, 2022 (no more feature enhancements)
+  * Security fixes until July 1, 2023
+
+Enhancements:
+* Spanish example conf was added (`conf/help/example.es.conf`)
 
 Fixes:
-* set::anti-flood::connect-flood was only expiring entries every
+* [set::anti-flood::connect-flood](https://www.unrealircd.org/docs/Anti-flood_settings#connect-flood)
+  was only expiring entries every
   2 minutes instead of the configured amount (until the first REHASH,
   after that it was all good).
 * Memory leak in websocket module
-* Send WALLOPS back to the sender too
+* Send `WALLOPS` back to the sender too
 
 Changes:
-* Documentation updates (HELPOP)
+* Update `HELPOP` docs
 * Add information on EOL date
+* Add `CONTRIBUTING.md` file with a reference to docs on
+  [how people can help out](https://www.unrealircd.org/docs/Contributing).
 
 UnrealIRCd 5.2.2
 -----------------
