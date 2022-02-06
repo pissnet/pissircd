@@ -34,7 +34,6 @@ long CAP_OPER_TAG = 0L;
 
 int opertag_mtag_is_ok(Client *client, const char *name, const char *value);
 void mtag_add_opertag(Client *client, MessageTag *recv_mtags, MessageTag **mtag_list, const char *signature);
-int opertag_mtag_should_send_to_client(Client *target);
 
 MOD_INIT()
 {
@@ -49,7 +48,6 @@ MOD_INIT()
 	memset(&mtag, 0, sizeof(mtag));
 	mtag.name = "solanum.chat/oper";
 	mtag.is_ok = opertag_mtag_is_ok;
-	mtag.should_send_to_client = opertag_mtag_should_send_to_client;
 	mtag.clicap_handler = c;
 	MessageTagHandlerAdd(modinfo->handle, &mtag);
 
@@ -86,10 +84,4 @@ void mtag_add_opertag(Client *client, MessageTag *recv_mtags, MessageTag **mtag_
 		m->value = NULL;
 		AddListItem(m, *mtag_list);
 	}
-}
-
-/** Outgoing filter for this message tag */
-int opertag_mtag_should_send_to_client(Client *target)
-{
-	return 1;
 }
