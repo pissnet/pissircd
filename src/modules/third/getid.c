@@ -52,14 +52,14 @@ MOD_UNLOAD()
 
 /*
 ** cmd_getid
-**	parv[1] = client
+**	parv[1] = optional client, defaults to sender
 **	parv[2] = optional nonce
 */
 CMD_FUNC(cmd_getid)
 {
-	const char *target_name;
+        char *target_name;
 	Client *target;
-	const char *nonce;
+	char *nonce;
 
 	if (!IsOper(client))
 	{
@@ -67,18 +67,19 @@ CMD_FUNC(cmd_getid)
 		return;
 	}
 
+	/* Default to sender if target not specified */
 	if ((parc < 1) || BadPtr(parv[1]))
 	{
-		sendnumeric(client, ERR_NEEDMOREPARAMS, MSG_GETID);
-		return;
-	}
-
-	target_name = parv[1];
-
-	if (!(target = find_client(target_name, NULL)))
+		target = client;
+	} else
 	{
-		sendnumeric(client, ERR_NOSUCHNICK, target_name);
-		return;
+		target_name = parv[1];
+
+		if (!(target = find_client(target_name, NULL)))
+		{
+			sendnumeric(client, ERR_NOSUCHNICK, target_name);
+			return;
+		}
 	}
 
 	if ((parc < 2) || BadPtr(parv[2]))
