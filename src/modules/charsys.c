@@ -73,6 +73,7 @@ char langsinuse[4096];
 #define LANGAV_CYRILLIC_UTF8		0x008000 /* UTF8: cyrillic script */
 #define LANGAV_GREEK_UTF8		0x010000 /* UTF8: greek script */
 #define LANGAV_HEBREW_UTF8		0x020000 /* UTF8: hebrew script */
+#define LANGAV_ARABIC_UTF8		0x040000 /* UTF8: arabic script */
 typedef struct LangList LangList;
 struct LangList
 {
@@ -84,6 +85,7 @@ struct LangList
 /* MUST be alphabetized (first column) */
 static LangList langlist[] = {
 /*	{ "arabic",       "ara", LANGAV_ASCII|LANGAV_ISO8859_6 }, -- TODO: check if this has issues first! */
+	{ "arabic-utf8", "ara-utf8", LANGAV_ASCII|LANGAV_UTF8|LANGAV_ARABIC_UTF8 },
 	{ "belarussian-utf8", "blr-utf8", LANGAV_ASCII|LANGAV_UTF8|LANGAV_CYRILLIC_UTF8 },
 	{ "belarussian-w1251", "blr", LANGAV_ASCII|LANGAV_W1251 },
 	{ "catalan",      "cat", LANGAV_ASCII|LANGAV_LATIN1 },
@@ -313,6 +315,8 @@ int charsys_config_posttest(int *errs)
 	    x++;
 	if (x > 1)
 	{
+#if 0
+// I don't think this should be hard error, right? Some combinations may be problematic, but not all.
 		if (langav & LANGAV_LATIN_UTF8)
 		{
 			config_error("ERROR: set::allowed-nickchars: you cannot combine 'latin-utf8' with any other character set");
@@ -333,8 +337,13 @@ int charsys_config_posttest(int *errs)
 			config_error("ERROR: set::allowed-nickchars: you cannot combine 'hebrew-utf8' with any other character set");
 			errors++;
 		}
-		config_status("WARNING: set::allowed-nickchars: "
-		            "Mixing of charsets (eg: latin1+latin2) can cause display problems");
+		if (langav & LANGAV_ARABIC_UTF8)
+		{
+			config_error("ERROR: set::allowed-nickchars: you cannot combine 'arabic-utf8' with any other character set");
+			errors++;
+		}
+#endif
+		config_status("WARNING: set::allowed-nickchars: Mixing of charsets (eg: latin1+latin2) may cause display problems");
 	}
 
 	*errs = errors;
@@ -1181,6 +1190,19 @@ void charsys_add_language(char *name)
 		charsys_addmultibyterange(0xc5, 0xc5, 0xaa, 0xab);
 		charsys_addmultibyterange(0xc5, 0xc5, 0xbd, 0xbe);
 	}
+
+	/* [ARABIC] */
+	if (latin_utf8 || !strcmp(name, "arabic-utf8"))
+	{
+		/* Supplied by Sensiva */
+		/*charsys_addallowed("اأإآءبتثجحخدذرزسشصضطظعغفقكلمنهؤةويىئ");*/
+		/*- From U+0621 to U+063A (Regex: [\u0621-\u063A])*/
+		/* 0xd8a1 - 0xd8ba */
+		charsys_addmultibyterange(0xd8, 0xd8, 0xa1, 0xba);
+		/*- From U+0641 to U+064A (Regex: [\u0641-\u064A])*/
+		/* 0xd981 - 0xd98a */
+		charsys_addmultibyterange(0xd9, 0xd9, 0x81, 0x8a);
+	}
 }
 
 /** This displays all the nick characters that are permitted */
@@ -1250,6 +1272,8 @@ char *charsys_group(int v)
 		return "Greek script";
 	if (v & LANGAV_HEBREW_UTF8)
 		return "Hebrew script";
+	if (v & LANGAV_ARABIC_UTF8)
+		return "Arabic script";
 
 	return "Other";
 }

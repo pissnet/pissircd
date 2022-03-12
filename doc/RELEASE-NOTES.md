@@ -1,15 +1,94 @@
-UnrealIRCd 5.2.2-git Release Notes
-===================================
-This is git, latest bleeding edge. It is not meant to be used on production servers.
-
-UnrealIRCd 5.2.1 Release Notes
+UnrealIRCd 5.2.4 Release Notes
 ===============================
+
+This release fixes a crash bug that can be triggered by ordinary users.
+
+Fixes:
+* Fix crash that can be triggered by regular users if you have any `deny dcc`
+  blocks in the config or any spamfilters with the `d` (DCC) target.
+  NOTE: You don't *have* to upgrade to 5.2.4 to fix this, you can also
+  hot-patch this issue without restart, see the news announcement.
+
+Also important:
+* [UnrealIRCd 6](https://www.unrealircd.org/docs/What's_new_in_UnrealIRCd_6) is the new "stable"
+* UnrealIRCd 5.2.x ("oldstable")
+  [end of support dates](https://www.unrealircd.org/docs/UnrealIRCd_5_EOL):
+  * Bug fixes until July 1, 2022 (no more feature enhancements)
+  * Security fixes until July 1, 2023
+
+UnrealIRCd 5.2.3
+-----------------
+
+This release contains a couple of small changes.
+
+Enhancements:
+* Spanish example conf was added (`conf/help/example.es.conf`)
+
+Fixes:
+* [set::anti-flood::connect-flood](https://www.unrealircd.org/docs/Anti-flood_settings#connect-flood)
+  was only expiring entries every 2 minutes. Only after a `REHASH`
+  the configuration file setting was used.
+* Memory leak in websocket module
+* Send `WALLOPS` back to the sender too
+
+Changes:
+* Update `HELPOP` docs
+* Add information on EOL date
+* Add `CONTRIBUTING.md` file with a reference to docs on
+  [how people can help out](https://www.unrealircd.org/docs/Contributing).
+
+UnrealIRCd 5.2.2
+-----------------
+
+Previous release 5.2.1.1 turned out to be good and stable. This 5.2.2 release
+only contains some minor changes.
+
+If you are still using UnrealIRCd 5.0.x then we recommend you to upgrade
+to 5.2.2 in the next few weeks/months. Just as a reminder: 5.2.x is the
+direct successor to 5.0.9, there is
+[no support for 5.0.x](https://www.unrealircd.org/docs/FAQ#about-52x).
+
+Fixes:
+* Fix issues with Let's Encrypt certificates for
+  [remote includes](https://www.unrealircd.org/docs/Remote_includes) (quite
+  common) and with linking to servers with link::verify-certificate enabled
+  (more rare). Both issues only happen with:
+  * OpenSSL 1.0.2 and older, which is officially unsupported, but still in
+    use on e.g. Debian 8 and Ubuntu 16.04.
+  * LibreSSL, such as with UnrealIRCd on Windows
+* OpenBSD compile issue when using shipped c-ares
+
+Enhancements:
+* [set::allowed-nickchars](https://www.unrealircd.org/docs/Nick_Character_Sets):
+  added ```arabic-utf8```
+* [set::server-linking](https://www.unrealircd.org/docs/Set_block#set::server-linking):
+  add another autoconnect-strategy called ```sequential-fallback```.
+
+Changes:
+* Shipped libs: updated c-ares to 1.17.2
+* Windows build: updated LibreSSL to 3.3.5
+
+Module coders / IRC protocol:
+* S2S: Allow ```SVSLOGIN``` also when
+ [set::sasl-server](https://www.unrealircd.org/docs/Set_block#set::sasl-server)
+ is not set.
+* Some minor ```CHATHISTORY``` fixes, for example the subcommand is now
+  case-insensitive.
+* You can use the new ```UNREAL_VERSION``` macro. It is easier than the
+  old individual UNREAL_VERSION_MAJOR/MINOR/etc macros.
+
+UnrealIRCd 5.2.1.1
+-------------------
+
+UnrealIRCd 5.2.1.1 fixes an issue with SASL services autodetection and mechlist in
+5.2.1.
+
+UnrealIRCd 5.2.1
+-----------------
 
 This is UnrealIRCd 5.2.1. Even though only a month has passed since 5.2.0,
 this release comes with several new features and some major bug fixes.
 Please report any issues to https://bugs.unrealircd.org/.
-
-(5.2.1.1 fixes an issue with SASL services autodetection and mechlist in 5.2.1)
 
 Enhancements:
 * The [allow block](https://www.unrealircd.org/docs/Allow_block)
@@ -102,7 +181,7 @@ on disk and allows clients to fetch hundreds/thousands of lines.
 Upgrading and the 5.0.x series
 -------------------------------
 UnrealIRCd 5.2.0 is the direct successor to 5.0.9/5.0.9.1.
-There will be [no further 5.0.x releases](https://www.unrealircd.org/docs/FAQ#About_the_new_5.2.x_series),
+There will be [no further 5.0.x releases](https://www.unrealircd.org/docs/FAQ#about-52x),
 in particular there will be no 5.0.10.
 
 Only four bugs that affect a limited number of people/networks were fixed.
