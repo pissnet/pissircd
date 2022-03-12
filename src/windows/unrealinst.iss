@@ -6,7 +6,7 @@
 
 [Setup]
 AppName=UnrealIRCd 5
-AppVerName=UnrealIRCd 5.2.3-git
+AppVerName=UnrealIRCd 5.2.4
 AppPublisher=UnrealIRCd Team
 AppPublisherURL=https://www.unrealircd.org
 AppSupportURL=https://www.unrealircd.org
@@ -104,6 +104,7 @@ var
 function InitializeSetup(): Boolean;
 var
 	major: Cardinal;
+	d: Integer;
 begin
 	d := StrToInt(GetDateTimeString('yyyymm',#0,#0));
 	if (d > 202209) then
