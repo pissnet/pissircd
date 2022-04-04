@@ -25,6 +25,13 @@
  */
 #include "unrealircd.h"
 
+#ifdef _WIN32
+ #define UNREALCMD "unrealircdctl"
+#else
+ #define UNREALCMD "./unrealircd"
+#endif
+
+
 extern int procio_client(const char *command, int auto_color_logs);
 
 void unrealircdctl_usage(const char *program_name)
@@ -35,6 +42,9 @@ void unrealircdctl_usage(const char *program_name)
 	       "reloadtls      - Reload the SSL/TLS certificates\n"
 	       "status         - Show current status of server\n"
 	       "module-status  - Show currently loaded modules\n"
+	       "mkpasswd       - Hash a password\n"
+	       "gencloak       - Display 3 random cloak keys\n"
+	       "spkifp         - Display SPKI Fingerprint\n"
 	       "\n", program_name);
 	exit(-1);
 }
@@ -185,7 +195,7 @@ void unrealircdctl_spkifp(int argc, char *argv[])
 	{
 		printf("NOTE: This script uses the default certificate location (any set::tls settings\n"
 		       "are ignored). If this is not what you want then specify a certificate\n"
-		       "explicitly like this: ./unrealircd spkifp conf/tls/example.pem\n\n");
+		       "explicitly like this: %s spkifp conf/tls/example.pem\n\n", UNREALCMD);
 		safe_strdup(file, "tls/server.cert.pem");
 		convert_to_absolute_path(&file, CONFDIR);
 	}
@@ -193,8 +203,8 @@ void unrealircdctl_spkifp(int argc, char *argv[])
 	if (!file_exists(file))
 	{
 		printf("Could not open certificate: %s\n"
-		       "You can specify a certificate like this: ./unrealircd spkifp conf/tls/example.pem\n",
-		       file);
+		       "You can specify a certificate like this: %s spkifp conf/tls/example.pem\n",
+		       UNREALCMD, file);
 		exit(1);
 	}
 

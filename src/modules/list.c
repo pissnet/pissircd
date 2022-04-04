@@ -31,7 +31,7 @@ ModuleHeader MOD_HEADER
   = {
 	"list",
 	"5.0",
-	"command /list", 
+	"command /LIST",
 	"UnrealIRCd Team",
 	"unrealircd-6",
     };
@@ -136,8 +136,8 @@ CMD_FUNC(cmd_list)
 		"use, and what channels LIST will return when you use them.",
 		">number  List channels with more than <number> people.",
 		"<number  List channels with less than <number> people.",
-		"C>number List channels created between now and <number> minutes ago.",
-		"C<number List channels created earlier than <number> minutes ago.",
+		"C>number List channels created more than <number> minutes ago.",
+		"C<number List channels created less than <number> minutes ago.",
 		"T>number List channels whose topics are older than <number> minutes",
 		"         (Ie, they have not changed in the last <number> minutes.",
 		"T<number List channels whose topics are not older than <number> minutes.",
@@ -199,56 +199,52 @@ CMD_FUNC(cmd_list)
 		}
 		switch (*name)
 		{
-		  case '<':
-			  usermax = atoi(name + 1) - 1;
-			  doall = 1;
-			  break;
-		  case '>':
-			  usermin = atoi(name + 1) + 1;
-			  doall = 1;
-			  break;
-		  case 'C':
-		  case 'c':	/* Channel time -- creation time? */
-			  ++name;
-			  switch (*name++)
-			  {
-			    case '<':
-				    chantimemax = currenttime - 60 * atoi(name);
-				    doall = 1;
-				    break;
-			    case '>':
-				    chantimemin = currenttime - 60 * atoi(name);
-				    doall = 1;
-				    break;
-			    default:
-				    sendnumeric(client, ERR_LISTSYNTAX);
-				    error = 1;
-			  }
-			  break;
-#ifdef LIST_USE_T
-		  case 'T':
-		  case 't':
-			  ++name;
-			  switch (*name++)
-			  {
-			    case '<':
-				    topictimemax =
-					currenttime - 60 * atoi(name);
-				    doall = 1;
-				    break;
-			    case '>':
-				    topictimemin =
-					currenttime - 60 * atoi(name);
-				    doall = 1;
-				    break;
-			    default:
-				    sendnumeric(client, ERR_LISTSYNTAX,
-					"Bad list syntax, type /list ?");
-				    error = 1;
-			  }
-			  break;
-#endif
-		  default:	/* A channel, possibly with wildcards.
+			case '<':
+				usermax = atoi(name + 1) - 1;
+				doall = 1;
+				break;
+			case '>':
+				usermin = atoi(name + 1) + 1;
+				doall = 1;
+				break;
+			case 'C':
+			case 'c':	/* Channel time -- creation time? */
+				++name;
+				switch (*name++)
+				{
+					case '<':
+						chantimemin = currenttime - 60 * atoi(name);
+						doall = 1;
+						break;
+					case '>':
+						chantimemax = currenttime - 60 * atoi(name);
+						doall = 1;
+						break;
+					default:
+						sendnumeric(client, ERR_LISTSYNTAX);
+						error = 1;
+				}
+				break;
+			case 'T':
+			case 't':
+				++name;
+				switch (*name++)
+				{
+					case '<':
+						topictimemin = currenttime - 60 * atoi(name);
+						doall = 1;
+						break;
+					case '>':
+						topictimemax = currenttime - 60 * atoi(name);
+						doall = 1;
+						break;
+					default:
+						sendnumeric(client, ERR_LISTSYNTAX);
+						error = 1;
+				}
+				break;
+			default:
+				/* A channel, possibly with wildcards.
 				 * Thought for the future: Consider turning wildcard
 				 * processing on the fly.
 				 * new syntax: !channelmask will tell ircd to ignore
@@ -259,35 +255,38 @@ CMD_FUNC(cmd_list)
 				 * channel even if any of the !channelmask masks
 				 * matches it.
 				 */
-			  if (*name == '!')
-			  {
-				  doall = 1;
-				  add_name_list(nolist, name + 1);
-			  }
-			  else if (strchr(name, '*') || strchr(name, '?'))
-			  {
-				  doall = 1;
-				  add_name_list(yeslist, name);
-			  }
-			  else	/* Just a normal channel */
-			  {
-				  channel = find_channel(name);
-				  if (channel && (ShowChannel(client, channel) || ValidatePermissionsForPath("channel:see:list:secret",client,NULL,channel,NULL))) {
-					modebuf[0] = '[';
-					channel_modes(client, modebuf+1, parabuf, sizeof(modebuf)-1, sizeof(parabuf), channel, 0);
-					if (modebuf[2] == '\0')
-						modebuf[0] = '\0';
-					else
-						strlcat(modebuf, "]", sizeof modebuf);
-					  sendnumeric(client, RPL_LIST,
-					      name, channel->users,
-					      modebuf,
-					      (channel->topic ? channel->topic :
-					      ""));
-}
-			  }
-		}		/* switch */
-	}			/* while */
+				if (*name == '!')
+				{
+					/* Negative matching by name */
+					doall = 1;
+					add_name_list(nolist, name + 1);
+				}
+				else if (strchr(name, '*') || strchr(name, '?'))
+				{
+					/* Channel with wildcards */
+					doall = 1;
+					add_name_list(yeslist, name);
+				}
+				else
+				{
+					/* A specific channel name without wildcards */
+					channel = find_channel(name);
+					if (channel && (ShowChannel(client, channel) || ValidatePermissionsForPath("channel:see:list:secret",client,NULL,channel,NULL)))
+					{
+						modebuf[0] = '[';
+						channel_modes(client, modebuf+1, parabuf, sizeof(modebuf)-1, sizeof(parabuf), channel, 0);
+
+						if (modebuf[2] == '\0')
+							modebuf[0] = '\0';
+						else
+							strlcat(modebuf, "]", sizeof modebuf);
+
+						sendnumeric(client, RPL_LIST, name, channel->users, modebuf,
+							    channel->topic ? channel->topic : "");
+					}
+				}
+		} /* switch */
+	} /* for */
 
 	if (doall)
 	{
@@ -335,7 +334,7 @@ int send_list(Client *client)
 	 * choice of numsend. -Rak
 	 */	
 
-	/* Begin of /list? then send official channels. */
+	/* Begin of /LIST? then send official channels first. */
 	if ((lopt->starthash == 0) && conf_offchans)
 	{
 		ConfigItem_offchans *x;
@@ -343,18 +342,15 @@ int send_list(Client *client)
 		{
 			if (find_channel(x->name))
 				continue; /* exists, >0 users.. will be sent later */
-			sendnumeric(client, RPL_LIST, x->name,
-			    0,
-			    "",
-			    x->topic ? x->topic : "");
+			sendnumeric(client, RPL_LIST, x->name, 0, "",
+			            x->topic ? x->topic : "");
 		}
 	}
 
 	for (hashnum = lopt->starthash; hashnum < CHAN_HASH_TABLE_SIZE; hashnum++)
 	{
 		if (numsend > 0)
-			for (channel = hash_get_chan_bucket(hashnum);
-			    channel; channel = channel->hnextch)
+			for (channel = hash_get_chan_bucket(hashnum); channel; channel = channel->hnextch)
 			{
 				if (SecretChannel(channel)
 				    && !IsMember(client, channel)
@@ -373,15 +369,13 @@ int send_list(Client *client)
 				if ((!lopt->showall))
 				{
 					/* User count must be in range */
-					if ((channel->users < lopt->usermin) || 
-					    ((lopt->usermax >= 0) && (channel->users > 
-					    lopt->usermax)))
+					if ((channel->users < lopt->usermin) ||
+					    ((lopt->usermax >= 0) && (channel->users > lopt->usermax)))
 						continue;
 
 					/* Creation time must be in range */
-					if ((channel->creationtime && (channel->creationtime <
-					    lopt->chantimemin)) || (channel->creationtime >
-					    lopt->chantimemax))
+					if ((channel->creationtime && (channel->creationtime < lopt->chantimemin)) ||
+					    (channel->creationtime > lopt->chantimemax))
 						continue;
 
 					/* Topic time must be in range */
@@ -432,7 +426,7 @@ int send_list(Client *client)
 		return 0;
 	}
 
-	/* 
+	/*
 	 * We've exceeded the limit on the number of channels to send back
 	 * at once.
 	 */
