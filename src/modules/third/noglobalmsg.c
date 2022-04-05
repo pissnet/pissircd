@@ -57,7 +57,8 @@ CMD_OVERRIDE_FUNC(override_privmsg)
 {
 	char *targetstr, *p;
 	char targets[BUFSIZE];
-
+	if (parc > 3 || BadPtr(parv[2]))
+		return;
 	strlcpy(targets, parv[1], sizeof(targets));
 	for (p = NULL, targetstr = strtoken(&p, targets, ","); targetstr; targetstr = strtoken(&p, NULL, ","))
 	{
