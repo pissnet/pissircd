@@ -25,7 +25,7 @@
 ModuleHeader MOD_HEADER
   = {
 	"third/noglobalmsg",
-	"1.0",
+	"1.1",
 	"Disables PRIVMSG $*",
 	"Polsaker",
 	"unrealircd-6",
