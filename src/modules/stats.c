@@ -29,7 +29,7 @@ CMD_FUNC(cmd_stats);
 ModuleHeader MOD_HEADER
   = {
 	"stats",
-	"5.0",
+	"5.0.1",
 	"command /stats",
 	"UnrealIRCd Team",
 	"unrealircd-6",
