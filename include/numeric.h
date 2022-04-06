@@ -384,7 +384,7 @@
 #define STR_RPL_RULES			/* 232 */	":- %s"
 #define STR_RPL_STATSLLINE		/* 241 */	"%c %s * %s %d %d"
 #define STR_RPL_STATSUPTIME		/* 242 */	":Server Up %lld days, %lld:%02lld:%02lld"
-#define STR_RPL_STATSOLINE		/* 243 */	"%c %s * %s %s %s %s"
+#define STR_RPL_STATSOLINE		/* 243 */	"%c %s * %s %s %s"
 #define STR_RPL_STATSHLINE		/* 244 */	"%c %s * %s %d %d"
 #define STR_RPL_STATSXLINE		/* 247 */	"X %s %d"
 #define STR_RPL_STATSULINE		/* 248 */	"U %s"
