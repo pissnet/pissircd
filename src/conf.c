@@ -185,6 +185,7 @@ ConfigEntry		*config_find_entry(ConfigEntry *ce, const char *name);
 extern void add_entropy_configfile(struct stat *st, const char *buf);
 extern void unload_all_unused_umodes(void);
 extern void unload_all_unused_extcmodes(void);
+extern void unload_all_unused_extbans(void);
 extern void unload_all_unused_caps(void);
 extern void unload_all_unused_history_backends(void);
 int reloadable_perm_module_unloaded(void);
@@ -2353,7 +2354,7 @@ void config_rehash()
 		safe_free(oper_ptr->operclass);
 		safe_free(oper_ptr->vhost);
 		Auth_FreeAuthConfig(oper_ptr->auth);
-		unreal_delete_masks(oper_ptr->mask);
+		free_security_group(oper_ptr->match);
 		DelListItem(oper_ptr, conf_oper);
 		for (s = oper_ptr->swhois; s; s = s_next)
 		{
@@ -2400,7 +2401,7 @@ void config_rehash()
 	for (allow_ptr = conf_allow; allow_ptr; allow_ptr = (ConfigItem_allow *) next)
 	{
 		next = (ListStruct *)allow_ptr->next;
-		unreal_delete_masks(allow_ptr->mask);
+		free_security_group(allow_ptr->match);
 		Auth_FreeAuthConfig(allow_ptr->auth);
 		DelListItem(allow_ptr, conf_allow);
 		safe_free(allow_ptr);
@@ -2437,6 +2438,8 @@ void config_rehash()
 		free_motd(&tld_ptr->opermotd);
 		free_motd(&tld_ptr->botmotd);
 
+		free_security_group(tld_ptr->match);
+
 		DelListItem(tld_ptr, conf_tld);
 		safe_free(tld_ptr);
 	}
@@ -2450,7 +2453,7 @@ void config_rehash()
 		Auth_FreeAuthConfig(vhost_ptr->auth);
 		safe_free(vhost_ptr->virthost);
 		safe_free(vhost_ptr->virtuser);
-		unreal_delete_masks(vhost_ptr->mask);
+		free_security_group(vhost_ptr->match);
 		for (s = vhost_ptr->swhois; s; s = s_next)
 		{
 			s_next = s->next;
@@ -2488,7 +2491,7 @@ void config_rehash()
 		safe_free(deny_channel_ptr->reason);
 		safe_free(deny_channel_ptr->class);
 		DelListItem(deny_channel_ptr, conf_deny_channel);
-		unreal_delete_masks(deny_channel_ptr->mask);
+		free_security_group(deny_channel_ptr->match);
 		safe_free(deny_channel_ptr);
 	}
 
@@ -2498,7 +2501,7 @@ void config_rehash()
 		safe_free(allow_channel_ptr->channel);
 		safe_free(allow_channel_ptr->class);
 		DelListItem(allow_channel_ptr, conf_allow_channel);
-		unreal_delete_masks(allow_channel_ptr->mask);
+		free_security_group(allow_channel_ptr->match);
 		safe_free(allow_channel_ptr);
 	}
 
@@ -3036,7 +3039,7 @@ ConfigItem_tld *find_tld(Client *client)
 
 	for (tld = conf_tld; tld; tld = tld->next)
 	{
-		if (unreal_mask_match(client, tld->mask))
+		if (user_allowed_by_security_group(client, tld->match))
 		{
 			if ((tld->options & TLD_TLS) && !IsSecureConnect(client))
 				continue;
@@ -3056,7 +3059,8 @@ ConfigItem_link *find_link(const char *servername, Client *client)
 
 	for (link = conf_link; link; link = link->next)
 	{
-		if (match_simple(link->servername, servername) && unreal_mask_match(client, link->incoming.mask))
+		if (match_simple(link->servername, servername) &&
+		    user_allowed_by_security_group(client, link->incoming.match))
 		{
 		    return link;
 		}
@@ -3137,7 +3141,7 @@ ConfigItem_deny_channel *find_channel_allowed(Client *client, const char *name)
 		{
 			if (dchannel->class && strcmp(client->local->class->name, dchannel->class))
 				continue;
-			if (dchannel->mask && !unreal_mask_match(client, dchannel->mask))
+			if (dchannel->match && !user_allowed_by_security_group(client, dchannel->match))
 				continue;
 			break; /* MATCH deny channel { } */
 		}
@@ -3152,7 +3156,7 @@ ConfigItem_deny_channel *find_channel_allowed(Client *client, const char *name)
 			{
 				if (achannel->class && strcmp(client->local->class->name, achannel->class))
 					continue;
-				if (achannel->mask && !unreal_mask_match(client, achannel->mask))
+				if (achannel->match && !user_allowed_by_security_group(client, achannel->match))
 					continue;
 				break; /* MATCH allow channel { } */
 			}
@@ -3935,6 +3939,7 @@ int	_conf_oper(ConfigFile *conf, ConfigEntry *ce)
 
 	oper =  safe_alloc(sizeof(ConfigItem_oper));
 	safe_strdup(oper->name, ce->value);
+	oper->match = safe_alloc(sizeof(SecurityGroup));
 
 	/* Inherit some defaults: */
 	oper->server_notice_colors = tempiConf.server_notice_colors;
@@ -4002,9 +4007,9 @@ int	_conf_oper(ConfigFile *conf, ConfigEntry *ce)
 		{
 			oper->maxlogins = atoi(cep->value);
 		}
-		else if (!strcmp(cep->name, "mask"))
+		else if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "match"))
 		{
-			unreal_add_masks(&oper->mask, cep);
+			conf_match_block(conf, cep, &oper->match);
 		}
 		else if (!strcmp(cep->name, "vhost"))
 		{
@@ -4018,7 +4023,7 @@ int	_conf_oper(ConfigFile *conf, ConfigEntry *ce)
 int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 {
 	char has_class = 0, has_password = 0, has_snomask = 0;
-	char has_modes = 0, has_require_modes = 0, has_mask = 0, has_maxlogins = 0;
+	char has_modes = 0, has_require_modes = 0, has_mask = 0, has_match = 0, has_maxlogins = 0;
 	char has_operclass = 0, has_vhost = 0;
 	ConfigEntry *cep;
 	int errors = 0;
@@ -4187,7 +4192,18 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 			else if (!strcmp(cep->name, "mask"))
 			{
 				if (cep->value || cep->items)
+				{
 					has_mask = 1;
+					test_match_block(conf, cep, &errors);
+				}
+			}
+			else if (!strcmp(cep->name, "match"))
+			{
+				if (cep->value || cep->items)
+				{
+					has_match = 1;
+					test_match_block(conf, cep, &errors);
+				}
 			}
 			else
 			{
@@ -4207,7 +4223,18 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 			else if (!strcmp(cep->name, "mask"))
 			{
 				if (cep->value || cep->items)
+				{
 					has_mask = 1;
+					test_match_block(conf, cep, &errors);
+				}
+			}
+			else if (!strcmp(cep->name, "match"))
+			{
+				if (cep->value || cep->items)
+				{
+					has_match = 1;
+					test_match_block(conf, cep, &errors);
+				}
 			}
 			else if (!strcmp(cep->name, "password"))
 			{
@@ -4236,10 +4263,17 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 			"oper::password");
 		errors++;
 	}
-	if (!has_mask)
+	if (!has_mask && !has_match)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"oper::mask");
+			"oper::match");
+		errors++;
+	}
+	if (has_mask && has_match)
+	{
+		config_error("%s:%d: You cannot have both ::mask and ::match. "
+		             "You should only use oper::match.",
+		             ce->file->filename, ce->line_number);
 		errors++;
 	}
 	if (!has_class)
@@ -4590,8 +4624,8 @@ int     _conf_tld(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "mask"))
-			unreal_add_masks(&ca->mask, cep);
+		if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
+			conf_match_block(conf, cep, &ca->match);
 		else if (!strcmp(cep->name, "motd"))
 		{
 			safe_strdup(ca->motd_file, cep->value);
@@ -4640,8 +4674,8 @@ int     _test_tld(ConfigFile *conf, ConfigEntry *ce)
 	ConfigEntry *cep;
 	int	    errors = 0;
 	int	    fd = -1;
-	char has_mask = 0, has_motd = 0, has_rules = 0, has_shortmotd = 0, has_channel = 0;
-	char has_opermotd = 0, has_botmotd = 0, has_options = 0;
+	char has_mask = 0, has_match = 0, has_motd = 0, has_rules = 0, has_shortmotd = 0;
+	char has_channel = 0, has_opermotd = 0, has_botmotd = 0, has_options = 0;
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
@@ -4656,7 +4690,18 @@ int     _test_tld(ConfigFile *conf, ConfigEntry *ce)
 		if (!strcmp(cep->name, "mask"))
 		{
 			if (cep->value || cep->items)
+			{
 				has_mask = 1;
+				test_match_block(conf, cep, &errors);
+			}
+		}
+		else if (!strcmp(cep->name, "match"))
+		{
+			if (cep->value || cep->items)
+			{
+				has_match = 1;
+				test_match_block(conf, cep, &errors);
+			}
 		}
 		/* tld::motd */
 		else if (!strcmp(cep->name, "motd"))
@@ -4806,10 +4851,17 @@ int     _test_tld(ConfigFile *conf, ConfigEntry *ce)
 			continue;
 		}
 	}
-	if (!has_mask)
+	if (!has_mask && !has_match)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"tld::mask");
+			"tld::match");
+		errors++;
+	}
+	if (has_mask && has_match)
+	{
+		config_error("%s:%d: You cannot have both ::mask and ::match. "
+		             "You should only use %s::match.",
+		             ce->file->filename, ce->line_number, ce->name);
 		errors++;
 	}
 	if (!has_motd)
@@ -5342,12 +5394,13 @@ int	_conf_allow(ConfigFile *conf, ConfigEntry *ce)
 	}
 	allow = safe_alloc(sizeof(ConfigItem_allow));
 	allow->ipv6_clone_mask = tempiConf.default_ipv6_clone_mask;
+	allow->match = safe_alloc(sizeof(SecurityGroup));
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "ip") || !strcmp(cep->name, "hostname"))
+		if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask") || !strcmp(cep->name, "ip") || !strcmp(cep->name, "hostname"))
 		{
-			unreal_add_masks(&allow->mask, cep);
+			conf_match_block(conf, cep, &allow->match);
 		}
 		else if (!strcmp(cep->name, "password"))
 			allow->auth = AuthBlockToAuthConfig(cep);
@@ -5413,7 +5466,7 @@ int	_test_allow(ConfigFile *conf, ConfigEntry *ce)
 	ConfigEntry *cep, *cepp;
 	int		errors = 0;
 	Hook *h;
-	char has_ip = 0, has_hostname = 0, has_mask = 0;
+	char has_ip = 0, has_hostname = 0, has_mask = 0, has_match = 0;
 	char has_maxperip = 0, has_global_maxperip = 0, has_password = 0, has_class = 0;
 	char has_redirectserver = 0, has_redirectport = 0, has_options = 0;
 	int hostname_possible_silliness = 0;
@@ -5463,6 +5516,7 @@ int	_test_allow(ConfigFile *conf, ConfigEntry *ce)
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (strcmp(cep->name, "options") &&
+		    strcmp(cep->name, "match") &&
 		    strcmp(cep->name, "mask") &&
 		    config_is_blankorempty(cep, "allow"))
 		{
@@ -5494,6 +5548,12 @@ int	_test_allow(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "mask"))
 		{
 			has_mask = 1;
+			test_match_block(conf, cep, &errors);
+		}
+		else if (!strcmp(cep->name, "match"))
+		{
+			has_match = 1;
+			test_match_block(conf, cep, &errors);
 		}
 		else if (!strcmp(cep->name, "maxperip"))
 		{
@@ -5641,27 +5701,33 @@ int	_test_allow(ConfigFile *conf, ConfigEntry *ce)
 		}
 	}
 
-	if (has_mask && (has_ip || has_hostname))
+	if ((has_mask || has_match) && (has_ip || has_hostname))
 	{
-		config_error("%s:%d: The allow block uses allow::mask, but you also have an allow::ip and allow::hostname.",
+		config_error("%s:%d: The allow block uses allow::match, but you also have an allow::ip and allow::hostname.",
 			ce->file->filename, ce->line_number);
-		config_error("Please delete your allow::ip and allow::hostname entries and/or integrate them into allow::mask");
+		config_error("Please delete your allow::ip and allow::hostname entries and/or integrate them into allow::match");
 	} else
 	if (has_ip)
 	{
-		config_warn("%s:%d: The allow block uses allow::mask nowadays. Rename your allow::ip item to allow::mask.",
+		config_warn("%s:%d: The allow block uses allow::match nowadays. Rename your allow::ip item to allow::match.",
 			ce->file->filename, ce->line_number);
 		config_warn("See https://www.unrealircd.org/docs/FAQ#allow-mask for more information");
 	} else
 	if (has_hostname)
 	{
-		config_warn("%s:%d: The allow block uses allow::mask nowadays. Rename your allow::hostname item to allow::mask.",
+		config_warn("%s:%d: The allow block uses allow::match nowadays. Rename your allow::hostname item to allow::match.",
 			ce->file->filename, ce->line_number);
 		config_warn("See https://www.unrealircd.org/docs/FAQ#allow-mask for more information");
 	} else
-	if (!has_mask)
+	if (has_mask && has_match)
 	{
-		config_error("%s:%d: allow block needs an allow::mask",
+		config_error("%s:%d: You cannot have both ::mask and ::match. You should only use allow::match.",
+				 ce->file->filename, ce->line_number);
+		errors++;
+	} else
+	if (!has_match && !has_mask)
+	{
+		config_error("%s:%d: allow block needs an allow::match",
 				 ce->file->filename, ce->line_number);
 		errors++;
 	}
@@ -5702,15 +5768,15 @@ int	_conf_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 	ConfigItem_allow_channel 	*allow = NULL;
 	ConfigEntry 	    	*cep;
 	char *class = NULL;
-	ConfigEntry *mask = NULL;
+	ConfigEntry *match = NULL;
 
 	/* First, search for ::class, if any */
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (!strcmp(cep->name, "class"))
 			class = cep->value;
-		else if (!strcmp(cep->name, "mask"))
-			mask = cep;
+		else if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
+			match = cep;
 	}
 
 	for (cep = ce->items; cep; cep = cep->next)
@@ -5722,8 +5788,8 @@ int	_conf_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 			safe_strdup(allow->channel, cep->value);
 			if (class)
 				safe_strdup(allow->class, class);
-			if (mask)
-				unreal_add_masks(&allow->mask, mask);
+			if (match)
+				conf_match_block(conf, match, &allow->match);
 			AddListItem(allow, conf_allow_channel);
 		}
 	}
@@ -5732,9 +5798,10 @@ int	_conf_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 
 int	_test_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 {
-	ConfigEntry		*cep;
-	int			errors = 0;
-	char			has_channel = 0, has_class = 0;
+	ConfigEntry	*cep;
+	int		errors = 0;
+	char		has_match = 0, has_mask = 0, has_channel = 0, has_class = 0;
+
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (config_is_blankorempty(cep, "allow channel"))
@@ -5758,8 +5825,15 @@ int	_test_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 			}
 			has_class = 1;
 		}
+		else if (!strcmp(cep->name, "match"))
+		{
+			has_match = 1;
+			test_match_block(conf, cep, &errors);
+		}
 		else if (!strcmp(cep->name, "mask"))
 		{
+			has_mask = 1;
+			test_match_block(conf, cep, &errors);
 		}
 		else
 		{
@@ -5767,6 +5841,13 @@ int	_test_allow_channel(ConfigFile *conf, ConfigEntry *ce)
 				"allow channel", cep->name);
 			errors++;
 		}
+	}
+	if (has_mask && has_match)
+	{
+		config_error("%s:%d: You cannot have both ::mask and ::match. "
+		             "You should only use %s::match.",
+		             ce->file->filename, ce->line_number, ce->name);
+		errors++;
 	}
 	if (!has_channel)
 	{
@@ -5860,6 +5941,7 @@ int	_conf_vhost(ConfigFile *conf, ConfigEntry *ce)
 	ConfigItem_vhost *vhost;
 	ConfigEntry *cep, *cepp;
 	vhost = safe_alloc(sizeof(ConfigItem_vhost));
+	vhost->match = safe_alloc(sizeof(SecurityGroup));
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
@@ -5880,9 +5962,9 @@ int	_conf_vhost(ConfigFile *conf, ConfigEntry *ce)
 			safe_strdup(vhost->login, cep->value);
 		else if (!strcmp(cep->name, "password"))
 			vhost->auth = AuthBlockToAuthConfig(cep);
-		else if (!strcmp(cep->name, "mask"))
+		else if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
 		{
-			unreal_add_masks(&vhost->mask, cep);
+			conf_match_block(conf, cep, &vhost->match);
 		}
 		else if (!strcmp(cep->name, "swhois"))
 		{
@@ -5914,7 +5996,7 @@ int	_test_vhost(ConfigFile *conf, ConfigEntry *ce)
 {
 	int errors = 0;
 	ConfigEntry *cep;
-	char has_vhost = 0, has_login = 0, has_password = 0, has_mask = 0;
+	char has_vhost = 0, has_login = 0, has_password = 0, has_mask = 0, has_match = 0;
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
@@ -6007,6 +6089,12 @@ int	_test_vhost(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "mask"))
 		{
 			has_mask = 1;
+			test_match_block(conf, cep, &errors);
+		}
+		else if (!strcmp(cep->name, "match"))
+		{
+			has_match = 1;
+			test_match_block(conf, cep, &errors);
 		}
 		else if (!strcmp(cep->name, "swhois"))
 		{
@@ -6038,10 +6126,17 @@ int	_test_vhost(ConfigFile *conf, ConfigEntry *ce)
 			"vhost::password");
 		errors++;
 	}
-	if (!has_mask)
+	if (!has_mask && !has_match)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"vhost::mask");
+			"vhost::match");
+		errors++;
+	}
+	if (has_mask && has_match)
+	{
+		config_error("%s:%d: You cannot have both ::mask and ::match. "
+		             "You should only use %s::match.",
+		             ce->file->filename, ce->line_number, ce->name);
 		errors++;
 	}
 	return errors;
@@ -6172,9 +6267,9 @@ int	_conf_link(ConfigFile *conf, ConfigEntry *ce)
 		{
 			for (cepp = cep->items; cepp; cepp = cepp->next)
 			{
-				if (!strcmp(cepp->name, "mask"))
+				if (!strcmp(cepp->name, "match") || !strcmp(cepp->name, "mask"))
 				{
-					unreal_add_masks(&link->incoming.mask, cepp);
+					conf_match_block(conf, cepp, &link->incoming.match);
 				}
 			}
 		}
@@ -6275,7 +6370,7 @@ int	_test_link(ConfigFile *conf, ConfigEntry *ce)
 	ConfigEntry *cep, *cepp, *ceppp;
 	int errors = 0;
 
-	int has_incoming = 0, has_incoming_mask = 0, has_outgoing = 0, has_outgoing_file = 0;
+	int has_incoming = 0, has_incoming_mask = 0, has_incoming_match = 0, has_outgoing = 0, has_outgoing_file = 0;
 	int has_outgoing_bind_ip = 0, has_outgoing_hostname = 0, has_outgoing_port = 0;
 	int has_outgoing_options = 0, has_hub = 0, has_leaf = 0, has_leaf_depth = 0;
 	int has_password = 0, has_class = 0, has_options = 0;
@@ -6302,11 +6397,26 @@ int	_test_link(ConfigFile *conf, ConfigEntry *ce)
 			config_detect_duplicate(&has_incoming, cep, &errors);
 			for (cepp = cep->items; cepp; cepp = cepp->next)
 			{
+				if (!strcmp(cepp->name, "match"))
+				{
+					if (cepp->value || cepp->items)
+					{
+						has_incoming_match = 1;
+						test_match_block(conf, cepp, &errors);
+					} else
+					if (config_is_blankorempty(cepp, "link::incoming"))
+					{
+						errors++;
+						continue;
+					}
+				} else
 				if (!strcmp(cepp->name, "mask"))
 				{
 					if (cepp->value || cepp->items)
+					{
 						has_incoming_mask = 1;
-					else
+						test_match_block(conf, cepp, &errors);
+					} else
 					if (config_is_blankorempty(cepp, "link::incoming"))
 					{
 						errors++;
@@ -6502,9 +6612,16 @@ int	_test_link(ConfigFile *conf, ConfigEntry *ce)
 	if (has_incoming)
 	{
 		/* If we have an incoming sub-block then we need at least 'mask' and 'password' */
-		if (!has_incoming_mask)
+		if (!has_incoming_mask && !has_incoming_match)
 		{
-			config_error_missing(ce->file->filename, ce->line_number, "link::incoming::mask");
+			config_error_missing(ce->file->filename, ce->line_number, "link::incoming::match");
+			errors++;
+		}
+		if (has_incoming_mask && has_incoming_match)
+		{
+			config_error("%s:%d: You cannot have both link::incoming::mask and link::incoming::match. "
+				     "You should only use link::incoming::match.",
+				     ce->file->filename, ce->line_number);
 			errors++;
 		}
 	}
@@ -9839,9 +9956,9 @@ int	_conf_deny_channel(ConfigFile *conf, ConfigEntry *ce)
 		{
 			safe_strdup(deny->class, cep->value);
 		}
-		else if (!strcmp(cep->name, "mask"))
+		else if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
 		{
-			unreal_add_masks(&deny->mask, cep);
+			conf_match_block(conf, cep, &deny->match);
 		}
 	}
 	AddListItem(deny, conf_deny_channel);
@@ -9915,6 +10032,7 @@ int     _test_deny(ConfigFile *conf, ConfigEntry *ce)
 	if (!strcmp(ce->value, "channel"))
 	{
 		char has_channel = 0, has_warn = 0, has_reason = 0, has_redirect = 0, has_class = 0;
+		char has_mask = 0, has_match = 0;
 		for (cep = ce->items; cep; cep = cep->next)
 		{
 			if (config_is_blankorempty(cep, "deny channel"))
@@ -9972,8 +10090,15 @@ int     _test_deny(ConfigFile *conf, ConfigEntry *ce)
 				}
 				has_class = 1;
 			}
+			else if (!strcmp(cep->name, "match"))
+			{
+				has_match = 1;
+				test_match_block(conf, cep, &errors);
+			}
 			else if (!strcmp(cep->name, "mask"))
 			{
+				has_mask = 1;
+				test_match_block(conf, cep, &errors);
 			}
 			else
 			{
@@ -9992,6 +10117,13 @@ int     _test_deny(ConfigFile *conf, ConfigEntry *ce)
 		{
 			config_error_missing(ce->file->filename, ce->line_number,
 				"deny channel::reason");
+			errors++;
+		}
+		if (has_mask && has_match)
+		{
+			config_error("%s:%d: You cannot have both ::mask and ::match. "
+				     "You should only use %s %s::match.",
+				     ce->file->filename, ce->line_number, ce->name, ce->value);
 			errors++;
 		}
 	}
@@ -10198,11 +10330,109 @@ int     _test_deny(ConfigFile *conf, ConfigEntry *ce)
 	return errors;
 }
 
+#define CheckNullX(x) if ((!(x)->value) || (!(*((x)->value)))) { config_error("%s:%i: missing parameter", (x)->file->filename, (x)->line_number); *errors = *errors + 1; return 0; }
+int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
+{
+	if (!strcmp(cep->name, "webirc") || !strcmp(cep->name, "exclude-webirc"))
+	{
+		CheckNullX(cep);
+	} else
+	if (!strcmp(cep->name, "identified") || !strcmp(cep->name, "exclude-identified"))
+	{
+		CheckNullX(cep);
+	} else
+	if (!strcmp(cep->name, "tls") || !strcmp(cep->name, "exclude-tls"))
+	{
+		CheckNullX(cep);
+	} else
+	if (!strcmp(cep->name, "reputation-score") || !strcmp(cep->name, "exclude-reputation-score"))
+	{
+		const char *str = cep->value;
+		int v;
+		CheckNullX(cep);
+		if (*str == '<')
+			str++;
+		v = atoi(str);
+		if ((v < 1) || (v > 10000))
+		{
+			config_error("%s:%i: %s needs to be a value of 1-10000",
+				cep->file->filename, cep->line_number, cep->name);
+			*errors = *errors + 1;
+		}
+	} else
+	if (!strcmp(cep->name, "connect-time") || !strcmp(cep->name, "exclude-connect-time"))
+	{
+		const char *str = cep->value;
+		long v;
+		CheckNullX(cep);
+		if (*str == '<')
+			str++;
+		v = config_checkval(str, CFG_TIME);
+		if (v < 1)
+		{
+			config_error("%s:%i: %s needs to be a time value (and more than 0 seconds)",
+				cep->file->filename, cep->line_number, cep->name);
+			*errors = *errors + 1;
+		}
+	} else
+	if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask") || !strcmp(cep->name, "exclude-mask"))
+	{
+	} else
+	if (!strcmp(cep->name, "security-group") || !strcmp(cep->name, "exclude-security-group"))
+	{
+		CheckNullX(cep);
+	} else
+	{
+		/* Let's see if an extended server ban exists for this item... */
+		Extban *extban;
+		if (!strncmp(cep->name, "exclude-", 8))
+			extban = findmod_by_bantype_raw(cep->name+8, strlen(cep->name+8));
+		else
+			extban = findmod_by_bantype_raw(cep->name, strlen(cep->name));
+		if (extban && (extban->options & EXTBOPT_TKL) && (extban->is_banned_events & BANCHK_TKL))
+		{
+			CheckNullX(cep);
+			test_extended_list(extban, cep, errors);
+			return 1; /* Yup, handled */
+		}
+		return 0; /* Unhandled: unknown item for us */
+	}
+	return 1; /* Handled, but there could be errors */
+}
+
+int test_match_block(ConfigFile *conf, ConfigEntry *ce, int *errors_out)
+{
+	int errors = 0;
+	ConfigEntry *cep;
+
+	/* (If there is only a ce->value, trust that it is OK) */
+
+	/* Test ce->items... */
+	for (cep = ce->items; cep; cep = cep->next)
+	{
+		/* Only complain about things with values,
+		 * as valueless things like "10.0.0.0/8" are treated as a mask.
+		 */
+		if (!test_match_item(conf, cep, &errors) && cep->value)
+		{
+			config_error_unknown(cep->file->filename, cep->line_number,
+				ce->name, cep->name);
+			errors++;
+			continue;
+		}
+	}
+
+	*errors_out = *errors_out + errors;
+	return errors ? 0 : 1;
+}
+
+
 int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 {
 	int errors = 0;
 	ConfigEntry *cep;
 
+	/* First, check the name of the security group */
 	if (!ce->value)
 	{
 		config_error("%s:%i: security-group block needs a name, eg: security-group web-users {",
@@ -10229,33 +10459,7 @@ int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "webirc"))
-		{
-			CheckNull(cep);
-		} else
-		if (!strcmp(cep->name, "identified"))
-		{
-			CheckNull(cep);
-		} else
-		if (!strcmp(cep->name, "tls"))
-		{
-			CheckNull(cep);
-		} else
-		if (!strcmp(cep->name, "reputation-score"))
-		{
-			int v;
-			CheckNull(cep);
-			v = atoi(cep->value);
-			if ((v < 1) || (v > 10000))
-			{
-				config_error("%s:%i: security-group::reputation-score needs to be a value of 1-10000",
-					cep->file->filename, cep->line_number);
-				errors++;
-			}
-		} else
-		if (!strcmp(cep->name, "include-mask"))
-		{
-		} else
+		if (!test_match_item(conf, cep, &errors))
 		{
 			config_error_unknown(cep->file->filename, cep->line_number,
 				"security-group", cep->name);
@@ -10267,6 +10471,130 @@ int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 	return errors;
 }
 
+int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
+{
+	int errors = 0; /* unused */
+	SecurityGroup *s = *block;
+
+	/* The following code is there so we don't create a security group
+	 * unless there is actually a valid config item for it encountered.
+	 * This so the security group '*s' can stay NULL if there are zero
+	 * items, so we don't waste any CPU if it is unused.
+	 */
+	if (*block == NULL)
+	{
+		/* Yeah we call a TEST routine from a CONFIG RUN routine ;). */
+		if (!test_match_item(conf, cep, &errors))
+			return 0; /* not for us */
+		/* If we are still here then we must create the security group */
+		*block = s = safe_alloc(sizeof(SecurityGroup));
+	}
+
+	if (!strcmp(cep->name, "webirc"))
+		s->webirc = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "identified"))
+		s->identified = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "tls"))
+		s->tls = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "reputation-score"))
+	{
+		if (*cep->value == '<')
+			s->reputation_score = 0 - atoi(cep->value+1);
+		else
+			s->reputation_score = atoi(cep->value);
+	}
+	else if (!strcmp(cep->name, "connect-time"))
+	{
+		if (*cep->value == '<')
+			s->connect_time = 0 - config_checkval(cep->value+1, CFG_TIME);
+		else
+			s->connect_time = config_checkval(cep->value, CFG_TIME);
+	}
+	else if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask"))
+	{
+		unreal_add_masks(&s->mask, cep);
+	}
+	else if (!strcmp(cep->name, "security-group"))
+	{
+		unreal_add_names(&s->security_group, cep);
+	}
+	else if (!strcmp(cep->name, "exclude-webirc"))
+		s->exclude_webirc = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "exclude-identified"))
+		s->exclude_identified = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "exclude-tls"))
+		s->exclude_tls = config_checkval(cep->value, CFG_YESNO);
+	else if (!strcmp(cep->name, "exclude-reputation-score"))
+	{
+		if (*cep->value == '<')
+			s->exclude_reputation_score = 0 - atoi(cep->value+1);
+		else
+			s->exclude_reputation_score = atoi(cep->value);
+	}
+	else if (!strcmp(cep->name, "exclude-mask"))
+	{
+		unreal_add_masks(&s->exclude_mask, cep);
+	}
+	else if (!strcmp(cep->name, "exclude-security-group"))
+	{
+		unreal_add_names(&s->security_group, cep);
+	}
+	else
+	{
+		/* Let's see if an extended server ban exists for this item... this needs to be LAST! */
+		Extban *extban;
+		const char *name = cep->name;
+
+		if (!strncmp(cep->name, "exclude-", 8))
+		{
+			/* Extended (exclusive) ? */
+			name = cep->name + 8;
+			if (findmod_by_bantype_raw(name, strlen(name)))
+				unreal_add_name_values(&s->exclude_extended, name, cep);
+			else
+				return 0; /* Unhandled */
+		} else {
+			/* Extended (inclusive) */
+			if (findmod_by_bantype_raw(name, strlen(name)))
+				unreal_add_name_values(&s->extended, name, cep);
+			else
+				return 0; /* Unhandled */
+		}
+	}
+
+	add_nvplist(&s->printable_list, s->printable_list_counter++, cep->name, cep->value);
+
+	return 1; /* Handled by us (guaranteed earlier) */
+}
+
+int conf_match_block(ConfigFile *conf, ConfigEntry *ce, SecurityGroup **block)
+{
+	ConfigEntry *cep;
+	SecurityGroup *s = *block;
+
+	if (*block == NULL)
+		*block = s = safe_alloc(sizeof(SecurityGroup));
+
+	/* Check for simple form: match *; / mask *; */
+	if (ce->value)
+	{
+		unreal_add_masks(&s->mask, ce);
+		add_nvplist(&s->printable_list, s->printable_list_counter++, "mask", ce->value);
+	}
+
+	/* Check for long form: match { .... } / mask { .... } */
+	for (cep = ce->items; cep; cep = cep->next)
+	{
+		if (!conf_match_item(conf, cep, &s) && !cep->value && !cep->items)
+		{
+			/* Valueless? Then it must be a mask like 10.0.0.0/8 */
+			unreal_add_masks(&s->mask, cep);
+			add_nvplist(&s->printable_list, s->printable_list_counter++, "mask", cep->name);
+		}
+	}
+	return 1;
+}
+
 int _conf_security_group(ConfigFile *conf, ConfigEntry *ce)
 {
 	ConfigEntry *cep;
@@ -10274,24 +10602,13 @@ int _conf_security_group(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "webirc"))
-			s->webirc = config_checkval(cep->value, CFG_YESNO);
-		else if (!strcmp(cep->name, "identified"))
-			s->identified = config_checkval(cep->value, CFG_YESNO);
-		else if (!strcmp(cep->name, "tls"))
-			s->tls = config_checkval(cep->value, CFG_YESNO);
-		else if (!strcmp(cep->name, "reputation-score"))
-			s->reputation_score = atoi(cep->value);
-		else if (!strcmp(cep->name, "priority"))
+		if (!strcmp(cep->name, "priority"))
 		{
 			s->priority = atoi(cep->value);
 			DelListItem(s, securitygroups);
 			AddListItemPrio(s, securitygroups, s->priority);
-		}
-		else if (!strcmp(cep->name, "include-mask"))
-		{
-			unreal_add_masks(&s->include_mask, cep);
-		}
+		} else
+			conf_match_item(conf, cep, &s);
 	}
 	return 1;
 }
@@ -10708,6 +11025,7 @@ int rehash_internal(Client *client)
 	reread_motdsandrules();
 	unload_all_unused_umodes();
 	unload_all_unused_extcmodes();
+	unload_all_unused_extbans();
 	unload_all_unused_caps();
 	unload_all_unused_history_backends();
 	// unload_all_unused_moddata(); -- this will crash
@@ -10724,7 +11042,7 @@ int rehash_internal(Client *client)
 void link_cleanup(ConfigItem_link *link_ptr)
 {
 	safe_free(link_ptr->servername);
-	unreal_delete_masks(link_ptr->incoming.mask);
+	free_security_group(link_ptr->incoming.match);
 	Auth_FreeAuthConfig(link_ptr->auth);
 	safe_free(link_ptr->outgoing.file);
 	safe_free(link_ptr->outgoing.bind_ip);

@@ -487,14 +487,14 @@ int stats_except(Client *client, const char *para)
 int stats_allow(Client *client, const char *para)
 {
 	ConfigItem_allow *allows;
-	ConfigItem_mask *m;
+	NameValuePrioList *m;
 
 	for (allows = conf_allow; allows; allows = allows->next)
 	{
-		for (m = allows->mask; m; m = m->next)
+		for (m = allows->match->printable_list; m; m = m->next)
 		{
 			sendnumeric(client, RPL_STATSILINE,
-				    m->mask, "-",
+				    namevalue_nospaces(m), "-",
 				    allows->maxperip,
 				    allows->global_maxperip,
 				    allows->class->name,
@@ -521,14 +521,14 @@ int stats_command(Client *client, const char *para)
 int stats_oper(Client *client, const char *para)
 {
 	ConfigItem_oper *o;
-	ConfigItem_mask *m;
+	NameValuePrioList *m;
 
 	for (o = conf_oper; o; o = o->next)
 	{
-		for (m = o->mask; m; m = m->next)
+		for (m = o->match->printable_list; m; m = m->next)
 		{
 			sendnumeric(client, RPL_STATSOLINE,
-			            'O', m->mask, o->name,
+			            'O', namevalue_nospaces(m), o->name,
 			            o->operclass ? o->operclass: "",
 			            o->class->name ? o->class->name : "");
 		}
@@ -668,15 +668,19 @@ int stats_uline(Client *client, const char *para)
 }
 int stats_vhost(Client *client, const char *para)
 {
-	ConfigItem_mask *m;
 	ConfigItem_vhost *vhosts;
+	NameValuePrioList *m;
 
 	for (vhosts = conf_vhost; vhosts; vhosts = vhosts->next)
 	{
-		for (m = vhosts->mask; m; m = m->next)
+		for (m = vhosts->match->printable_list; m; m = m->next)
 		{
-			sendtxtnumeric(client, "vhost %s%s%s %s %s", vhosts->virtuser ? vhosts->virtuser : "", vhosts->virtuser ? "@" : "",
-			     vhosts->virthost, vhosts->login, m->mask);
+			sendtxtnumeric(client, "vhost %s%s%s %s %s",
+			               vhosts->virtuser ? vhosts->virtuser : "",
+			               vhosts->virtuser ? "@" : "",
+			               vhosts->virthost,
+			               vhosts->login,
+			               namevalue_nospaces(m));
 		}
 	}
 	return 0;
@@ -935,12 +939,16 @@ int stats_set(Client *client, const char *para)
 int stats_tld(Client *client, const char *para)
 {
 	ConfigItem_tld *tld;
-	ConfigItem_mask *m;
+	NameValuePrioList *m;
 
 	for (tld = conf_tld; tld; tld = tld->next)
 	{
-		for (m = tld->mask; m; m = m->next)
-			sendnumeric(client, RPL_STATSTLINE, m->mask, tld->motd_file, tld->rules_file ? tld->rules_file : "none");
+		for (m = tld->match->printable_list; m; m = m->next)
+		{
+			sendnumeric(client, RPL_STATSTLINE, namevalue_nospaces(m),
+			            tld->motd_file,
+			            tld->rules_file ? tld->rules_file : "none");
+		}
 	}
 
 	return 0;

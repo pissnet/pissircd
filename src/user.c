@@ -806,7 +806,14 @@ SecurityGroup *add_security_group(const char *name, int priority)
 /** Free a SecurityGroup struct */
 void free_security_group(SecurityGroup *s)
 {
-	unreal_delete_masks(s->include_mask);
+	if (s == NULL)
+		return;
+	unreal_delete_masks(s->mask);
+	unreal_delete_masks(s->exclude_mask);
+	free_entire_name_list(s->security_group);
+	free_entire_name_list(s->exclude_security_group);
+	free_nvplist(s->extended);
+	free_nvplist(s->exclude_extended);
 	safe_free(s);
 }
 
@@ -845,6 +852,104 @@ void set_security_group_defaults(void)
 	s->tls = 1;
 }
 
+/** Get how long a client is connected to IRC.
+ * @param client	The client to check
+ * @returns how long the client is connected to IRC (number of seconds)
+ */
+long get_connected_time(Client *client)
+{
+	const char *str;
+	long connect_time = 0;
+
+	/* Shortcut for local clients */
+	if (client->local)
+		return TStime() - client->local->creationtime;
+
+	/* Otherwise, hopefully available through this... */
+	str = moddata_client_get(client, "creationtime");
+	if (!BadPtr(str) && (*str != '0'))
+		return TStime() - atoll(str);
+	return 0;
+}
+
+int user_matches_extended_list(Client *client, NameValuePrioList *e)
+{
+	Extban *extban;
+	BanContext b;
+
+	for (; e; e = e->next)
+	{
+		extban = findmod_by_bantype_raw(e->name, strlen(e->name));
+		if (!extban ||
+		    !(extban->options & EXTBOPT_TKL) ||
+		    !(extban->is_banned_events & BANCHK_TKL))
+		{
+			continue; /* extban not found or of incorrect type */
+		}
+
+		memset(&b, 0, sizeof(BanContext));
+		b.client = client;
+		b.banstr = e->value;
+		b.ban_check_types = BANCHK_TKL;
+		if (extban->is_banned(&b))
+			return 1;
+	}
+
+	return 0;
+}
+
+int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors)
+{
+	BanContext b;
+
+	if (cep->value)
+	{
+		memset(&b, 0, sizeof(BanContext));
+		b.banstr = cep->value;
+		b.ban_check_types = BANCHK_TKL;
+		b.what = MODE_ADD;
+		if (!extban->conv_param(&b, extban))
+		{
+			config_error("%s:%i: %s has an invalid value",
+			             cep->file->filename, cep->line_number, cep->name);
+			*errors = *errors + 1;
+			return 0;
+		}
+	}
+
+	for (cep = cep->items; cep; cep = cep->next)
+	{
+		memset(&b, 0, sizeof(BanContext));
+		b.banstr = cep->name;
+		b.ban_check_types = BANCHK_TKL;
+		b.what = MODE_ADD;
+		if (!extban->conv_param(&b, extban))
+		{
+			config_error("%s:%i: %s has an invalid value",
+			             cep->file->filename, cep->line_number, cep->name);
+			*errors = *errors + 1;
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+/** Returns 1 if the user is allowed by any of the security groups in the named list.
+ * This is only used by security-group::security-group and
+ * security-group::exclude-security-group.
+ * @param client	Client to check
+ * @param l		The NameList
+ * @returns 1 if any of the security groups match, 0 if none of them matched.
+ */
+int user_allowed_by_security_group_list(Client *client, NameList *l)
+{
+	for (; l; l = l->next)
+		if (user_allowed_by_security_group_name(client, l->name))
+			return 1;
+	return 0;
+}
+
 /** Returns 1 if the user is OK as far as the security-group is concerned.
  * @param client	The client to check
  * @param s		The security-group to check against
@@ -852,17 +957,86 @@ void set_security_group_defaults(void)
  */
 int user_allowed_by_security_group(Client *client, SecurityGroup *s)
 {
+	static int recursion_security_group = 0;
+
+	/* Allow NULL securitygroup, makes it easier in the code elsewhere */
+	if (!s)
+		return 0;
+
+	if (recursion_security_group > 8)
+	{
+		unreal_log(ULOG_WARNING, "main", "SECURITY_GROUP_LOOP_DETECTED", client,
+		           "Loop detected while processing security-group '$security_group' -- "
+		           "are you perhaps referencing a security-group from a security-group?",
+		           log_data_string("security_group", s->name));
+		return 0;
+	}
+	recursion_security_group++;
+
+	/* DO NOT USE 'return' IN CODE BELOW!!!!!!!!!
+	 * - use 'goto user_not_allowed' to reject
+	 * - use 'goto user_allowed' to accept
+	 */
+
+	/* Process EXCLUSION criteria first... */
+	if (s->exclude_identified && IsLoggedIn(client))
+		goto user_not_allowed;
+	if (s->exclude_webirc && moddata_client_get(client, "webirc"))
+		goto user_not_allowed;
+	if ((s->exclude_reputation_score > 0) && (GetReputation(client) >= s->exclude_reputation_score))
+		goto user_not_allowed;
+	if ((s->exclude_reputation_score < 0) && (GetReputation(client) < 0 - s->exclude_reputation_score))
+		goto user_not_allowed;
+	if (s->exclude_connect_time != 0)
+	{
+		long connect_time = get_connected_time(client);
+		if ((s->exclude_connect_time > 0) && (connect_time >= s->exclude_connect_time))
+			goto user_not_allowed;
+		if ((s->exclude_connect_time < 0) && (connect_time < 0 - s->exclude_connect_time))
+			goto user_not_allowed;
+	}
+	if (s->exclude_tls && (IsSecureConnect(client) || (MyConnect(client) && IsSecure(client))))
+		goto user_not_allowed;
+	if (s->exclude_mask && unreal_mask_match(client, s->exclude_mask))
+		goto user_not_allowed;
+	if (s->exclude_security_group && user_allowed_by_security_group_list(client, s->exclude_security_group))
+		goto user_not_allowed;
+	if (s->exclude_extended && user_matches_extended_list(client, s->exclude_extended))
+		goto user_not_allowed;
+
+	/* Then process INCLUSION criteria... */
 	if (s->identified && IsLoggedIn(client))
-		return 1;
+		goto user_allowed;
 	if (s->webirc && moddata_client_get(client, "webirc"))
-		return 1;
-	if (s->reputation_score && (GetReputation(client) >= s->reputation_score))
-		return 1;
+		goto user_allowed;
+	if ((s->reputation_score > 0) && (GetReputation(client) >= s->reputation_score))
+		goto user_allowed;
+	if ((s->reputation_score < 0) && (GetReputation(client) < 0 - s->reputation_score))
+		goto user_allowed;
+	if (s->connect_time != 0)
+	{
+		long connect_time = get_connected_time(client);
+		if ((s->connect_time > 0) && (connect_time >= s->connect_time))
+			goto user_allowed;
+		if ((s->connect_time < 0) && (connect_time < 0 - s->connect_time))
+			goto user_allowed;
+	}
 	if (s->tls && (IsSecureConnect(client) || (MyConnect(client) && IsSecure(client))))
-		return 1;
-	if (s->include_mask && unreal_mask_match(client, s->include_mask))
-		return 1;
+		goto user_allowed;
+	if (s->mask && unreal_mask_match(client, s->mask))
+		goto user_allowed;
+	if (s->security_group && user_allowed_by_security_group_list(client, s->security_group))
+		goto user_allowed;
+	if (s->extended && user_matches_extended_list(client, s->extended))
+		goto user_allowed;
+
+user_not_allowed:
+	recursion_security_group--;
 	return 0;
+
+user_allowed:
+	recursion_security_group--;
+	return 1;
 }
 
 /** Returns 1 if the user is OK as far as the security-group is concerned - "by name" version.

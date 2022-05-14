@@ -677,6 +677,7 @@ extern void unreal_setfilemodtime(const char *filename, time_t mtime);
 extern void DeleteTempModules(void);
 extern MODVAR Extban *extbaninfo;
 extern Extban *findmod_by_bantype(const char *str, const char **remainder);
+extern Extban *findmod_by_bantype_raw(const char *str, int ban_name_length);
 extern Extban *ExtbanAdd(Module *reserved, ExtbanInfo req);
 extern void ExtbanDel(Extban *);
 extern void extban_init(void);
@@ -1104,6 +1105,11 @@ extern void free_security_group(SecurityGroup *s);
 extern void set_security_group_defaults(void);
 extern int user_allowed_by_security_group(Client *client, SecurityGroup *s);
 extern int user_allowed_by_security_group_name(Client *client, const char *secgroupname);
+extern int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors);
+extern int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block);
+extern int test_match_block(ConfigFile *conf, ConfigEntry *ce, int *errors_out);
+extern int conf_match_block(ConfigFile *conf, ConfigEntry *ce, SecurityGroup **block);
+extern int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors);
 #define nv_find_by_name(stru, name)       do_nv_find_by_name(stru, name, ARRAY_SIZEOF((stru)))
 extern long do_nv_find_by_name(NameValue *table, const char *cmd, int numelements);
 #define nv_find_by_value(stru, value)       do_nv_find_by_value(stru, value, ARRAY_SIZEOF((stru)))
@@ -1123,6 +1129,9 @@ extern void add_fmt_nvplist(NameValuePrioList **lst, int priority, const char *n
 extern void add_nvplist_numeric_fmt(NameValuePrioList **lst, int priority, const char *name, Client *to, int numeric, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,6,7)));
 extern NameValuePrioList *find_nvplist(NameValuePrioList *list, const char *name);
 extern void free_nvplist(NameValuePrioList *lst);
+extern void unreal_add_name_values(NameValuePrioList **n, const char *name, ConfigEntry *ce);
+extern const char *namevalue(NameValuePrioList *n);
+extern const char *namevalue_nospaces(NameValuePrioList *n);
 extern const char *get_connect_extinfo(Client *client);
 extern char *unreal_strftime(const char *str);
 extern void strtolower(char *str);
@@ -1253,3 +1262,4 @@ extern void add_proc_io_server(void);
 extern void procio_post_rehash(int failure);
 /* end of proc i/o */
 extern int minimum_msec_since_last_run(struct timeval *tv_old, long minimum);
+extern long get_connected_time(Client *client);

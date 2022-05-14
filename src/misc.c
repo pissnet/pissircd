@@ -1057,6 +1057,76 @@ int unreal_mask_match_string(const char *name, ConfigItem_mask *mask)
 	return retval;
 }
 
+/** Add name entries from config */
+void unreal_add_names(NameList **n, ConfigEntry *ce)
+{
+	if (ce->items)
+	{
+		ConfigEntry *cep;
+		for (cep = ce->items; cep; cep = cep->next)
+			_add_name_list(n, cep->value ? cep->value : cep->name);
+	} else
+	if (ce->value)
+	{
+		_add_name_list(n, ce->value);
+	}
+}
+
+/** Add name/value entries from config */
+void unreal_add_name_values(NameValuePrioList **n, const char *name, ConfigEntry *ce)
+{
+	if (ce->items)
+	{
+		ConfigEntry *cep;
+		for (cep = ce->items; cep; cep = cep->next)
+			add_nvplist(n, 0, name, cep->value ? cep->value : cep->name);
+	} else
+	if (ce->value)
+	{
+		add_nvplist(n, 0, name, ce->value);
+	}
+}
+
+/** Prints the name:value pair of a NameValuePrioList */
+const char *namevalue(NameValuePrioList *n)
+{
+	static char buf[512];
+
+	if (!n->name)
+		return "";
+
+	if (!n->value)
+		return n->name;
+
+	snprintf(buf, sizeof(buf), "%s:%s", n->name, n->value);
+	return buf;
+}
+
+/** Version of namevalue() but replaces spaces with underscores.
+ * Used in for example numeric sending routines where a field
+ * may not contain any spaces.
+ */
+const char *namevalue_nospaces(NameValuePrioList *n)
+{
+	static char buf[512];
+	char *p;
+
+	if (!n->name)
+		return "";
+
+	if (!n->value)
+		strlcpy(buf, n->name, sizeof(n->name));
+
+	snprintf(buf, sizeof(buf), "%s:%s", n->name, n->value);
+
+	/* Replace spaces with underscores */
+	for (p=buf; *p; p++)
+		if (*p == ' ')
+			*p = '_';
+
+	return buf;
+}
+
 /** Our own strcasestr implementation because strcasestr is
  * often not available or is not working correctly.
  */
