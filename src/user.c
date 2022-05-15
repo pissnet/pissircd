@@ -69,11 +69,9 @@ void iNAH_host(Client *client, const char *host)
 	safe_strdup(client->user->virthost, host);
 	if (MyConnect(client))
 		sendto_server(NULL, 0, 0, NULL, ":%s SETHOST :%s", client->id, client->user->virthost);
-	client->umodes |= UMODE_SETHOST;
+	client->umodes |= UMODE_SETHOST|UMODE_HIDE;
 
 	userhost_changed(client);
-
-	sendnumeric(client, RPL_HOSTHIDDEN, client->user->virthost);
 }
 
 /** Convert a user mode string to a bitmask - only used by config.
@@ -814,6 +812,7 @@ void free_security_group(SecurityGroup *s)
 	free_entire_name_list(s->exclude_security_group);
 	free_nvplist(s->extended);
 	free_nvplist(s->exclude_extended);
+	free_nvplist(s->printable_list);
 	safe_free(s);
 }
 
