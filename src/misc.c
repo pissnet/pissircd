@@ -2473,3 +2473,140 @@ int minimum_msec_since_last_run(struct timeval *tv_old, long minimum)
 	}
 	return 0;
 }
+
+/** Strip color, bold, underline, and reverse codes from a string.
+ * @param text			The input text
+ * @param output		The buffer for the output text
+ * @param outputlen		The length of the output buffer
+ * @param strip_all_low_ascii	If set to 1 then all ASCII < 32 is stripped
+ *				(the ASCII control codes), otherwise we only
+ *				strip the IRC control- and color codes.
+ * @returns The new string, which will be 'output', or in unusual cases (outputlen==0) will be NULL.
+ */
+const char *StripControlCodesEx(const char *text, char *output, size_t outputlen, int strip_all_low_ascii)
+{
+	int i = 0, len = strlen(text), save_len=0;
+	char nc = 0, col = 0, rgb = 0;
+	char *o = output;
+	const char *save_text=NULL;
+
+	/* Handle special cases first.. */
+
+	if (outputlen == 0)
+		return NULL;
+
+	if (outputlen == 1)
+	{
+		*output = '\0';
+		return output;
+	}
+
+	/* Reserve room for the NUL byte */
+	outputlen--;
+
+	while (len > 0) 
+	{
+		if ( col && ((isdigit(*text) && nc < 2) || (*text == ',' && nc < 3)))
+		{
+			nc++;
+			if (*text == ',')
+				nc = 0;
+		}
+		/* Syntax for RGB is ^DHHHHHH where H is a hex digit.
+		 * If < 6 hex digits are specified, the code is displayed
+		 * as text
+		 */
+		else if ((rgb && isxdigit(*text) && nc < 6) || (rgb && *text == ',' && nc < 7))
+		{
+			nc++;
+			if (*text == ',')
+				nc = 0;
+		}
+		else 
+		{
+			if (col)
+				col = 0;
+			if (rgb)
+			{
+				if (nc != 6)
+				{
+					text = save_text+1;
+					len = save_len-1;
+					rgb = 0;
+					continue;
+				}
+				rgb = 0;
+			}
+			switch (*text)
+			{
+			case 3:
+				/* color */
+				col = 1;
+				nc = 0;
+				break;
+			case 4:
+				/* RGB */
+				save_text = text;
+				save_len = len;
+				rgb = 1;
+				nc = 0;
+				break;
+			case 2:
+				/* bold */
+				break;
+			case 31:
+				/* underline */
+				break;
+			case 22:
+				/* reverse */
+				break;
+			case 15:
+				/* plain */
+				break;
+			case 29:
+				/* italic */
+				break;
+			case 30:
+				/* strikethrough */
+				break;
+			case 17:
+				/* monospace */
+				break;
+			case 0xe2:
+				if (!strncmp(text+1, "\x80\x8b", 2))
+				{
+					/* +2 means we skip 3 */
+					text += 2;
+					len  -= 2;
+					break;
+				}
+				/*fallthrough*/
+			default:
+				if ((*text >= ' ') || !strip_all_low_ascii)
+				{
+					*o++ = *text;
+					outputlen--;
+					if (outputlen == 0)
+					{
+						*o = '\0';
+						return output;
+					}
+				}
+				break;
+			}
+		}
+		text++;
+		len--;
+	}
+
+	*o = '\0';
+	return output;
+}
+
+/* strip color, bold, underline, and reverse codes from a string */
+const char *StripControlCodes(const char *text)
+{
+	static unsigned char new_str[4096];
+
+	return StripControlCodesEx(text, new_str, sizeof(new_str), 0);
+}

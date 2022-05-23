@@ -53,13 +53,16 @@ void log_blocks_switchover(void);
  */
 json_t *json_string_unreal(const char *s)
 {
-	static char buf[8192];
+	char buf1[512], buf2[512];
 	char *verified_s;
+	const char *stripped;
 
 	if (s == NULL)
 		return json_null();
 
-	verified_s = unrl_utf8_make_valid(s, buf, sizeof(buf), 0);
+	stripped = StripControlCodesEx(s, buf1, sizeof(buf1), 1);
+	verified_s = unrl_utf8_make_valid(buf1, buf2, sizeof(buf2), 0);
+
 	return json_string(verified_s);
 }
 
@@ -561,6 +564,9 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 	if (client->local && client->local->creationtime)
 		json_object_set_new(child, "connected_since", json_timestamp(client->local->creationtime));
 
+	if (client->local && client->local->idle_since)
+		json_object_set_new(child, "idle_since", json_timestamp(client->local->idle_since));
+
 	if (client->user)
 	{
 		char buf[512];
@@ -572,6 +578,10 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		json_object_set_new(user, "username", json_string_unreal(client->user->username));
 		if (!BadPtr(client->info))
 			json_object_set_new(user, "realname", json_string_unreal(client->info));
+		if (has_user_mode(client, 'x') && client->user->virthost && strcmp(client->user->virthost, client->user->realhost))
+			json_object_set_new(user, "vhost", json_string_unreal(client->user->virthost));
+		if (client->user->cloakedhost)
+			json_object_set_new(user, "cloakedhost", json_string_unreal(client->user->cloakedhost));
 		if (client->uplink)
 			json_object_set_new(user, "servername", json_string_unreal(client->uplink->name));
 		if (IsLoggedIn(client))
@@ -592,6 +602,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		str = get_operclass(client);
 		if (str)
 			json_object_set_new(user, "operclass", json_string_unreal(str));
+		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_USER, client, detail, child, user);
 	} else
 	if (IsMe(client))
 	{
@@ -645,7 +656,9 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		}
 		if (!BadPtr(client->server->features.nickchars))
 			json_object_set_new(features, "nick_character_sets", json_string_unreal(client->server->features.nickchars));
+		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_SERVER, client, detail, child, server);
 	}
+	RunHook(HOOKTYPE_JSON_EXPAND_CLIENT, client, detail, child);
 }
 
 void json_expand_channel(json_t *j, const char *key, Channel *channel, int detail)
@@ -675,6 +688,7 @@ void json_expand_channel(json_t *j, const char *key, Channel *channel, int detai
 	}
 
 	// Possibly later: If detail is set to 1 then expand more...
+	RunHook(HOOKTYPE_JSON_EXPAND_CHANNEL, channel, detail, child);
 }
 
 const char *timestamp_iso8601_now(void)
