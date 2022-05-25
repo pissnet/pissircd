@@ -749,8 +749,9 @@ extern MODVAR const char *(*tkl_type_string)(TKL *tk);
 extern MODVAR const char *(*tkl_type_config_string)(TKL *tk);
 extern MODVAR TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, const char *reason, const char *setby,
                                             time_t expire_at, time_t set_at, int soft, int flags);
-extern MODVAR TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, const char *reason, const char *set_by,
-                                               time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
+extern MODVAR TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
+                                           const char *reason, const char *set_by,
+                                           time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
 extern MODVAR TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                                           time_t expire_at, time_t set_at, int flags);
 extern MODVAR TKL *(*tkl_add_spamfilter)(int type, unsigned short target, unsigned short action, Match *match, const char *setby,
@@ -834,6 +835,7 @@ extern MODVAR void (*do_unreal_log_remote_deliver)(LogLevel loglevel, const char
 extern MODVAR char *(*get_chmodes_for_user)(Client *client, const char *flags);
 extern MODVAR WhoisConfigDetails (*whois_get_policy)(Client *client, Client *target, const char *name);
 extern MODVAR int (*make_oper)(Client *client, const char *operblock_name, const char *operclass, ConfigItem_class *clientclass, long modes, const char *snomask, const char *vhost);
+extern MODVAR int (*unreal_match_iplist)(Client *client, NameList *l);
 /* /Efuncs */
 
 /* TLS functions */

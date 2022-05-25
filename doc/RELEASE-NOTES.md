@@ -1,12 +1,14 @@
-UnrealIRCd 6.0.4-git
-=================
-This is work in progress!
+UnrealIRCd 6.0.4-rc1
+=====================
+This is the release candidate for UnrealIRCd 6.0.4.
+You can help us by testing this release and reporting any issues at https://bugs.unrealircd.org/.
 
 If you are already running UnrealIRCd 6 then read below. Otherwise, jump
 straight to the [summary about UnrealIRCd 6](#Summary) to learn more
 about UnrealIRCd 6.
 
-Enhancements:
+### Enhancements:
+* Show security groups in `WHOIS`
 * The [security-group block](https://www.unrealircd.org/docs/Security-group_block)
   has been expanded and the same functionality is now available in
   [mask items](https://www.unrealircd.org/docs/Mask_item) too:
@@ -45,22 +47,67 @@ Enhancements:
   * Example of defining a security group and using it in a mask item later:
     ```
     security-group irccloud {
-        mask { ip1; ip2; ip3; ip4 }
+        mask { ip1; ip2; ip3; ip4; }
     }
     allow {
         mask { security-group irccloud; }
         class clients;
         maxperip 128;
     }
-    // Not working yet (work in progress):
     except ban {
         mask { security-group irccloud; }
         type { blacklist; connect-flood; handshake-data-flood; }
     }
     ```
+* For [JSON logging](https://www.unrealircd.org/docs/JSON_logging) a number
+  of fields were added when a client is expanded:
+  * `geoip`: with subitem `country_code` (eg. `NL`)
+  * `tls`: with subitems `cipher` and `certfp`
+  * Under subitem `users`:
+    * `vhost`: if the visible host differs from the realhost then this is
+      set (thus for both vhost and cloaked host)
+    * `cloakedhost`: this is always set (except for eg. services users), even
+      if the user is not cloaked so you can easily search on a cloaked host.
+    * `idle_since`: last time the user has spoken (local clients only)
+    * `channels`: list of channels (array), with a maximum of 384 chars.
+* The JSON logging now also strips ASCII below 32, so color- and
+  control codes.
+* Support IRCv3 `+draft/channel-context`
+* Add `example.es.conf` (Spanish example configuration file)
+* The country of users is now communicated in the
+  [message-tag](https://www.unrealircd.org/docs/Message_tags)
+  `unrealircd.org/geoip` (only to IRCOps).
+* Add support for linking servers via UNIX domain sockets
+  (`link::outgoing::file`).
 
-Fixes:
-* 
+### Fixes:
+* Crash in `except ban` with `~security-group:xyz`
+* Crash if hideserver module was loaded but `LINKS` was not blocked.
+* Crash on Windows when using the "Rehash" GUI option.
+* Infinite loop if one security-group referred to another.
+* Duplicate entries in the `+beI` lists of `+P` channels.
+* Module manager did not stop on compile error
+* [`set::modes-on-join`](https://www.unrealircd.org/docs/Set_block#set::modes-on-join)
+  did not work with `+f` + timed bans properly, eg `[3t#b1]:10`
+* Several log messages were missing some information.
+* Reputation syncing across servers had a small glitch. Fix is mostly
+  useful for servers that were not linked to the network for days or weeks.
+
+### Changes:
+* Clarified that UnrealIRCd is licensed as "GPLv2 or later"
+
+### Developers and protocol:
+* The `creationtime` is now communicated of users. Until now this
+  information was only known locally (the thing that was communicated
+  that came close was "last nick change" but that is not the same).
+  This is synced via (early) moddata across servers.
+  Module coders can use `get_connected_time()`.
+* The `RPL_HOSTHIDDEN` is now sent from `userhost_changed()` so you
+  don't explicitly send it yourself anymore.
+* Module coders can enhance the
+  [JSON logging](https://www.unrealircd.org/docs/JSON_logging)
+  expansion items for clients and channels via new hooks like
+  `HOOKTYPE_JSON_EXPAND_CLIENT`. This is used by the geoip and tls modules.
 
 UnrealIRCd 6.0.3
 -----------------

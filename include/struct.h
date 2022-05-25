@@ -1106,6 +1106,7 @@ struct Spamfilter {
 struct BanException {
 	char *usermask; /**< User mask */
 	char *hostmask; /**< Host mask */
+	SecurityGroup *match; /**< Security group (for config file items only) */
 	unsigned short subtype; /**< See TKL_SUBTYPE_* */
 	char *bantypes; /**< Exception types */
 	char *reason; /**< Reason */
@@ -1872,6 +1873,7 @@ struct SecurityGroup {
 	long connect_time;
 	int webirc;
 	int tls;
+	NameList *ip;
 	ConfigItem_mask *mask;
 	NameList *security_group;
 	NameValuePrioList *extended;
@@ -1881,6 +1883,7 @@ struct SecurityGroup {
 	long exclude_connect_time;
 	int exclude_webirc;
 	int exclude_tls;
+	NameList *exclude_ip;
 	ConfigItem_mask *exclude_mask;
 	NameList *exclude_security_group;
 	NameValuePrioList *exclude_extended;

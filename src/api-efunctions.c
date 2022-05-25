@@ -57,8 +57,9 @@ TKL *(*tkl_add_spamfilter)(int type, unsigned short target, unsigned short actio
                                time_t expire_at, time_t set_at,
                                time_t spamf_tkl_duration, const char *spamf_tkl_reason,
                                int flags);
-TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, const char *reason, const char *set_by,
-                                time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
+TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
+                             const char *reason, const char *set_by,
+                             time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
 TKL *(*tkl_del_line)(TKL *tkl);
 void (*tkl_check_local_remove_shun)(TKL *tmp);
 int (*find_tkline_match)(Client *client, int skip_soft);
@@ -135,6 +136,7 @@ void (*do_unreal_log_remote_deliver)(LogLevel loglevel, const char *subsystem, c
 char *(*get_chmodes_for_user)(Client *client, const char *flags);
 WhoisConfigDetails (*whois_get_policy)(Client *client, Client *target, const char *name);
 int (*make_oper)(Client *client, const char *operblock_name, const char *operclass, ConfigItem_class *clientclass, long modes, const char *snomask, const char *vhost);
+int (*unreal_match_iplist)(Client *client, NameList *l);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -406,4 +408,5 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_GET_CHMODES_FOR_USER, get_chmodes_for_user, NULL);
 	efunc_init_function(EFUNC_WHOIS_GET_POLICY, whois_get_policy, NULL);
 	efunc_init_function(EFUNC_MAKE_OPER, make_oper, make_oper_default_handler);
+	efunc_init_function(EFUNC_UNREAL_MATCH_IPLIST, unreal_match_iplist, NULL);
 }

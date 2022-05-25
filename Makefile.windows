@@ -178,7 +178,7 @@ EXP_OBJ_FILES=src/ircd_vars.obj src/channel.obj src/send.obj src/socket.obj \
  src/fdlist.obj src/dbuf.obj  \
  src/hash.obj src/parse.obj \
  src/whowas.obj \
- src/misc.obj src/match.obj src/crule.obj \
+ src/securitygroup.obj src/misc.obj src/match.obj src/crule.obj \
  src/debug.obj  src/support.obj src/list.obj \
  src/serv.obj src/user.obj \
  src/version.obj src/ircsprintf.obj \
@@ -340,7 +340,6 @@ DLL_FILES=\
  src/modules/sapart.dll \
  src/modules/sasl.dll \
  src/modules/sdesc.dll \
- src/modules/securitygroup.dll \
  src/modules/sendsno.dll \
  src/modules/sendumode.dll \
  src/modules/server.dll \
@@ -506,6 +505,9 @@ src/conf_preprocessor.obj: src/conf_preprocessor.c $(INCLUDES)
 
 src/debug.obj: src/debug.c $(INCLUDES)
         $(CC) $(CFLAGS) src/debug.c
+
+src/securitygroup.obj: src/securitygroup.c $(INCLUDES)
+        $(CC) $(CFLAGS) src/securitygroup.c
 
 src/misc.obj: src/misc.c $(INCLUDES) ./include/dbuf.h
         $(CC) $(CFLAGS) src/misc.c
@@ -1093,9 +1095,6 @@ src/modules/sasl.dll: src/modules/sasl.c $(INCLUDES)
 
 src/modules/sdesc.dll: src/modules/sdesc.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/sdesc.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/sdesc.pdb $(MODLFLAGS)
-
-src/modules/securitygroup.dll: src/modules/securitygroup.c $(INCLUDES)
-	$(CC) $(MODCFLAGS) src/modules/securitygroup.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/securitygroup.pdb $(MODLFLAGS)
 
 src/modules/sendsno.dll: src/modules/sendsno.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/sendsno.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/sendsno.pdb $(MODLFLAGS)
