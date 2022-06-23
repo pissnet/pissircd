@@ -184,7 +184,7 @@ EXP_OBJ_FILES=src/ircd_vars.obj src/channel.obj src/send.obj src/socket.obj \
  src/version.obj src/ircsprintf.obj \
  src/scache.obj src/dns.obj src/modules.obj \
  src/aliases.obj src/api-event.obj src/api-usermode.obj src/auth.obj src/tls.obj \
- src/random.obj src/api-channelmode.obj src/api-moddata.obj src/mempool.obj \
+ src/random.obj src/api-channelmode.obj src/api-moddata.obj src/api-rpc.obj src/mempool.obj \
  src/dispatch.obj src/api-isupport.obj src/api-command.obj \
  src/api-clicap.obj src/api-messagetag.obj src/api-history-backend.obj \
  src/api-extban.obj src/api-efunctions.obj src/crypt_blowfish.obj \
@@ -253,6 +253,7 @@ DLL_FILES=\
  src/modules/clienttagdeny.dll \
  src/modules/close.dll \
  src/modules/connect.dll \
+ src/modules/connect-flood.dll \
  src/modules/connthrottle.dll \
  src/modules/creationtime.dll \
  src/modules/cycle.dll \
@@ -305,6 +306,7 @@ DLL_FILES=\
  src/modules/locops.dll \
  src/modules/lusers.dll \
  src/modules/map.dll \
+ src/modules/max-unknown-connections-per-ip.dll \
  src/modules/md.dll \
  src/modules/message.dll \
  src/modules/message-ids.dll \
@@ -407,7 +409,9 @@ DLL_FILES=\
  src/modules/watch.dll \
  src/modules/webirc.dll \
  src/modules/webredir.dll \
+ src/modules/webserver.dll \
  src/modules/websocket.dll \
+ src/modules/websocket_common.dll \
  src/modules/whois.dll \
  src/modules/who_old.dll \
  src/modules/whowas.dll \
@@ -581,6 +585,9 @@ src/api-channelmode.obj: src/api-channelmode.c $(INCLUDES)
 
 src/api-moddata.obj: src/api-moddata.c $(INCLUDES)
 	$(CC) $(CFLAGS) src/api-moddata.c
+
+src/api-rpc.obj: src/api-rpc.c $(INCLUDES)
+	$(CC) $(CFLAGS) src/api-rpc.c
 
 src/mempool.obj: src/mempool.c $(INCLUDES)
 	$(CC) $(CFLAGS) src/mempool.c
@@ -832,6 +839,9 @@ src/modules/close.dll: src/modules/close.c $(INCLUDES)
 src/modules/connect.dll: src/modules/connect.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/connect.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/connect.pdb $(MODLFLAGS)
 
+src/modules/connect-flood.dll: src/modules/connect-flood.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/connect-flood.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/connect-flood.pdb $(MODLFLAGS)
+
 src/modules/connthrottle.dll: src/modules/connthrottle.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/connthrottle.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/connthrottle.pdb $(MODLFLAGS)
 
@@ -990,6 +1000,9 @@ src/modules/lusers.dll: src/modules/lusers.c $(INCLUDES)
 
 src/modules/map.dll: src/modules/map.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/map.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/map.pdb $(MODLFLAGS)
+
+src/modules/max-unknown-connections-per-ip.dll: src/modules/max-unknown-connections-per-ip.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/max-unknown-connections-per-ip.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/max-unknown-connections-per-ip.pdb $(MODLFLAGS)
 
 src/modules/md.dll: src/modules/md.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/md.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/md.pdb $(MODLFLAGS)
@@ -1297,8 +1310,14 @@ src/modules/webirc.dll: src/modules/webirc.c $(INCLUDES)
 src/modules/webredir.dll: src/modules/webredir.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/webredir.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/webredir.pdb $(MODLFLAGS)
 
+src/modules/webserver.dll: src/modules/webserver.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/webserver.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/webserver.pdb $(MODLFLAGS)
+
 src/modules/websocket.dll: src/modules/websocket.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/websocket.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/websocket.pdb $(MODLFLAGS)
+
+src/modules/websocket_common.dll: src/modules/websocket_common.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/websocket_common.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/websocket_common.pdb $(MODLFLAGS)
 
 src/modules/whois.dll: src/modules/whois.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/whois.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/whois.pdb $(MODLFLAGS)

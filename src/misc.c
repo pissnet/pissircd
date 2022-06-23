@@ -594,17 +594,6 @@ void exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, cons
 			}
 		}
 		free_pending_net(client);
-		if (client->local->listener)
-			if (client->local->listener && !IsOutgoing(client))
-			{
-				listen_conf = client->local->listener;
-				listen_conf->clients--;
-				if (listen_conf->flag.temporary && (listen_conf->clients == 0))
-				{
-					/* Call listen cleanup */
-					listen_cleanup();
-				}
-			}
 		SetClosing(client);
 		if (IsUser(client))
 		{
@@ -623,7 +612,7 @@ void exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, cons
 
 		if (client->local->fd >= 0 && !IsConnecting(client))
 		{
-			if (!IsControl(client))
+			if (!IsControl(client) && !IsRPC(client))
 				sendto_one(client, NULL, "ERROR :Closing Link: %s (%s)", get_client_name(client, FALSE), comment);
 		}
 		close_connection(client);
@@ -1393,6 +1382,46 @@ void do_unreal_log_remote_deliver_default_handler(LogLevel loglevel, const char 
 int make_oper_default_handler(Client *client, const char *operblock_name, const char *operclass, ConfigItem_class *clientclass, long modes, const char *snomask, const char *vhost)
 {
 	return 0;
+}
+
+void webserver_send_response_default_handler(Client *client, int status, char *msg)
+{
+}
+
+void webserver_close_client_default_handler(Client *client)
+{
+}
+
+int webserver_handle_body_default_handler(Client *client, WebRequest *web, const char *readbuf, int length)
+{
+	return 0;
+}
+
+void rpc_response_default_handler(Client *client, json_t *request, json_t *result)
+{
+}
+
+void rpc_error_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *error_message)
+{
+}
+
+void rpc_error_fmt_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *fmt, ...)
+{
+}
+
+int websocket_handle_websocket_default_handler(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len))
+{
+	return -1;
+}
+
+int websocket_create_packet_default_handler(int opcode, char **buf, int *len)
+{
+	return -1;
+}
+
+int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len)
+{
+	return -1;
 }
 
 /** my_timegm: mktime()-like function which will use GMT/UTC.

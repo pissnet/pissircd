@@ -107,6 +107,7 @@ typedef enum ModuleObjectType {
 	MOBJ_CLICAP = 16,
 	MOBJ_MTAG = 17,
 	MOBJ_HISTORY_BACKEND = 18,
+	MOBJ_RPC = 19,
 } ModuleObjectType;
 
 typedef struct Umode Umode;
@@ -604,6 +605,46 @@ typedef struct {
 	int (*history_destroy)(const char *object);
 } HistoryBackendInfo;
 
+/** @defgroup RPCAPI RPC API
+ * @{
+ */
+
+/** No special flags set */
+#define RPC_HANDLER_FLAGS_NONE			0x0
+
+/** Message Tag Handler */
+typedef struct RPCHandler RPCHandler;
+struct RPCHandler {
+	RPCHandler *prev, *next;
+	char *method;                                             /**< Name of the method handler, eg "client.get" */
+	int flags;                                                /**< A flag of RPC_HANDLER_FLAG_* */
+	void (*call)(Client *, json_t *request, json_t *params);  /**< RPC call: use RPC_CALL_FUNC() ! */
+	Module *owner;                                            /**< Module introducing this. */
+	char unloaded;                                            /**< Internal flag to indicate module is being unloaded */
+};
+
+/** The struct used to register a RPC handler.
+ * For documentation, see the RPCHandler struct.
+ */
+typedef struct {
+	char *method;
+	int flags;
+	void (*call)(Client *, json_t *request, json_t *params);
+} RPCHandlerInfo;
+
+/** RPC function - used by all RPC call functions.
+ * This is used in the code like <pre>RPC_CALL_FUNC(rpc_call_xyz)</pre> as a function definition.
+ * It allows the UnrealIRCd devs to add or change parameters to the function without
+ * (necessarily) breaking your code.
+ * @param client      The client issueing the request
+ * @param request     The full JSON-RPC request
+ * @param params      Parameters of the JSON-RPC call
+ * @note You are expected to call rpc_response() or rpc_error() on the request.
+ */
+#define RPC_CALL_FUNC(x) void (x) (Client *client, json_t *request, json_t *params)
+
+/** @} */
+
 struct Hook {
 	Hook *prev, *next;
 	int priority;
@@ -688,6 +729,7 @@ typedef struct ModuleObject {
 		ClientCapability *clicap;
 		MessageTagHandler *mtag;
 		HistoryBackend *history_backend;
+		RPCHandler *rpc;
 	} object;
 } ModuleObject;
 
@@ -824,6 +866,10 @@ extern void MessageTagHandlerDel(MessageTagHandler *m);
 extern HistoryBackend *HistoryBackendFind(const char *name);
 extern HistoryBackend *HistoryBackendAdd(Module *module, HistoryBackendInfo *mreq);
 extern void HistoryBackendDel(HistoryBackend *m);
+
+extern RPCHandler *RPCHandlerFind(const char *method);
+extern RPCHandler *RPCHandlerAdd(Module *module, RPCHandlerInfo *mreq);
+extern void RPCHandlerDel(RPCHandler *m);
 
 #ifndef GCC_TYPECHECKING
 #define HookAdd(module, hooktype, priority, func) HookAddMain(module, hooktype, priority, func, NULL, NULL, NULL)
@@ -1170,6 +1216,8 @@ extern void SavePersistentLongX(ModuleInfo *modinfo, const char *varshortname, l
 #define HOOKTYPE_JSON_EXPAND_CLIENT_SERVER	114
 /** See hooktype_json_expand_channel() */
 #define HOOKTYPE_JSON_EXPAND_CHANNEL	115
+/** See hooktype_accept() */
+#define HOOKTYPE_ACCEPT		116
 
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
@@ -1821,6 +1869,18 @@ int hooktype_packet(Client *from, Client *to, Client *intended_to, char **msg, i
  */
 int hooktype_handshake(Client *client);
 
+/** Called very early when a client connects (function prototype for HOOKTYPE_ACCEPT).
+ * Module coders: have a look at hooktype_handshake() instead of this one!
+ * HOOKTYPE_ACCEPT is called even before HOOKTYPE_HANDSHAKE, as soon as the socket
+ * is connected and during the client is being set up, before the SSL/TLS handshake.
+ * It is only used for connection flood detection and checking (G)Z-lines.
+ * Note that this connection is also called for *NIX domain socket connections,
+ * HTTP(S) requests, and so on.
+ * @param client		The client
+ * @return One of HOOK_*. Use HOOK_DENY to reject the client.
+ */
+int hooktype_accept(Client *client);
+
 /** Called when a client structure is freed (function prototype for HOOKTYPE_FREE_CLIENT).
  * @param client		The client
  * @note Normally you use hooktype_local_quit(), hooktype_remote_quit() and hooktype_unkuser_quit() for this.
@@ -2380,7 +2440,6 @@ enum EfunctionType {
 	EFUNC_BROADCAST_MD_CHANNEL,
 	EFUNC_BROADCAST_MD_MEMBER,
 	EFUNC_BROADCAST_MD_MEMBERSHIP,
-	EFUNC_CHECK_BANNED,
 	EFUNC_INTRODUCE_USER,
 	EFUNC_CHECK_DENY_VERSION,
 	EFUNC_BROADCAST_MD_CLIENT_CMD,
@@ -2442,6 +2501,15 @@ enum EfunctionType {
 	EFUNC_WHOIS_GET_POLICY,
 	EFUNC_MAKE_OPER,
 	EFUNC_UNREAL_MATCH_IPLIST,
+	EFUNC_WEBSERVER_SEND_RESPONSE,
+	EFUNC_WEBSERVER_CLOSE_CLIENT,
+	EFUNC_WEBSERVER_HANDLE_BODY,
+	EFUNC_RPC_RESPONSE,
+	EFUNC_RPC_ERROR,
+	EFUNC_RPC_ERROR_FMT,
+	EFUNC_WEBSOCKET_HANDLE_WEBSOCKET,
+	EFUNC_WEBSOCKET_CREATE_PACKET,
+	EFUNC_WEBSOCKET_CREATE_PACKET_SIMPLE,
 };
 
 /* Module flags */

@@ -41,7 +41,6 @@ extern char *version;
 MODVAR time_t last_allinuse = 0;
 
 void start_of_normal_client_handshake(Client *client);
-extern void start_of_control_client_handshake(Client *client);
 void proceed_normal_client_handshake(Client *client, struct hostent *he);
 
 /** Close all connections - only used when we terminate the server (eg: /DIE or SIGTERM) */
@@ -790,30 +789,6 @@ const char *getpeerip(Client *client, int fd, int *port)
 	}
 }
 
-/** This checks set::max-unknown-connections-per-ip,
- * which is an important safety feature.
- */
-static int check_too_many_unknown_connections(Client *client)
-{
-	int cnt = 1;
-	Client *c;
-
-	if (!find_tkl_exception(TKL_CONNECT_FLOOD, client))
-	{
-		list_for_each_entry(c, &unknown_list, lclient_node)
-		{
-			if (!strcmp(client->ip,GetIP(c)))
-			{
-				cnt++;
-				if (cnt > iConf.max_unknown_connections_per_ip)
-					return 1;
-			}
-		}
-	}
-
-	return 0;
-}
-
 /** Process the incoming connection which has just been accepted.
  * This creates a client structure for the user.
  * The sockhost field is initialized with the ip# of the host.
@@ -830,9 +805,12 @@ Client *add_connection(ConfigItem_listen *listener, int fd)
 	Client *client;
 	const char *ip;
 	int port = 0;
+	Hook *h;
 
 	client = make_client(NULL, &me);
 	client->local->socket_type = listener->socket_type;
+	client->local->listener = listener;
+	client->local->listener->clients++;
 
 	if (listener->socket_type == SOCKET_TYPE_UNIX)
 		ip = "127.0.0.1";
@@ -855,6 +833,10 @@ Client *add_connection(ConfigItem_listen *listener, int fd)
 refuse_client:
 			ircstats.is_ref++;
 			client->local->fd = -2;
+			if (!list_empty(&client->client_node))
+				list_del(&client->client_node);
+			if (!list_empty(&client->lclient_node))
+				list_del(&client->lclient_node);
 			free_client(client);
 			fd_close(fd);
 			--OpenFiles;
@@ -874,37 +856,18 @@ refuse_client:
 		SetLocalhost(client);
 	}
 
-	if (!(listener->options & LISTENER_CONTROL))
-	{
-		/* Check set::max-unknown-connections-per-ip */
-		if (check_too_many_unknown_connections(client))
-		{
-			ircsnprintf(zlinebuf, sizeof(zlinebuf),
-				    "ERROR :Closing Link: [%s] (Too many unknown connections from your IP)\r\n",
-				    client->ip);
-			(void)send(fd, zlinebuf, strlen(zlinebuf), 0);
-			goto refuse_client;
-		}
-
-		/* Check (G)Z-Lines and set::anti-flood::connect-flood */
-		if (check_banned(client, NO_EXIT_CLIENT))
-			goto refuse_client;
-	}
-
-	client->local->listener = listener;
-	if (client->local->listener != NULL)
-		client->local->listener->clients++;
 	add_client_to_list(client);
+	irccounts.unknown++;
+	client->status = CLIENT_STATUS_UNKNOWN;
+	list_add(&client->lclient_node, &unknown_list);
 
-	if (!(listener->options & LISTENER_CONTROL))
+	for (h = Hooks[HOOKTYPE_ACCEPT]; h; h = h->next)
 	{
-		/* IRC: unknown connection */
-		irccounts.unknown++;
-		client->status = CLIENT_STATUS_UNKNOWN;
-		list_add(&client->lclient_node, &unknown_list);
-	} else {
-		client->status = CLIENT_STATUS_CONTROL;
-		list_add(&client->lclient_node, &control_list);
+		int value = (*(h->func.intfunc))(client);
+		if (value == HOOK_DENY)
+			goto refuse_client;
+		if (value != HOOK_CONTINUE)
+			break;
 	}
 
 	if ((listener->options & LISTENER_TLS) && ctx_server)
@@ -931,10 +894,9 @@ refuse_client:
 			}
 		}
 	} else
-	if (listener->options & LISTENER_CONTROL)
-		start_of_control_client_handshake(client);
-	else
-		start_of_normal_client_handshake(client);
+	{
+		listener->start_handshake(client);
+	}
 	return client;
 }
 
@@ -1240,7 +1202,8 @@ int deliver_it(Client *client, char *str, int len, int *want_read)
 
 	if (IsDeadSocket(client) ||
 	    (!IsServer(client) && !IsUser(client) && !IsHandshake(client) &&
-	     !IsTLSHandshake(client) && !IsUnknown(client)))
+	     !IsTLSHandshake(client) && !IsUnknown(client) &&
+	     !IsControl(client) && !IsRPC(client)))
 	{
 		return -1;
 	}
