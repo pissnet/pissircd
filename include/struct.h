@@ -323,9 +323,10 @@ typedef enum LogDestination { LOG_DEST_SNOMASK=0, LOG_DEST_OPER=1, LOG_DEST_REMO
  * @{
  */
 typedef enum ClientStatus {
-	CLIENT_STATUS_CONTROL			= -8,	/**< Client is on the control channel */
-	CLIENT_STATUS_LOG			= -7,	/**< Client is a log file */
-	CLIENT_STATUS_TLS_STARTTLS_HANDSHAKE	= -8,	/**< Client is doing a STARTTLS handshake */
+	CLIENT_STATUS_RPC			= -10,	/**< RPC Client (either local or remote) */
+	CLIENT_STATUS_CONTROL			= -9,	/**< Client is on the control channel */
+	CLIENT_STATUS_LOG			= -8,	/**< Client is a log file */
+	CLIENT_STATUS_TLS_STARTTLS_HANDSHAKE	= -7,	/**< Client is doing a STARTTLS handshake */
 	CLIENT_STATUS_CONNECTING		= -6,	/**< Client is an outgoing connect */
 	CLIENT_STATUS_TLS_CONNECT_HANDSHAKE	= -5,	/**< Client is doing an TLS handshake - outgoing connection */
 	CLIENT_STATUS_TLS_ACCEPT_HANDSHAKE	= -4,	/**< Client is doing an TLS handshake - incoming connection */
@@ -346,7 +347,8 @@ typedef enum ClientStatus {
 /** Client is not fully registered yet. May become a user or a server, we don't know yet. */
 #define	IsUnknown(x)		(((x)->status == CLIENT_STATUS_UNKNOWN) || ((x)->status == CLIENT_STATUS_TLS_STARTTLS_HANDSHAKE))	
 #define	IsServer(x)		((x)->status == CLIENT_STATUS_SERVER)	/**< Is a server that has completed the connection handshake */
-#define	IsControl(x)		((x)->status == CLIENT_STATUS_CONTROL)	/**< Is on the control channel (not on IRC) */
+#define	IsControl(x)		((x)->status == CLIENT_STATUS_CONTROL)	/**< Is on the control channel (not an IRC client) */
+#define	IsRPC(x)		((x)->status == CLIENT_STATUS_RPC)	/**< Is doing RPC (not an IRC client) */
 #define	IsLog(x)		((x)->status == CLIENT_STATUS_LOG)	/**< Is a log file, not a user or server */
 #define IsStartTLSHandshake(x)	((x)->status == CLIENT_STATUS_TLS_STARTTLS_HANDSHAKE)	/**< Currently doing a STARTTLS handshake */
 #define IsTLSAcceptHandshake(x)	((x)->status == CLIENT_STATUS_TLS_ACCEPT_HANDSHAKE)	/**< Currently doing a TLS handshake - incoming */
@@ -364,6 +366,7 @@ typedef enum ClientStatus {
 #define	SetUser(x)		((x)->status = CLIENT_STATUS_USER)
 #define	SetLog(x)		((x)->status = CLIENT_STATUS_LOG)
 #define	SetControl(x)		((x)->status = CLIENT_STATUS_CONTROL)
+#define	SetRPC(x)		((x)->status = CLIENT_STATUS_RPC)
 #define	SetUser(x)		((x)->status = CLIENT_STATUS_USER)
 
 /** @} */
@@ -788,6 +791,20 @@ struct MOTDLine {
 	struct MOTDLine *next;
 };
 
+/** Current status of configuration in memory (what stage are we in..) */
+typedef enum ConfigStatus {
+	CONFIG_STATUS_NONE = 0,		/**< Config files have not been parsed yet */
+	CONFIG_STATUS_TEST = 1,		/**< Currently running MOD_TEST() */
+	CONFIG_STATUS_POSTTEST = 2,	/**< Currently running post_config_test hooks */
+	CONFIG_STATUS_PRE_INIT = 3,	/**< In-between */
+	CONFIG_STATUS_INIT = 4,		/**< Currently running MOD_INIT() */
+	CONFIG_STATUS_RUN_CONFIG = 5,	/**< Currently running CONFIG_RUN hooks */
+	CONFIG_STATUS_LOAD = 6,		/**< Currently running MOD_LOAD() */
+	CONFIG_STATUS_POSTLOAD = 7,	/**< Doing post-load stuff like activating listeners */
+	CONFIG_STATUS_COMPLETE = 8,	/**< Load or rehash complete */
+	CONFIG_STATUS_ROLLBACK = 99,	/**< Configuration failed, rolling back changes */
+} ConfigStatus;
+
 struct LoopStruct {
 	unsigned do_garbage_collect : 1;
 	unsigned config_test : 1;
@@ -801,6 +818,7 @@ struct LoopStruct {
 	unsigned rehash_download_busy : 1; /* don't return "all downloads complete", needed for race condition */
 	unsigned tainted : 1;
 	int rehashing;
+	ConfigStatus config_status;
 	Client *rehash_save_client;
 	void (*boot_function)();
 };
@@ -873,8 +891,9 @@ struct SWhois {
 
 /** Command function - used by all command handlers.
  * This is used in the code like <pre>CMD_FUNC(cmd_yourcmd)</pre> as a function definition.
- * @param cptr        The client direction pointer.
- * @param client        The source client pointer (you usually need this one).
+ * It allows UnrealIRCd devs to change the parameters in the function without
+ * (necessarily) breaking your code.
+ * @param client      The client
  * @param recv_mtags  Received message tags for this command.
  * @param parc        Parameter count *plus* 1.
  * @param parv        Parameter values.
@@ -1226,13 +1245,15 @@ extern ModDataInfo *ModDataAdd(Module *module, ModDataInfo req);
 extern void ModDataDel(ModDataInfo *md);
 extern void unload_all_unused_moddata(void);
 
-#define LISTENER_NORMAL		0x000001
-#define LISTENER_CLIENTSONLY	0x000002
-#define LISTENER_SERVERSONLY	0x000004
-#define LISTENER_TLS		0x000010
-#define LISTENER_BOUND		0x000020
-#define LISTENER_DEFER_ACCEPT	0x000040
-#define LISTENER_CONTROL	0x000080	/**< Control channel */
+#define LISTENER_NORMAL			0x000001
+#define LISTENER_CLIENTSONLY		0x000002
+#define LISTENER_SERVERSONLY		0x000004
+#define LISTENER_TLS			0x000010
+#define LISTENER_BOUND			0x000020
+#define LISTENER_DEFER_ACCEPT		0x000040
+#define LISTENER_CONTROL		0x000080	/**< Control channel */
+#define LISTENER_NO_CHECK_CONNECT_FLOOD	0x000100	/**< Don't check for connect-flood and max-unknown-connections-per-ip (eg for RPC) */
+#define LISTENER_NO_CHECK_ZLINED	0x000200	/**< Don't check for zlines */
 
 #define IsServersOnlyListener(x)	((x) && ((x)->options & LISTENER_SERVERSONLY))
 
@@ -1693,6 +1714,74 @@ struct ConfigItem_tld {
 	u_short		options;
 };
 
+#define WEB_OPT_ENABLE	0x1
+
+typedef enum HttpMethod {
+	HTTP_METHOD_NONE = 0,	/**< No valid HTTP request (yet) */
+	HTTP_METHOD_HEAD = 1,	/**< HEAD request */
+	HTTP_METHOD_GET = 2,	/**< GET request */
+	HTTP_METHOD_PUT = 3,	/**< PUT request */
+	HTTP_METHOD_POST = 4,	/**< POST request */
+} HttpMethod;
+
+typedef enum TransferEncoding {
+	TRANSFER_ENCODING_NONE=0,
+	TRANSFER_ENCODING_CHUNKED=1
+} TransferEncoding;
+
+typedef struct WebRequest WebRequest;
+struct WebRequest {
+	HttpMethod method; /**< GET/PUT/POST */
+	char *uri; /**< Requested resource, eg "/api" */
+	NameValuePrioList *headers; /**< HTTP request headers */
+	int num_headers; /**< Number of HTTP request headers (also used for sorting the list) */
+	char request_header_parsed; /**< Done parsing? */
+	char *lefttoparse; /**< Leftover buffer to parse */
+	int lefttoparselen; /**< Length of lefttoparse buffer */
+	int pending_close; /**< Set to 1 when connection should be closed as soon as all data is sent (sendq==0) */
+	char *request_buffer; /**< Buffer for POST data */
+	int request_buffer_size; /**< Size of buffer for POST data */
+	int request_body_complete; /**< POST data has all been read */
+	long long content_length; /**< "Content-Length" as sent by the client */
+	long long chunk_remaining;
+	TransferEncoding transfer_encoding;
+	long long config_max_request_buffer_size; /**< CONFIG: Maximum request length allowed */
+};
+
+typedef struct WebServer WebServer;
+struct WebServer {
+	int (*handle_request)(Client *client, WebRequest *web);
+	int (*handle_body)(Client *client, WebRequest *web, const char *buf, int length);
+};
+
+typedef enum WebSocketType {
+	WEBSOCKET_TYPE_BINARY = 1,
+	WEBSOCKET_TYPE_TEXT   = 2
+} WebSocketType;
+
+typedef struct WebSocketUser WebSocketUser;
+struct WebSocketUser {
+	char get; /**< GET initiated */
+	char handshake_completed; /**< Handshake completed, use websocket frames */
+	char *handshake_key; /**< Handshake key (used during handshake) */
+	char *lefttoparse; /**< Leftover buffer to parse */
+	int lefttoparselen; /**< Length of lefttoparse buffer */
+	WebSocketType type; /**< WEBSOCKET_TYPE_BINARY or WEBSOCKET_TYPE_TEXT */
+	char *sec_websocket_protocol; /**< Only valid during parsing of the request, after that it is NULL again */
+	char *forwarded; /**< Unparsed `Forwarded:` header, RFC 7239 */
+	int secure; /**< If there is a Forwarded header, this indicates if the remote connection is secure */
+};
+
+#define WEBSOCKET_MAGIC_KEY "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" /* see RFC6455 */
+
+/* Websocket operations: */
+#define WSOP_CONTINUATION 0x00
+#define WSOP_TEXT         0x01
+#define WSOP_BINARY       0x02
+#define WSOP_CLOSE        0x08
+#define WSOP_PING         0x09
+#define WSOP_PONG         0x0a
+
 struct ConfigItem_listen {
 	ConfigItem_listen *prev, *next;
 	ConfigFlag flag;
@@ -1704,7 +1793,10 @@ struct ConfigItem_listen {
 	int fd;
 	SSL_CTX *ssl_ctx;
 	TLSOptions *tls_options;
+	WebServer *webserver;
+	void (*start_handshake)(Client *client); /**< Function to call on accept() */
 	int websocket_options; /* should be in module, but lazy */
+	int rpc_options;
 	char *websocket_forward;
 };
 
@@ -2270,6 +2362,24 @@ typedef enum WhoisConfigDetails {
 #define UNRL_STRIP_LOW_ASCII    0x1     /**< Strip all ASCII < 32 (control codes) */
 #define UNRL_STRIP_KEEP_LF      0x2     /**< Do not strip LF (line feed, \n) */
 
+/** JSON-RPC API Errors, according to jsonrpc.org spec */
+typedef enum JsonRpcError {
+	// Official JSON-RPC error codes:
+	JSON_RPC_ERROR_PARSE_ERROR	= -32700, /**< JSON parse error (fatal) */
+	JSON_RPC_ERROR_INVALID_REQUEST	= -32600, /**< Invalid JSON-RPC Request */
+	JSON_RPC_ERROR_METHOD_NOT_FOUND	= -32601, /**< Method not found */
+	JSON_RPC_ERROR_INVALID_PARAMS	= -32602, /**< Method parameters invalid */
+	JSON_RPC_ERROR_INTERNAL_ERROR	= -32603, /**< Internal server error */
+	// UnrealIRCd JSON-RPC server specific error codes:
+	JSON_RPC_ERROR_API_CALL_DENIED	= -32000, /**< The api user does not have enough permissions to do this call */
+	// UnrealIRCd specific application error codes:
+	JSON_RPC_ERROR_NOT_FOUND	=  -1000, /**< Target not found (no such nick / channel / ..) */
+	JSON_RPC_ERROR_ALREADY_EXISTS	=  -1001, /**< Resource already exists by that name (eg on nickchange request, a gline, etc) */
+	JSON_RPC_ERROR_INVALID_NAME	=  -1002, /**< Name is not permitted (eg: nick, channel, ..) */
+	JSON_RPC_ERROR_USERNOTINCHANNEL	=  -1003, /**< The user is not in the channel */
+	JSON_RPC_ERROR_TOO_MANY_ENTRIES	=  -1004, /**< Too many entries (eg: banlist, ..) */
+	JSON_RPC_ERROR_DENIED		=  -1005, /**< Permission denied for user (unrelated to api user permissions) */
+} JsonRpcError;
 #endif /* __struct_include__ */
 
 #include "dynconf.h"

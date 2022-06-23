@@ -798,7 +798,6 @@ extern MODVAR void (*send_moddata_client)(Client *srv, Client *acptr);
 extern MODVAR void (*send_moddata_channel)(Client *srv, Channel *channel);
 extern MODVAR void (*send_moddata_members)(Client *srv);
 extern MODVAR void (*broadcast_moddata_client)(Client *acptr);
-extern MODVAR int (*check_banned)(Client *cptr, int exitflags);
 extern MODVAR void (*introduce_user)(Client *to, Client *acptr);
 extern MODVAR int (*check_deny_version)(Client *cptr, const char *software, int protocol, const char *flags);
 extern MODVAR int (*match_user)(const char *rmask, Client *acptr, int options);
@@ -836,6 +835,15 @@ extern MODVAR char *(*get_chmodes_for_user)(Client *client, const char *flags);
 extern MODVAR WhoisConfigDetails (*whois_get_policy)(Client *client, Client *target, const char *name);
 extern MODVAR int (*make_oper)(Client *client, const char *operblock_name, const char *operclass, ConfigItem_class *clientclass, long modes, const char *snomask, const char *vhost);
 extern MODVAR int (*unreal_match_iplist)(Client *client, NameList *l);
+extern MODVAR void (*webserver_send_response)(Client *client, int status, char *msg);
+extern MODVAR void (*webserver_close_client)(Client *client);
+extern MODVAR int (*webserver_handle_body)(Client *client, WebRequest *web, const char *readbuf, int length);
+extern MODVAR void (*rpc_response)(Client *client, json_t *request, json_t *result);
+extern MODVAR void (*rpc_error)(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
+extern MODVAR void (*rpc_error_fmt)(Client *client, json_t *request, JsonRpcError error_code, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf,4,5)));
+extern MODVAR int (*websocket_handle_websocket)(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
+extern MODVAR int (*websocket_create_packet)(int opcode, char **buf, int *len);
+extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 /* /Efuncs */
 
 /* TLS functions */
@@ -872,6 +880,15 @@ extern int del_silence_default_handler(Client *client, const char *mask);
 extern int is_silenced_default_handler(Client *client, Client *acptr);
 extern void do_unreal_log_remote_deliver_default_handler(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, const char *json_serialized);
 extern int make_oper_default_handler(Client *client, const char *operblock_name, const char *operclass, ConfigItem_class *clientclass, long modes, const char *snomask, const char *vhost);
+extern void webserver_send_response_default_handler(Client *client, int status, char *msg);
+extern void webserver_close_client_default_handler(Client *client);
+extern int webserver_handle_body_default_handler(Client *client, WebRequest *web, const char *readbuf, int length);
+extern void rpc_response_default_handler(Client *client, json_t *request, json_t *result);
+extern void rpc_error_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
+extern void rpc_error_fmt_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *fmt, ...);
+extern int websocket_handle_websocket_default_handler(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
+extern int websocket_create_packet_default_handler(int opcode, char **buf, int *len);
+extern int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1111,6 +1128,7 @@ extern void add_fmt_nvplist(NameValuePrioList **lst, int priority, const char *n
 #define add_nvplist_numeric(lst, priority, name, to, numeric, ...) add_nvplist_numeric_fmt(lst, priority, name, to, numeric, STR_ ## numeric, ##__VA_ARGS__)
 extern void add_nvplist_numeric_fmt(NameValuePrioList **lst, int priority, const char *name, Client *to, int numeric, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,6,7)));
 extern NameValuePrioList *find_nvplist(NameValuePrioList *list, const char *name);
+extern const char *get_nvplist(NameValuePrioList *list, const char *name);
 extern void free_nvplist(NameValuePrioList *lst);
 extern void unreal_add_name_values(NameValuePrioList **n, const char *name, ConfigEntry *ce);
 extern const char *namevalue(NameValuePrioList *n);
@@ -1127,7 +1145,10 @@ extern void skip_whitespace(char **p);
 extern void read_until(char **p, char *stopchars);
 extern int is_ip_valid(const char *ip);
 extern int is_file_readable(const char *file, const char *dir);
-json_t *json_string_unreal(const char *s);
+extern json_t *json_string_unreal(const char *s);
+extern const char *json_object_get_string(json_t *j, const char *name);
+extern void json_expand_client(json_t *j, const char *key, Client *client, int detail);
+extern void json_expand_channel(json_t *j, const char *key, Channel *channel, int detail);
 /* securitygroup.c start */
 extern MODVAR SecurityGroup *securitygroups;
 extern void unreal_delete_masks(ConfigItem_mask *m);
