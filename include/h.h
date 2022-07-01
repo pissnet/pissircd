@@ -745,6 +745,7 @@ extern MODVAR int (*register_user)(Client *client);
 extern MODVAR int (*tkl_hash)(unsigned int c);
 extern MODVAR char (*tkl_typetochar)(int type);
 extern MODVAR int (*tkl_chartotype)(char c);
+extern MODVAR char (*tkl_configtypetochar)(const char *name);
 extern MODVAR const char *(*tkl_type_string)(TKL *tk);
 extern MODVAR const char *(*tkl_type_config_string)(TKL *tk);
 extern MODVAR TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, const char *reason, const char *setby,
@@ -817,6 +818,8 @@ extern MODVAR void (*broadcast_md_globalvar_cmd)(Client *except, Client *sender,
 extern MODVAR int (*tkl_ip_hash)(const char *ip);
 extern MODVAR int (*tkl_ip_hash_type)(int type);
 extern MODVAR int (*find_tkl_exception)(int ban_type, Client *cptr);
+extern MODVAR int (*server_ban_parse_mask)(Client *client, int add, char type, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
+extern MODVAR void (*tkl_added)(Client *client, TKL *tkl);
 extern MODVAR int (*del_silence)(Client *client, const char *mask);
 extern MODVAR int (*add_silence)(Client *client, const char *mask, int senderr);
 extern MODVAR int (*is_silenced)(Client *client, Client *acptr);
@@ -897,6 +900,7 @@ extern int add_listmode(Ban **list, Client *cptr, Channel *channel, const char *
 extern int add_listmode_ex(Ban **list, Client *cptr, Channel *channel, const char *banid, const char *setby, time_t seton);
 extern int del_listmode(Ban **list, Channel *channel, const char *banid);
 extern int Halfop_mode(long mode);
+extern const char *convert_regular_ban(char *mask, char *buf, size_t buflen);
 extern const char *clean_ban_mask(const char *, int, Client *, int);
 extern int find_invex(Channel *channel, Client *client);
 extern void DoMD5(char *mdout, const char *src, unsigned long n);
