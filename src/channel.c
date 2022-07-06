@@ -614,14 +614,17 @@ Cmode_t get_extmode_bitbychar(char m)
  */
 void channel_modes(Client *client, char *mbuf, char *pbuf, size_t mbuf_size, size_t pbuf_size, Channel *channel, int hide_local_modes)
 {
-	int ismember = 0;
+	int show_mode_parameters = 0;
 	Cmode *cm;
 
 	if (!mbuf_size || !pbuf_size)
 		return;
 
-	if (!client || IsMember(client, channel) || IsServer(client) || IsMe(client) || IsULine(client))
-		ismember = 1;
+	if (!client || IsMember(client, channel) || IsServer(client) || IsMe(client) || IsULine(client) ||
+	    ValidatePermissionsForPath("channel:see:mode:remote",client,NULL,channel,NULL))
+	{
+		show_mode_parameters = 1;
+	}
 
 	*pbuf = '\0';
 	strlcpy(mbuf, "+", mbuf_size);
@@ -637,7 +640,7 @@ void channel_modes(Client *client, char *mbuf, char *pbuf, size_t mbuf_size, siz
 			if (mbuf_size)
 				strlcat_letter(mbuf, flag, mbuf_size);
 
-			if (cm->paracount && ismember)
+			if (cm->paracount && show_mode_parameters)
 			{
 				strlcat(pbuf, cm_getparameter(channel, flag), pbuf_size);
 				strlcat(pbuf, " ", pbuf_size);
@@ -732,16 +735,16 @@ const char *convert_regular_ban(char *mask, char *buf, size_t buflen)
 	{
 		*host++ = '\0';
 		if (!user)
-			return make_nick_user_host(NULL, trim_str(mask,USERLEN), trim_str(host,HOSTLEN));
+			return make_nick_user_host_r(buf, buflen, NULL, trim_str(mask,USERLEN), trim_str(host,HOSTLEN));
 	}
 	else if (!user && (strchr(mask, '.') || strchr(mask, ':')))
 	{
 		/* 1.2.3.4 -> *!*@1.2.3.4 (and the same for IPv6) */
-		return make_nick_user_host(NULL, NULL, trim_str(mask,HOSTLEN));
+		return make_nick_user_host_r(buf, buflen, NULL, NULL, trim_str(mask,HOSTLEN));
 	}
 
 	/* regular nick!user@host with the auto-trimming feature */
-	return make_nick_user_host(trim_str(mask,NICKLEN), trim_str(user,USERLEN), trim_str(host,HOSTLEN));
+	return make_nick_user_host_r(buf, buflen, trim_str(mask,NICKLEN), trim_str(user,USERLEN), trim_str(host,HOSTLEN));
 }
 
 /** Make a proper ban mask.
