@@ -4,8 +4,30 @@ This is work in progress. Current git is NOT stable.
 If you want a stable IRCd, download 6.0.4 or upgrade to it via `./unrealircd upgrade`
 
 ### Enhancements:
+* Internally the websocket module has been split up into `websocket_common`,
+  `webserver` and `websocket`. The websocket_common one is loaded through
+  modules.default.conf. Important: if you use websockets then you need to
+  load two modules now (and not just one):
+  ```
+  loadmodule "websocket";
+  loadmodule "webserver";
+  ```
 * [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) API for UnrealIRCd.
-  This is work in progress, only listing users and channels at the moment.
+  This is work in progress.
+
+UnrealIRCd 6.0.4.2
+-------------------
+Another small update to 6.0.4.x:
+
+* Fix crash when linking. This requires a certain sequence of events: first
+  a server is linked in successfully, then we need to REHASH, and then a new
+  link attempt has to come in with the same server name (for example because
+  there is a network issue and the old link has not timed out yet).
+  If all that happens, then an UnreaIRCd 6 server may crash, but not always.
+* Two IRCv3 specifications were ratified which we already supported as drafts:
+  * Change CAP `draft/extended-monitor` to `extended-monitor`
+  * Add message-tag `bot` next to existing (for now) `draft/bot`
+* Update Turkish translations
 
 UnrealIRCd 6.0.4.1
 -------------------
