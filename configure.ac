@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.0.5-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.0.5-rc1], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -40,7 +40,7 @@ AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor versi
 # The version suffix such as a beta marker or release candidate
 # marker. (e.g.: -rcX for unrealircd-3.2.9-rcX). This macro is a
 # string instead of an integer because it contains arbitrary data.
-UNREAL_VERSION_SUFFIX=["-git"]
+UNREAL_VERSION_SUFFIX=["-rc1"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_SUFFIX], ["$UNREAL_VERSION_SUFFIX"], [Version suffix such as a beta marker or release candidate marker. (e.g.: -rcX for unrealircd-3.2.9-rcX)])
 
 AC_PATH_PROG(RM,rm)
@@ -586,7 +586,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libpcre2*])],[has
 
 AS_IF([test "$has_system_pcre2" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW PCRE2 RELEASE!
-pcre2_version="10.39"
+pcre2_version="10.40"
 AC_MSG_RESULT(extracting PCRE2 regex library)
 cur_dir=`pwd`
 cd extras
@@ -633,7 +633,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libargon2*])])])]
 
 AS_IF([test "$has_system_argon2" = "no"],[
 dnl REMEMBER TO CHANGE WITH A NEW ARGON2 RELEASE!
-argon2_version="20181209"
+argon2_version="20190702"
 AC_MSG_RESULT(extracting Argon2 library)
 cur_dir=`pwd`
 cd extras
@@ -641,12 +641,12 @@ dnl remove old argon2 directory to force a recompile...
 dnl and remove its installation prefix just to clean things up.
 rm -rf argon2-$argon2_version argon2
 if test "x$ac_cv_path_GUNZIP" = "x" ; then
-	tar xfz argon2-$argon2_version.tar.gz
+	tar xfz argon2.tar.gz
 else
-	cp argon2-$argon2_version.tar.gz argon2-$argon2_version.tar.gz.bak
-	gunzip -f argon2-$argon2_version.tar.gz
-	cp argon2-$argon2_version.tar.gz.bak argon2-$argon2_version.tar.gz
-	tar xf argon2-$argon2_version.tar
+	cp argon2.tar.gz argon2.tar.gz.bak
+	gunzip -f argon2.tar.gz
+	cp argon2.tar.gz.bak argon2.tar.gz
+	tar xf argon2.tar
 fi
 AC_MSG_RESULT(compiling Argon2 library)
 cd argon2-$argon2_version
@@ -696,7 +696,7 @@ cd libsodium-$sodium_version
 save_cflags="$CFLAGS"
 CFLAGS="$orig_cflags"
 export CFLAGS
-./configure --prefix=$cur_dir/extras/sodium --libdir=$PRIVATELIBDIR --enable-shared --disable-static --enable-opt || exit 1
+./configure --prefix=$cur_dir/extras/sodium --libdir=$PRIVATELIBDIR --enable-shared --disable-static || exit 1
 CFLAGS="$save_cflags"
 AC_MSG_RESULT(compiling sodium resolver library)
 $ac_cv_prog_MAKER || exit 1
