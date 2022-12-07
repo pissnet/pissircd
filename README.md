@@ -14,18 +14,17 @@ online documentation.
 
 ## Versions
 * UnrealIRCd 6 is the *stable* series since December 2021. All new features go in there.
-* UnrealIRCd 5 is the *oldstable* series. It will receive bug fixes until
-  July 1, 2022 plus another 12 months of security fixes.
+* UnrealIRCd 5 is the *oldstable* series. It is End Of Life. Only security bugs will
+  be fixed until June 30, 2023, after which all support will stop.
 * For full details of release scheduling and EOL dates, see
   [UnrealIRCd releases](https://www.unrealircd.org/docs/UnrealIRCd_releases) on the wiki
 
 ## How to get started
-### Use the wiki!
-**IMPORTANT:** We recommend you follow our installation guide on the wiki instead of the
-steps in this README. The wiki has more detailed information and is more easy to navigate.
+Follow the installation guide on the wiki. See:
 * [Installing from source for *NIX](https://www.unrealircd.org/docs/Installing_from_source)
 * [Installating instructions for Windows](https://www.unrealircd.org/docs/Installing_(Windows))
 
+<<<<<<< HEAD
 Please consult the online documentation at https://www.unrealircd.org/docs/ when setting up the IRCd!
 
 ### Step 1: Installation
@@ -63,6 +62,10 @@ Start -> All Programs -> UnrealIRCd -> UnrealIRCd
 
 ## Documentation & FAQ for UnrealIRCd
 You can find the **documentation** online at: https://www.unrealircd.org/docs/
+=======
+## Documentation & FAQ
+You can find all **documentation** online at: https://www.unrealircd.org/docs/
+>>>>>>> 6ae5c9d77f0d29191ddd4bea70f818ec5e0adad8
 
 We also have a good **FAQ**: https://www.unrealircd.org/docs/FAQ
 
