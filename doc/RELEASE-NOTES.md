@@ -43,6 +43,12 @@ You can help us by testing this release and reporting any issues at https://bugs
   [Websocket connections](https://www.unrealircd.org/docs/WebSocket_support).
 * In the [TLD block](https://www.unrealircd.org/docs/Tld_block) the use
   of `tld::motd` and `tld::rules` is now optional.
+* The `./unrealircd start` command will now refuse to start if UnrealIRCd
+  is already running.
+* The `./unrealircd restart` command will validate the configuration file
+  (it will call `./unrealircd configtest`). If there is a configuration
+  error then the restart will not go through and the current UnrealIRCd
+  process is kept running.
 
 ### Changes:
 * SSL/TLS: By default we now require TLSv1.2 or later and a modern cipher
@@ -68,7 +74,13 @@ You can help us by testing this release and reporting any issues at https://bugs
   [`set:max-unknown-connections-per-ip`](https://www.unrealircd.org/docs/Set_block#set::max-unknown-connections-per-ip)
   is now handled by the new module `max-unknown-connections-per-ip`. This module is loaded
   by default as well, no changes needed in your configuration file.
-* Bump shipped PCRE2 to 10.41, update curl-ca-bundle to 2022-10-11
+* Upgrade shipped PCRE2 to 10.41, curl-ca-bundle to 2022-10-11,
+  on Windows LibreSSL to 3.6.1 and cURL to 7.86.0.
+* After people do a major upgrade on their Linux distro, UnrealIRCd may
+  no longer start due to an `error while loading shared libraries`.
+  We now print a more helpful message and link to the new
+  [FAQ entry](https://www.unrealircd.org/docs/FAQ#shared-library-error)
+  about it.
 
 ### Fixes:
 * Fix crash when linking. This requires a certain sequence of events: first
