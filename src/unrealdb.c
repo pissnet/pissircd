@@ -21,7 +21,7 @@
 #include "unrealircd.h"
 
 /** @file
- * @brief Unreal database API - see @ref UnrealDBFunctions
+ * @brief UnrealIRCd database API - see @ref UnrealDBFunctions
  */
 
 /**
