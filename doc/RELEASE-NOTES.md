@@ -1,8 +1,23 @@
-UnrealIRCd 6.0.5-rc1
-=====================
-This is the Release Candidate for UnrealIRCd 6.0.5.
+UnrealIRCd 6.0.5
+=================
 
-You can help us by testing this release and reporting any issues at https://bugs.unrealircd.org/.
+This release adds experimental JSON-RPC support, a new TLINE command, the
+`./unrealircd restart` command has been improved to check for config errors,
+logging to files has been improved and there are several other enhancements.
+
+There are also two important changes: 1) servers that use websockets now also
+need to load the "webserver" module (so you may need to edit your config
+file). 2) we now require TLSv1.2 or higher and a modern cipher for IRC clients.
+This should be no problem for clients using any reasonably new SSL/TLS library
+(from 2014 or later).
+
+I would also like to take this opportunity to say that we are
+[looking for webdevs to create an UnrealIRCd admin panel](https://forums.unrealircd.org/viewtopic.php?t=9257).
+The previous attempt at this failed so we are looking for new people.
+
+See the full release notes below for all changes in more detail.
+
+As usual, on *NIX you can easily upgrade with `./unrealircd upgrade`
 
 ### Enhancements:
 * Internally the websocket module has been split up into 3 modules:
@@ -18,6 +33,16 @@ You can help us by testing this release and reporting any issues at https://bugs
 * New `TLINE` command to test *LINEs. This can be especially useful for 
   checking how many people match an [extended server ban](https://www.unrealircd.org/docs/Extended_server_bans)
   such as `TLINE ~C:NL`
+* The `./unrealircd start` command will now refuse to start if UnrealIRCd
+  is already running.
+* The `./unrealircd restart` command will validate the configuration file
+  (it will call `./unrealircd configtest`). If there is a configuration
+  error then the restart will not go through and the current UnrealIRCd
+  process is kept running.
+* When an IRCOp is outside the channel and does `MODE #channel` they will
+  now get to see the mode parameters too. This depends on the `channel:see:mode:remote`
+  [operclass permission](https://www.unrealircd.org/docs/Operclass_permissions)
+  which all IRCOps have by default if you use the default operclasses.
 * [Logging to a file](https://www.unrealircd.org/docs/Log_block) now creates
   a directory structure if needed.
   * You could already use:
@@ -30,16 +55,6 @@ You can help us by testing this release and reporting any issues at https://bugs
     ```
     This is especially useful if you output to multiple log files and then
     want them grouped by date in a directory.
-* The `./unrealircd start` command will now refuse to start if UnrealIRCd
-  is already running.
-* The `./unrealircd restart` command will validate the configuration file
-  (it will call `./unrealircd configtest`). If there is a configuration
-  error then the restart will not go through and the current UnrealIRCd
-  process is kept running.
-* When an IRCOp is outside the channel and does `MODE #channel` they will
-  now get to see the mode parameters too. This depends on the `channel:see:mode:remote`
-  [operclass permission](https://www.unrealircd.org/docs/Operclass_permissions)
-  which all IRCOps have by default if you use the default operclasses.
 * Add additional variables in
   [blacklist::reason](https://www.unrealircd.org/docs/Blacklist_block):
   * `$blacklist`: name of the blacklist block
@@ -49,6 +64,7 @@ You can help us by testing this release and reporting any issues at https://bugs
   [Websocket connections](https://www.unrealircd.org/docs/WebSocket_support).
 * In the [TLD block](https://www.unrealircd.org/docs/Tld_block) the use
   of `tld::motd` and `tld::rules` is now optional.
+* Log which oper actually initiated a server link request (`CONNECT`)
 
 ### Changes:
 * SSL/TLS: By default we now require TLSv1.2 or later and a modern cipher
@@ -81,15 +97,23 @@ You can help us by testing this release and reporting any issues at https://bugs
   We now print a more helpful message and link to the new
   [FAQ entry](https://www.unrealircd.org/docs/FAQ#shared-library-error)
   about it.
+* When timing out on the [authprompt](https://www.unrealircd.org/docs/Set_block#set::authentication-prompt)
+  module, the error (quit message) is now the original (ban) reason for the
+  prompt, instead of the generic `Registration timeout`.
 
 ### Fixes:
-* Fix crash when linking. This requires a certain sequence of events: first
+* Crash when linking. This requires a certain sequence of events: first
   a server is linked in successfully, then we need to REHASH, and then a new
   link attempt has to come in with the same server name (for example because
   there is a network issue and the old link has not timed out yet).
   If all that happens, then an UnreaIRCd 6 server may crash, but not always.
+* Warning message about moddata creationtime when linking.
 * [Snomask `+j`](https://www.unrealircd.org/docs/Snomasks) was not showing
   remote joins, even though it did show remote parts and kicks.
+* Leak of 1 file descriptor per /REHASH (the control socket).
+* Ban letters showing up twice in 005 EXTBAN=
+* Setting [set::authentication-prompt::enabled](https://www.unrealircd.org/docs/Set_block#set::authentication-prompt)
+  to `no` was ignored. The default is still `yes`.
 
 ### Developers and protocol:
 * Add `CALL_CMD_FUNC(cmd_func_name)` for calling commands in the same
@@ -133,10 +157,6 @@ present in all 6.0.x versions:
 
 UnrealIRCd 6.0.4
 -----------------
-This release comes with lots of features and enhancements. In particular,
-security groups and mask items now allow you to write cleaner and more
-flexible configuration files. There are also JSON logging enhancements and
-several bug fixes. Thanks a lot to everyone who tested the release candidates!
 
 If you are already running UnrealIRCd 6 then read below. Otherwise, jump
 straight to the [summary about UnrealIRCd 6](#Summary) to learn more
