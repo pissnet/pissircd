@@ -243,6 +243,7 @@ MODVAR ConfigFile		*conf = NULL;
 extern NameValueList *config_defines;
 MODVAR int ipv6_disabled = 0;
 MODVAR Client *remote_rehash_client = NULL;
+MODVAR json_t *json_rehash_log = NULL;
 
 MODVAR int			config_error_flag = 0;
 int			config_verbose = 0;
@@ -3081,6 +3082,30 @@ ConfigItem_link *find_link(const char *servername)
 	return NULL;
 }
 
+/** Check if this link should be denied due to deny link { } configuration
+ * @param link		The link block
+ * @param auto_connect	Set this to 1 if this is called from auto connect code
+ *			(it will then check both CRULE_AUTO + CRULE_ALL)
+ *			set it to 0 otherwise (will not check CRULE_AUTO blocks).
+ * @returns The deny block if the server should be denied, or NULL if no deny block.
+ */
+ConfigItem_deny_link *check_deny_link(ConfigItem_link *link, int auto_connect)
+{
+	ConfigItem_deny_link *d;
+
+	for (d = conf_deny_link; d; d = d->next)
+	{
+		if ((auto_connect == 0) && (d->flag.type == CRULE_AUTO))
+			continue;
+		if (unreal_mask_match_string(link->servername, d->mask) &&
+		    crule_eval(d->rule))
+		{
+			return d;
+		}
+	}
+	return NULL;
+}
+
 /** Find a ban of type CONF_BAN_*, which is currently only
  * CONF_BAN_SERVER, CONF_BAN_VERSION and CONF_BAN_REALNAME
  */
@@ -4972,7 +4997,12 @@ void conf_listen_configure(const char *ip, int port, SocketType socket_type, int
 	 */
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "ip"))
+		if (!strcmp(cep->name, "mode"))
+		{
+			/* Yeah, we actually do something with this one.. */
+			if (cep->value)
+				listen->mode = strtol(cep->value, NULL, 8); /* octal */
+		} else if (!strcmp(cep->name, "ip"))
 			;
 		else if (!strcmp(cep->name, "port"))
 			;
@@ -5020,7 +5050,12 @@ int	_conf_listen(ConfigFile *conf, ConfigEntry *ce)
 	{
 		if (!strcmp(cep->name, "file"))
 		{
+			convert_to_absolute_path(&cep->value, PERMDATADIR);
 			file = cep->value;
+		} else
+		if (!strcmp(cep->name, "mode"))
+		{
+			// Handled elsewhere, but need to be caught here as noop
 		} else
 		if (!strcmp(cep->name, "ip"))
 		{
@@ -5210,6 +5245,18 @@ int	_test_listen(ConfigFile *conf, ConfigEntry *ce)
 		{
 			has_file = 1;
 			file = cep->value;
+		} else
+		if (!strcmp(cep->name, "mode"))
+		{
+			int mode = strtol(cep->value, NULL, 8);
+			if ((mode != 0700) && (mode != 0770) && (mode != 0777))
+			{
+				config_error("%s:%i: listen::mode must be one of: 0700 (user only, the default), "
+				             "0770 (user and group readable/writable), or "
+				             "0777 (world readable and writable, not recommended).",
+				             cep->file->filename, cep->line_number);
+				errors++;
+			}
 		} else
 		if (!strcmp(cep->name, "ip"))
 		{
@@ -7919,6 +7966,12 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 				if (!strcmp(cepp->name, "policy"))
 					tempiConf.hide_idle_time = hideidletime_strtoval(cepp->value);
 			}
+		} else if (!strcmp(cep->name, "limit-svscmds"))
+		{
+			if (!strcmp(cep->value, "ulines"))
+				tempiConf.limit_svscmds = LIMIT_SVSCMDS_ULINES;
+			else
+				tempiConf.limit_svscmds = LIMIT_SVSCMDS_SERVERS;
 		} else
 		{
 			int value;
@@ -9263,6 +9316,15 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 					errors++;
 					continue;
 				}
+			}
+		} else if (!strcmp(cep->name, "limit-svscmds"))
+		{
+			CheckNull(cep);
+			if (strcmp(cep->value, "servers") && strcmp(cep->value, "ulines"))
+			{
+				config_error("%s:%i: set::limit-svscmds: value must be one of: 'servers' or 'ulines'",
+				             cep->file->filename, cep->line_number);
+				errors++;
 			}
 		} else
 		{
@@ -10657,6 +10719,8 @@ void resource_download_complete(const char *url, const char *file, const char *e
  */
 void request_rehash(Client *client)
 {
+	json_t *j;
+
 	if (loop.rehashing)
 	{
 		if (client)
@@ -10664,6 +10728,21 @@ void request_rehash(Client *client)
 		return;
 	}
 
+	/* Free any old json_rehash_log */
+	if (json_rehash_log)
+	{
+		json_decref(json_rehash_log);
+		json_rehash_log = NULL;
+	}
+
+	/* Start a new json_rehash_log */
+	json_rehash_log = json_object();
+	if (client)
+		json_expand_client(json_rehash_log, "rehash_client", client, 1);
+	j = json_array();
+	json_object_set_new(json_rehash_log, "log", j);
+
+	/* Now actually process the rehash request... */
 	loop.rehashing = 1;
 	loop.rehash_save_client = client;
 	config_read_start();
@@ -10678,7 +10757,7 @@ int rehash_internal(Client *client)
 
 	/* Log it here if it is by a signal */
 	if (client == NULL)
-		unreal_log(ULOG_INFO, "config", "CONFIG_RELOAD", client, "Rehashing server configuration file [./unrealircd rehash]");
+		unreal_log(ULOG_INFO, "config", "CONFIG_RELOAD", NULL, "Rehashing server configuration file [./unrealircd rehash]");
 
 	loop.rehashing = 2; /* now doing the actual rehash */
 
@@ -10701,6 +10780,9 @@ int rehash_internal(Client *client)
 	loop.rehashing = 0;
 	remote_rehash_client = NULL;
 	procio_post_rehash(failure);
+	json_object_set_new(json_rehash_log, "success", json_boolean(failure ? 0 : 1));
+	RunHook(HOOKTYPE_REHASH_LOG, failure, json_rehash_log);
+
 	loop.config_status = CONFIG_STATUS_COMPLETE;
 	return 1;
 }

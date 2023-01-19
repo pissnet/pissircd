@@ -637,6 +637,7 @@ void exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, cons
 	if (IsServer(client))
 	{
 		char splitstr[HOSTLEN + HOSTLEN + 2];
+		Client *acptr, *next;
 
 		assert(client->server != NULL && client->uplink != NULL);
 
@@ -646,6 +647,11 @@ void exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, cons
 			ircsnprintf(splitstr, sizeof splitstr, "%s %s", client->uplink->name, client->name);
 
 		remove_dependents(client, origin, recv_mtags, comment, splitstr);
+
+		/* Special case for remote async RPC, server.rehash in particular.. */
+		list_for_each_entry_safe(acptr, next, &rpc_remote_list, client_node)
+			if (!strncmp(client->id, acptr->id, SIDLEN))
+				free_client(acptr);
 
 		RunHook(HOOKTYPE_SERVER_QUIT, client, recv_mtags);
 	}
@@ -717,6 +723,28 @@ int valid_host(const char *host, int strict)
 		for (p=host; *p; p++)
 			if (!isalnum(*p) && !strchr("_-.:/", *p))
 				return 0;
+	}
+
+	return 1;
+}
+
+/** Check if the specified ident / user name does not contain forbidden characters.
+ * @param username	The username / ident to check
+ * @returns 1 if valid, 0 if not.
+ */
+int valid_username(const char *username)
+{
+	const char *s;
+
+	if (strlen(username) > USERLEN)
+		return 0; /* Too long */
+
+	for (s = username; *s; s++)
+	{
+		if ((*s == '~') && (s == username))
+			continue;
+		if (!isallowed(*s))
+			return 0;
 	}
 
 	return 1;
@@ -1411,12 +1439,39 @@ void rpc_error_fmt_default_handler(Client *client, json_t *request, JsonRpcError
 {
 }
 
+void rpc_send_request_to_remote_default_handler(Client *source, Client *target, json_t *request)
+{
+}
+
+void rpc_send_response_to_remote_default_handler(Client *source, Client *target, json_t *response)
+{
+}
+
+int rrpc_supported_simple_default_handler(Client *target, char **problem_server)
+{
+	if (problem_server)
+		*problem_server = me.name;
+	return 0;
+}
+
+int rrpc_supported_default_handler(Client *target, const char *module, const char *minimum_version, char **problem_server)
+{
+	if (problem_server)
+		*problem_server = me.name;
+	return 0;
+}
+
 int websocket_handle_websocket_default_handler(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len))
 {
 	return -1;
 }
 
 int websocket_create_packet_default_handler(int opcode, char **buf, int *len)
+{
+	return -1;
+}
+
+int websocket_create_packet_ex_default_handler(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize)
 {
 	return -1;
 }

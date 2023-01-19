@@ -149,6 +149,7 @@ extern ConfigItem_sni *find_sni(const char *name);
 extern ConfigItem_ulines	*find_uline(const char *host);
 extern ConfigItem_tld		*find_tld(Client *cptr);
 extern ConfigItem_link		*find_link(const char *servername);
+extern ConfigItem_deny_link *check_deny_link(ConfigItem_link *link, int auto_connect);
 extern ConfigItem_ban 		*find_ban(Client *, const char *host, short type);
 extern ConfigItem_ban 		*find_banEx(Client *,const char *host, short type, short type2);
 extern ConfigItem_vhost	*find_vhost(const char *name);
@@ -183,6 +184,7 @@ extern MODVAR struct list_head unknown_list;
 extern MODVAR struct list_head control_list;
 extern MODVAR struct list_head global_server_list;
 extern MODVAR struct list_head dead_list;
+extern MODVAR struct list_head rpc_remote_list;
 extern RealCommand *find_command(const char *cmd, int flags);
 extern RealCommand *find_command_simple(const char *cmd);
 extern Membership *find_membership_link(Membership *lp, Channel *ptr);
@@ -667,6 +669,7 @@ extern void IRCToRTF(unsigned char *buffer, unsigned char *string);
 #endif
 extern void verify_opercount(Client *, const char *);
 extern int valid_host(const char *host, int strict);
+extern int valid_username(const char *username);
 extern int count_oper_sessions(const char *);
 extern char *unreal_mktemp(const char *dir, const char *suffix);
 extern char *unreal_getpathname(const char *filepath, char *path);
@@ -745,7 +748,8 @@ extern MODVAR int (*can_join)(Client *client, Channel *channel, const char *key,
 extern MODVAR void (*do_mode)(Channel *channel, Client *client, MessageTag *mtags, int parc, const char *parv[], time_t sendts, int samode);
 extern MODVAR MultiLineMode *(*set_mode)(Channel *channel, Client *cptr, int parc, const char *parv[], u_int *pcount,
                             char pvar[MAXMODEPARAMS][MODEBUFLEN + 3]);
-extern MODVAR void (*set_channel_mode)(Channel *channel, char *modes, char *parameters);
+extern MODVAR void (*set_channel_mode)(Channel *channel, const char *modes, const char *parameters);
+extern MODVAR void (*set_channel_topic)(Client *client, Channel *channel, MessageTag *recv_mtags, const char *topic, const char *set_by, time_t set_at);
 extern MODVAR void (*cmd_umode)(Client *, MessageTag *, int, const char **);
 extern MODVAR int (*register_user)(Client *client);
 extern MODVAR int (*tkl_hash)(unsigned int c);
@@ -825,6 +829,7 @@ extern MODVAR int (*tkl_ip_hash)(const char *ip);
 extern MODVAR int (*tkl_ip_hash_type)(int type);
 extern MODVAR int (*find_tkl_exception)(int ban_type, Client *cptr);
 extern MODVAR int (*server_ban_parse_mask)(Client *client, int add, char type, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
+extern MODVAR int (*server_ban_exception_parse_mask)(Client *client, int add, const char *bantypes, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
 extern MODVAR void (*tkl_added)(Client *client, TKL *tkl);
 extern MODVAR int (*del_silence)(Client *client, const char *mask);
 extern MODVAR int (*add_silence)(Client *client, const char *mask, int senderr);
@@ -850,8 +855,13 @@ extern MODVAR int (*webserver_handle_body)(Client *client, WebRequest *web, cons
 extern MODVAR void (*rpc_response)(Client *client, json_t *request, json_t *result);
 extern MODVAR void (*rpc_error)(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
 extern MODVAR void (*rpc_error_fmt)(Client *client, json_t *request, JsonRpcError error_code, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf,4,5)));
+extern MODVAR void (*rpc_send_request_to_remote)(Client *source, Client *target, json_t *request);
+extern MODVAR void (*rpc_send_response_to_remote)(Client *source, Client *target, json_t *request);
+extern MODVAR int (*rrpc_supported_simple)(Client *target, char **problem_server);
+extern MODVAR int (*rrpc_supported)(Client *target, const char *module, const char *minimum_version, char **problem_server);
 extern MODVAR int (*websocket_handle_websocket)(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
 extern MODVAR int (*websocket_create_packet)(int opcode, char **buf, int *len);
+extern MODVAR int (*websocket_create_packet_ex)(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize);
 extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 /* /Efuncs */
 
@@ -895,8 +905,13 @@ extern int webserver_handle_body_default_handler(Client *client, WebRequest *web
 extern void rpc_response_default_handler(Client *client, json_t *request, json_t *result);
 extern void rpc_error_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
 extern void rpc_error_fmt_default_handler(Client *client, json_t *request, JsonRpcError error_code, const char *fmt, ...);
+extern void rpc_send_request_to_remote_default_handler(Client *source, Client *target, json_t *request);
+extern void rpc_send_response_to_remote_default_handler(Client *source, Client *target, json_t *response);
+extern int rrpc_supported_simple_default_handler(Client *target, char **problem_server);
+extern int rrpc_supported_default_handler(Client *target, const char *module, const char *minimum_version, char **problem_server);
 extern int websocket_handle_websocket_default_handler(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
 extern int websocket_create_packet_default_handler(int opcode, char **buf, int *len);
+extern int websocket_create_packet_ex_default_handler(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize);
 extern int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len);
 /* End of default handlers for efunctions */
 
@@ -982,6 +997,7 @@ extern int unix_sockets_capable(void);
 extern void init_winsock(void);
 #endif
 extern MODVAR Client *remote_rehash_client;
+extern MODVAR json_t *json_rehash_log;
 extern MODVAR int debugfd;
 extern void convert_to_absolute_path(char **path, const char *reldir);
 extern int has_user_mode(Client *acptr, char mode);
@@ -1159,6 +1175,7 @@ extern int is_file_readable(const char *file, const char *dir);
 /* json.c */
 extern json_t *json_string_unreal(const char *s);
 extern const char *json_object_get_string(json_t *j, const char *name);
+extern int json_object_get_boolean(json_t *j, const char *name, int default_value);
 extern json_t *json_timestamp(time_t v);
 extern const char *timestamp_iso8601_now(void);
 extern const char *timestamp_iso8601(time_t v);
@@ -1259,6 +1276,7 @@ extern int log_tests(void);
 extern void config_pre_run_log(void);
 extern void log_blocks_switchover(void);
 extern void postconf_defaults_log_block(void);
+extern int valid_loglevel(int v);
 extern LogLevel log_level_stringtoval(const char *str);
 extern const char *log_level_valtostring(LogLevel loglevel);
 extern LogLevel log_level_stringtoval(const char *str);
@@ -1289,6 +1307,7 @@ extern EVENT(url_socket_timeout);
 extern char *collapse(char *pattern);
 extern void clear_scache_hash_table(void);
 extern void sendto_one(Client *, MessageTag *mtags, FORMAT_STRING(const char *), ...) __attribute__((format(printf,3,4)));
+extern void mark_data_to_send(Client *to);
 extern EVENT(garbage_collect);
 extern EVENT(loop_event);
 extern EVENT(check_pings);
@@ -1312,3 +1331,4 @@ extern int minimum_msec_since_last_run(struct timeval *tv_old, long minimum);
 extern long get_connected_time(Client *client);
 extern const char *StripControlCodes(const char *text);
 extern const char *StripControlCodesEx(const char *text, char *output, size_t outputlen, int strip_flags);
+extern MODVAR Module *Modules;

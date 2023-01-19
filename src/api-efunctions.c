@@ -40,7 +40,8 @@ int (*can_join)(Client *client, Channel *channel, const char *key, char **errmsg
 void (*do_mode)(Channel *channel, Client *client, MessageTag *mtags, int parc, const char *parv[], time_t sendts, int samode);
 MultiLineMode *(*set_mode)(Channel *channel, Client *client, int parc, const char *parv[], u_int *pcount,
                            char pvar[MAXMODEPARAMS][MODEBUFLEN + 3]);
-void (*set_channel_mode)(Channel *channel, char *modes, char *parameters);
+void (*set_channel_mode)(Channel *channel, const char *modes, const char *parameters);
+void (*set_channel_topic)(Client *client, Channel *channel, MessageTag *recv_mtags, const char *topic, const char *set_by, time_t set_at);
 void (*cmd_umode)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
 int (*register_user)(Client *client);
 int (*tkl_hash)(unsigned int c);
@@ -121,6 +122,7 @@ TKL *(*find_tkl_nameban)(int type, const char *name, int hold);
 TKL *(*find_tkl_spamfilter)(int type, const char *match_string, unsigned short action, unsigned short target);
 int (*find_tkl_exception)(int ban_type, Client *client);
 int (*server_ban_parse_mask)(Client *client, int add, char type, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
+int (*server_ban_exception_parse_mask)(Client *client, int add, const char *bantypes, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
 void (*tkl_added)(Client *client, TKL *tkl);
 int (*is_silenced)(Client *client, Client *acptr);
 int (*del_silence)(Client *client, const char *mask);
@@ -145,8 +147,13 @@ int (*webserver_handle_body)(Client *client, WebRequest *web, const char *readbu
 void (*rpc_response)(Client *client, json_t *request, json_t *result);
 void (*rpc_error)(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
 void (*rpc_error_fmt)(Client *client, json_t *request, JsonRpcError error_code, const char *fmt, ...);
+void (*rpc_send_request_to_remote)(Client *source, Client *target, json_t *request);
+void (*rpc_send_response_to_remote)(Client *source, Client *target, json_t *response);
+int (*rrpc_supported_simple)(Client *target, char **problem_server);
+int (*rrpc_supported)(Client *target, const char *module, const char *minimum_version, char **problem_server);
 int (*websocket_handle_websocket)(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
 int (*websocket_create_packet)(int opcode, char **buf, int *len);
+int (*websocket_create_packet_ex)(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize);
 int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
@@ -331,6 +338,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_DO_MODE, do_mode, NULL);
 	efunc_init_function(EFUNC_SET_MODE, set_mode, NULL);
 	efunc_init_function(EFUNC_SET_CHANNEL_MODE, set_channel_mode, NULL);
+	efunc_init_function(EFUNC_SET_CHANNEL_TOPIC, set_channel_topic, NULL);
 	efunc_init_function(EFUNC_CMD_UMODE, cmd_umode, NULL);
 	efunc_init_function(EFUNC_REGISTER_USER, register_user, NULL);
 	efunc_init_function(EFUNC_TKL_HASH, tkl_hash, NULL);
@@ -403,6 +411,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_FIND_TKL_SPAMFILTER, find_tkl_spamfilter, NULL);
 	efunc_init_function(EFUNC_FIND_TKL_EXCEPTION, find_tkl_exception, NULL);
 	efunc_init_function(EFUNC_SERVER_BAN_PARSE_MASK, server_ban_parse_mask, NULL);
+	efunc_init_function(EFUNC_SERVER_BAN_EXCEPTION_PARSE_MASK, server_ban_exception_parse_mask, NULL);
 	efunc_init_function(EFUNC_TKL_ADDED, tkl_added, NULL);
 	efunc_init_function(EFUNC_ADD_SILENCE, add_silence, add_silence_default_handler);
 	efunc_init_function(EFUNC_DEL_SILENCE, del_silence, del_silence_default_handler);
@@ -428,7 +437,12 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_RPC_RESPONSE, rpc_response, rpc_response_default_handler);
 	efunc_init_function(EFUNC_RPC_ERROR, rpc_error, rpc_error_default_handler);
 	efunc_init_function(EFUNC_RPC_ERROR_FMT, rpc_error_fmt, rpc_error_fmt_default_handler);
+	efunc_init_function(EFUNC_RPC_SEND_REQUEST_TO_REMOTE, rpc_send_request_to_remote, rpc_send_request_to_remote_default_handler);
+	efunc_init_function(EFUNC_RPC_SEND_RESPONSE_TO_REMOTE, rpc_send_response_to_remote, rpc_send_response_to_remote_default_handler);
+	efunc_init_function(EFUNC_RRPC_SUPPORTED, rrpc_supported, rrpc_supported_default_handler);
+	efunc_init_function(EFUNC_RRPC_SUPPORTED_SIMPLE, rrpc_supported_simple, rrpc_supported_simple_default_handler);
 	efunc_init_function(EFUNC_WEBSOCKET_HANDLE_WEBSOCKET, websocket_handle_websocket, websocket_handle_websocket_default_handler);
 	efunc_init_function(EFUNC_WEBSOCKET_CREATE_PACKET, websocket_create_packet, websocket_create_packet_default_handler);
+	efunc_init_function(EFUNC_WEBSOCKET_CREATE_PACKET_EX, websocket_create_packet_ex, websocket_create_packet_ex_default_handler);
 	efunc_init_function(EFUNC_WEBSOCKET_CREATE_PACKET_SIMPLE, websocket_create_packet_simple, websocket_create_packet_simple_default_handler);
 }

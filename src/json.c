@@ -59,6 +59,16 @@ const char *json_object_get_string(json_t *j, const char *name)
 	return v ? json_string_value(v) : NULL;
 }
 
+int json_object_get_boolean(json_t *j, const char *name, int default_value)
+{
+	json_t *v = json_object_get(j, name);
+	if (!v)
+		return default_value;
+	if (json_is_true(v))
+		return 1;
+	return 0;
+}
+
 #define json_string __BAD___DO__NOT__USE__JSON__STRING__PLZ
 
 const char *json_get_value(json_t *t)
@@ -253,16 +263,30 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			int len = 0;
 			json_t *channels = json_array();
 			json_object_set_new(user, "channels", channels);
-			for (m = client->user->channel; m; m = m->next)
+			if (detail == 0)
 			{
-				len += json_dump_string_length(m->channel->name);
-				if (len > 384)
+				/* Short format, mainly for JSON logging */
+				for (m = client->user->channel; m; m = m->next)
 				{
-					/* Truncated */
-					json_array_append_new(channels, json_string_unreal("..."));
-					break;
+					len += json_dump_string_length(m->channel->name);
+					if (len > 384)
+					{
+						/* Truncated */
+						json_array_append_new(channels, json_string_unreal("..."));
+						break;
+					}
+					json_array_append_new(channels, json_string_unreal(m->channel->name));
 				}
-				json_array_append_new(channels, json_string_unreal(m->channel->name));
+			} else {
+				/* Long format for JSON-RPC */
+				for (m = client->user->channel; m; m = m->next)
+				{
+					json_t *e = json_object();
+					json_object_set_new(e, "name", json_string_unreal(m->channel->name));
+					if (*m->member_modes)
+						json_object_set_new(e, "level", json_string_unreal(m->member_modes));
+					json_array_append_new(channels, e);
+				}
 			}
 		}
 		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_USER, client, detail, child, user);
@@ -279,6 +303,35 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			json_object_set_new(server, "info", json_string_unreal(client->info));
 		json_object_set_new(server, "num_users", json_integer(client->server->users));
 		json_object_set_new(server, "boot_time", json_timestamp(client->server->boottime));
+
+		/* client.server.features */
+		features = json_object();
+		json_object_set_new(server, "features", features);
+		if (!BadPtr(client->server->features.software))
+		{
+			char buf[256];
+			snprintf(buf, sizeof(buf), "UnrealIRCd-%s", buildid);
+			json_object_set_new(features, "software", json_string_unreal(buf));
+		}
+		json_object_set_new(features, "protocol", json_integer(UnrealProtocol));
+		if (!BadPtr(client->server->features.usermodes))
+			json_object_set_new(features, "usermodes", json_string_unreal(umodestring));
+
+		/* client.server.features.chanmodes (array) */
+		{
+			int i;
+			char buf[512];
+			json_t *chanmodes = json_array();
+			json_object_set_new(features, "chanmodes", chanmodes);
+			/* first one is special - wait.. is this still the case? lol. */
+			snprintf(buf, sizeof(buf), "%s%s", CHPAR1, EXPAR1);
+			json_array_append_new(chanmodes, json_string_unreal(buf));
+			for (i=1; i < 4; i++)
+				json_array_append_new(chanmodes, json_string_unreal(extchmstr[i]));
+		}
+		if (!BadPtr(client->server->features.nickchars))
+			json_object_set_new(features, "nick_character_sets", json_string_unreal(charsys_get_current_languages()));
+		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_SERVER, client, detail, child, server);
 	} else
 	if (IsServer(client) && client->server)
 	{
@@ -299,6 +352,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		json_object_set_new(server, "num_users", json_integer(client->server->users));
 		json_object_set_new(server, "boot_time", json_timestamp(client->server->boottime));
 		json_object_set_new(server, "synced", json_boolean(client->server->flags.synced));
+		json_object_set_new(server, "ulined", json_boolean(IsULine(client)));
 
 		/* client.server.features */
 		features = json_object();
@@ -323,6 +377,24 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 	}
 	RunHook(HOOKTYPE_JSON_EXPAND_CLIENT, client, detail, child);
 }
+
+void json_expand_channel_ban(json_t *child, const char *banlist_name, Ban *banlist)
+{
+	Ban *ban;
+	json_t *list, *e;
+
+	list = json_array();
+	json_object_set_new(child, banlist_name, list);
+	for (ban = banlist; ban; ban = ban->next)
+	{
+		e = json_object();
+		json_array_append_new(list, e);
+		json_object_set_new(e, "name", json_string_unreal(ban->banstr));
+		json_object_set_new(e, "set_by", json_string_unreal(ban->who));
+		json_object_set_new(e, "set_at", json_timestamp(ban->when));
+	}
+}
+
 
 void json_expand_channel(json_t *j, const char *key, Channel *channel, int detail)
 {
@@ -355,6 +427,30 @@ void json_expand_channel(json_t *j, const char *key, Channel *channel, int detai
 		json_object_set_new(child, "modes", json_string_unreal(modes));
 	} else {
 		json_object_set_new(child, "modes", json_string_unreal(mode1+1));
+	}
+
+	if (detail > 1)
+	{
+		json_expand_channel_ban(child, "bans", channel->banlist);
+		json_expand_channel_ban(child, "ban_exemptions", channel->exlist);
+		json_expand_channel_ban(child, "invite_exceptions", channel->invexlist);
+	}
+
+	if (detail > 2)
+	{
+		Member *u;
+		json_t *list = json_array();
+		json_object_set_new(child, "members", list);
+
+		for (u = channel->members; u; u = u->next)
+		{
+			json_t *e = json_object();
+			json_object_set_new(e, "name", json_string_unreal(u->client->name));
+			json_object_set_new(e, "id", json_string_unreal(u->client->id));
+			if (*u->member_modes)
+				json_object_set_new(e, "level", json_string_unreal(u->member_modes));
+			json_array_append_new(list, e);
+		}
 	}
 
 	// Possibly later: If detail is set to 1 then expand more...
@@ -395,6 +491,8 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		json_object_set_new(j, "duration_string", json_string_unreal(pretty_time_val_r(buf, sizeof(buf), tkl->expire_at - tkl->set_at)));
 	}
 	json_object_set_new(j, "set_at_delta", json_integer(TStime() - tkl->set_at));
+	if (tkl->flags & TKL_FLAG_CONFIG)
+		json_object_set_new(j, "set_in_config", json_boolean(1));
 	if (TKLIsServerBan(tkl))
 	{
 		json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));

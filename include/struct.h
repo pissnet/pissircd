@@ -128,6 +128,7 @@ typedef struct LocalClient LocalClient;
 typedef struct Channel Channel;
 typedef struct User User;
 typedef struct Server Server;
+typedef struct RPCClient RPCClient;
 typedef struct Link Link;
 typedef struct Ban Ban;
 typedef struct Mode Mode;
@@ -406,6 +407,7 @@ typedef enum ClientStatus {
 #define CLIENT_FLAG_PINGWARN		0x10000000	/**< Server ping warning (remote server slow with responding to PINGs) */
 #define CLIENT_FLAG_NOHANDSHAKEDELAY	0x20000000	/**< No handshake delay */
 #define CLIENT_FLAG_SERVER_DISCONNECT_LOGGED	0x40000000	/**< Server disconnect message is (already) logged */
+#define CLIENT_FLAG_ASYNC_RPC			0x80000000	/**< Asynchronous remote RPC request - special case for rehash etc. */
 
 /** @} */
 
@@ -496,8 +498,10 @@ typedef enum ClientStatus {
 #define IsTLS(x)			((x)->flags & CLIENT_FLAG_TLS)
 #define IsSecure(x)			((x)->flags & CLIENT_FLAG_TLS)
 #define IsULine(x)			((x)->flags & CLIENT_FLAG_ULINE)
+#define IsSvsCmdOk(x)			(((x)->flags & CLIENT_FLAG_ULINE) || ((iConf.limit_svscmds == LIMIT_SVSCMDS_SERVERS) && (IsServer((x)) || IsMe((x)))))
 #define IsVirus(x)			((x)->flags & CLIENT_FLAG_VIRUS)
 #define IsIdentLookupSent(x)		((x)->flags & CLIENT_FLAG_IDENTLOOKUPSENT)
+#define IsAsyncRPC(x)			((x)->flags & CLIENT_FLAG_ASYNC_RPC)
 #define SetIdentLookup(x)		do { (x)->flags |= CLIENT_FLAG_IDENTLOOKUP; } while(0)
 #define SetClosing(x)			do { (x)->flags |= CLIENT_FLAG_CLOSING; } while(0)
 #define SetDCCBlock(x)			do { (x)->flags |= CLIENT_FLAG_DCCBLOCK; } while(0)
@@ -529,6 +533,7 @@ typedef enum ClientStatus {
 #define SetULine(x)			do { (x)->flags |= CLIENT_FLAG_ULINE; } while(0)
 #define SetVirus(x)			do { (x)->flags |= CLIENT_FLAG_VIRUS; } while(0)
 #define SetIdentLookupSent(x)		do { (x)->flags |= CLIENT_FLAG_IDENTLOOKUPSENT; } while(0)
+#define SetAsyncRPC(x)			do { (x)->flags |= CLIENT_FLAG_ASYNC_RPC; } while(0)
 #define ClearIdentLookup(x)		do { (x)->flags &= ~CLIENT_FLAG_IDENTLOOKUP; } while(0)
 #define ClearClosing(x)			do { (x)->flags &= ~CLIENT_FLAG_CLOSING; } while(0)
 #define ClearDCCBlock(x)		do { (x)->flags &= ~CLIENT_FLAG_DCCBLOCK; } while(0)
@@ -559,12 +564,13 @@ typedef enum ClientStatus {
 #define ClearULine(x)			do { (x)->flags &= ~CLIENT_FLAG_ULINE; } while(0)
 #define ClearVirus(x)			do { (x)->flags &= ~CLIENT_FLAG_VIRUS; } while(0)
 #define ClearIdentLookupSent(x)		do { (x)->flags &= ~CLIENT_FLAG_IDENTLOOKUPSENT; } while(0)
+#define ClearAsyncRPC(x)		do { (x)->flags &= ~CLIENT_FLAG_ASYNC_RPC; } while(0)
+/** @} */
+
 #define IsIPV6(x)			((x)->local->socket_type == SOCKET_TYPE_IPV6)
 #define IsUnixSocket(x)			((x)->local->socket_type == SOCKET_TYPE_UNIX)
 #define SetIPV6(x)			do { (x)->local->socket_type = SOCKET_TYPE_IPV6; } while(0)
 #define SetUnixSocket(x)			do { (x)->local->socket_type = SOCKET_TYPE_UNIX; } while(0)
-/** @} */
-
 
 /* Others that access client structs: */
 #define	IsNotSpoof(x)	((x)->local->nospoof == 0)
@@ -1322,11 +1328,12 @@ struct Client {
 	LocalClient *local;			/**< Additional information regarding locally connected clients */
 	User *user;				/**< Additional information, if this client is a user */
 	Server *server;				/**< Additional information, if this is a server */
+	RPCClient *rpc;				/**< RPC Client, or NULL */
 	ClientStatus status;			/**< Client status, one of CLIENT_STATUS_* */
 	struct list_head client_hash;		/**< For name hash table (clientTable) */
 	char name[HOSTLEN + 1];			/**< Unique name of the client: nickname for users, hostname for servers */
 	time_t lastnick;			/**< Timestamp on nick */
-	long flags;				/**< Client flags (one or more of CLIENT_FLAG_*) */
+	uint64_t flags;				/**< Client flags (one or more of CLIENT_FLAG_*) */
 	long umodes;				/**< Client usermodes (if user) */
 	Client *direction;			/**< Direction from which this client originated.
 	                                             This always points to a directly connected server or &me.
@@ -1379,6 +1386,7 @@ struct LocalClient {
 	char sockhost[HOSTLEN + 1];	/**< Hostname from the socket */
 	u_short port;			/**< Remote TCP port of client */
 	FloodCounter flood[MAXFLOODOPTIONS];
+	RPCClient *rpc;			/**< RPC Client, or NULL */
 };
 
 /** User information (persons, not servers), you use client->user to access these (see also @link Client @endlink).
@@ -1422,6 +1430,13 @@ struct Server {
 };
 
 /** @} */
+
+typedef struct RPCClient RPCClient;
+/** RPC Client information */
+struct RPCClient {
+	char *rpc_user; /**< Name of the rpc-user block after authentication, NULL during pre-auth */
+	json_t *rehash_request; /**< If a REHASH (request) is currently running, otherwise NULL */
+};
 
 struct MessageTag {
 	MessageTag *prev, *next;
@@ -1794,19 +1809,21 @@ struct WebSocketUser {
 struct ConfigItem_listen {
 	ConfigItem_listen *prev, *next;
 	ConfigFlag flag;
-	SocketType socket_type;
-	char *file;
-	char *ip;
-	int port;
-	int options, clients;
-	int fd;
-	SSL_CTX *ssl_ctx;
-	TLSOptions *tls_options;
-	WebServer *webserver;
+	SocketType socket_type;		/**< Socket type, eg. SOCKET_TYPE_IPV4 or SOCKET_TYPE_UNIX */
+	char *file;			/**< If the listener is a file, the full pathname */
+	char *ip;			/**< IP bind address (if IP listener) */
+	int port;			/**< Port to listen on (if IP listener) */
+	int mode;			/**< Mode permissions (if file aka unix socket listener) */
+	int options;			/**< e.g. LISTENER_BOUND if active */
+	int clients;			/**< Clients connected to this socket / listener */
+	int fd;				/**< File descriptor (if open), or -1 (if not open yet) */
+	SSL_CTX *ssl_ctx;		/**< SSL/TLS context */
+	TLSOptions *tls_options;	/**< SSL/TLS options */
+	WebServer *webserver;		/**< For the webserver module */
 	void (*start_handshake)(Client *client); /**< Function to call on accept() */
-	int websocket_options; /* should be in module, but lazy */
-	int rpc_options;
-	char *websocket_forward;
+	int websocket_options;		/**< Websocket options (for the websocket module) */
+	int rpc_options;		/**< For the RPC module */
+	char *websocket_forward;	/**< For websocket module too */
 };
 
 struct ConfigItem_sni {
@@ -2381,6 +2398,9 @@ typedef enum JsonRpcError {
 	JSON_RPC_ERROR_INTERNAL_ERROR	= -32603, /**< Internal server error */
 	// UnrealIRCd JSON-RPC server specific error codes:
 	JSON_RPC_ERROR_API_CALL_DENIED	= -32000, /**< The api user does not have enough permissions to do this call */
+	JSON_RPC_ERROR_SERVER_GONE	= -32001, /**< The request was forwarded to a remote server, but this server went gone while processing the request */
+	JSON_RPC_ERROR_TIMEOUT		= -32002, /**< The request was forwarded to a remote server, but the request/response timed out (15 seconds) */
+	JSON_RPC_ERROR_REMOTE_SERVER_NO_RPC	= -32003, /**< The request was going to be forwarded to a remote server, but the remote server does not support JSON-RPC */
 	// UnrealIRCd specific application error codes:
 	JSON_RPC_ERROR_NOT_FOUND	=  -1000, /**< Target not found (no such nick / channel / ..) */
 	JSON_RPC_ERROR_ALREADY_EXISTS	=  -1001, /**< Resource already exists by that name (eg on nickchange request, a gline, etc) */
@@ -2389,6 +2409,30 @@ typedef enum JsonRpcError {
 	JSON_RPC_ERROR_TOO_MANY_ENTRIES	=  -1004, /**< Too many entries (eg: banlist, ..) */
 	JSON_RPC_ERROR_DENIED		=  -1005, /**< Permission denied for user (unrelated to api user permissions) */
 } JsonRpcError;
+
+/** Require a parameter in an RPC command */
+#define REQUIRE_PARAM_STRING(name, varname)          do { \
+                                                         varname = json_object_get_string(params, name); \
+                                                         if (!varname) \
+                                                         { \
+                                                             rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Missing parameter: '%s'", name); \
+                                                             return; \
+                                                         } \
+                                                     } while(0)
+
+#define REQUIRE_PARAM_BOOLEAN(name, varname)         do { \
+                                                         json_t *vvv = json_object_get(params, name); \
+                                                         if (!v || !json_is_boolean(v)) \
+                                                         { \
+                                                             rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Missing parameter: '%s'", name); \
+                                                             return; \
+                                                         } \
+                                                         varname = json_is_true(v) ? 1 : 0; \
+                                                     } while(0)
+
+#define OPTIONAL_PARAM_STRING(name, varname)         varname = json_object_get_string(params, name)
+#define OPTIONAL_PARAM_BOOLEAN(name, varname, def)   varname = json_object_get_boolean(params, name, def)
+
 #endif /* __struct_include__ */
 
 #include "dynconf.h"

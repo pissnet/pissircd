@@ -1,4 +1,4 @@
-/* server_ban.* RPC calls
+/* server_ban_exception.* RPC calls
  * (C) Copyright 2022-.. Bram Matthys (Syzop) and the UnrealIRCd team
  * License: GPLv2 or later
  */
@@ -7,18 +7,18 @@
 
 ModuleHeader MOD_HEADER
 = {
-	"rpc/server_ban",
-	"1.0.3",
-	"server_ban.* RPC calls",
+	"rpc/server_ban_exception",
+	"1.0.1",
+	"server_ban_exception.* RPC calls",
 	"UnrealIRCd Team",
 	"unrealircd-6",
 };
 
 /* Forward declarations */
-RPC_CALL_FUNC(rpc_server_ban_list);
-RPC_CALL_FUNC(rpc_server_ban_get);
-RPC_CALL_FUNC(rpc_server_ban_del);
-RPC_CALL_FUNC(rpc_server_ban_add);
+RPC_CALL_FUNC(rpc_server_ban_exception_list);
+RPC_CALL_FUNC(rpc_server_ban_exception_get);
+RPC_CALL_FUNC(rpc_server_ban_exception_del);
+RPC_CALL_FUNC(rpc_server_ban_exception_add);
 
 MOD_INIT()
 {
@@ -27,34 +27,34 @@ MOD_INIT()
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 
 	memset(&r, 0, sizeof(r));
-	r.method = "server_ban.list";
+	r.method = "server_ban_exception.list";
 	r.loglevel = ULOG_DEBUG;
-	r.call = rpc_server_ban_list;
+	r.call = rpc_server_ban_exception_list;
 	if (!RPCHandlerAdd(modinfo->handle, &r))
 	{
-		config_error("[rpc/server_ban] Could not register RPC handler");
+		config_error("[rpc/server_ban_exception] Could not register RPC handler");
 		return MOD_FAILED;
 	}
-	r.method = "server_ban.get";
+	r.method = "server_ban_exception.get";
 	r.loglevel = ULOG_DEBUG;
-	r.call = rpc_server_ban_get;
+	r.call = rpc_server_ban_exception_get;
 	if (!RPCHandlerAdd(modinfo->handle, &r))
 	{
-		config_error("[rpc/server_ban] Could not register RPC handler");
+		config_error("[rpc/server_ban_exception] Could not register RPC handler");
 		return MOD_FAILED;
 	}
-	r.method = "server_ban.del";
-	r.call = rpc_server_ban_del;
+	r.method = "server_ban_exception.del";
+	r.call = rpc_server_ban_exception_del;
 	if (!RPCHandlerAdd(modinfo->handle, &r))
 	{
-		config_error("[rpc/server_ban] Could not register RPC handler");
+		config_error("[rpc/server_ban_exception] Could not register RPC handler");
 		return MOD_FAILED;
 	}
-	r.method = "server_ban.add";
-	r.call = rpc_server_ban_add;
+	r.method = "server_ban_exception.add";
+	r.call = rpc_server_ban_exception_add;
 	if (!RPCHandlerAdd(modinfo->handle, &r))
 	{
-		config_error("[rpc/server_ban] Could not register RPC handler");
+		config_error("[rpc/server_ban_exception] Could not register RPC handler");
 		return MOD_FAILED;
 	}
 
@@ -71,7 +71,7 @@ MOD_UNLOAD()
 	return MOD_SUCCESS;
 }
 
-RPC_CALL_FUNC(rpc_server_ban_list)
+RPC_CALL_FUNC(rpc_server_ban_exception_list)
 {
 	json_t *result, *list, *item;
 	int index, index2;
@@ -87,7 +87,7 @@ RPC_CALL_FUNC(rpc_server_ban_list)
 		{
 			for (tkl = tklines_ip_hash[index][index2]; tkl; tkl = tkl->next)
 			{
-				if (TKLIsServerBan(tkl))
+				if (TKLIsBanException(tkl))
 				{
 					item = json_object();
 					json_expand_tkl(item, NULL, tkl, 1);
@@ -100,7 +100,7 @@ RPC_CALL_FUNC(rpc_server_ban_list)
 	{
 		for (tkl = tklines[index]; tkl; tkl = tkl->next)
 		{
-			if (TKLIsServerBan(tkl))
+			if (TKLIsBanException(tkl))
 			{
 				item = json_object();
 				json_expand_tkl(item, NULL, tkl, 1);
@@ -114,11 +114,9 @@ RPC_CALL_FUNC(rpc_server_ban_list)
 }
 
 /** Shared code for selecting a server ban, for .add/.del/.get */
-int server_ban_select_criteria(Client *client, json_t *request, json_t *params,
+int server_ban_exception_select_criteria(Client *client, json_t *request, json_t *params, int add,
                                const char **name,
-                               const char **type_name,
-                               char *tkl_type_char,
-                               int *tkl_type_int,
+                               const char **exception_types,
                                char **usermask,
                                char **hostmask,
                                int *soft)
@@ -132,27 +130,19 @@ int server_ban_select_criteria(Client *client, json_t *request, json_t *params,
 		return 0;
 	}
 
-	*type_name = json_object_get_string(params, "type");
-	if (!*type_name)
+	if (add)
 	{
-		rpc_error(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Missing parameter: 'type'");
-		return 0;
+		*exception_types = json_object_get_string(params, "exception_types");
+		if (!*exception_types)
+		{
+			rpc_error(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Missing parameter: 'exception_types'");
+			return 0;
+		}
+	} else {
+		*exception_types = NULL;
 	}
 
-	*tkl_type_char = tkl_configtypetochar(*type_name);
-	if (!*tkl_type_char)
-	{
-		rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Invalid type: '%s'", *type_name);
-		return 0;
-	}
-	*tkl_type_int = tkl_chartotype(*tkl_type_char);
-	if (!TKLIsServerBanType(*tkl_type_int))
-	{
-		rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Invalid type: '%s' (type exists but is not valid for in server_ban.*)", *type_name);
-		return 0;
-	}
-
-	if (!server_ban_parse_mask(client, 0, *tkl_type_int, *name, usermask, hostmask, soft, &error))
+	if (!server_ban_exception_parse_mask(client, add, *exception_types, *name, usermask, hostmask, soft, &error))
 	{
 		rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Error: %s", error);
 		return 0;
@@ -161,27 +151,25 @@ int server_ban_select_criteria(Client *client, json_t *request, json_t *params,
 	return 1;
 }
 
-RPC_CALL_FUNC(rpc_server_ban_get)
+RPC_CALL_FUNC(rpc_server_ban_exception_get)
 {
 	json_t *result, *list, *item;
-	const char *name, *type_name;
+	const char *name, *exception_types;
 	char *usermask, *hostmask;
 	int soft;
 	TKL *tkl;
-	char tkl_type_char;
-	int tkl_type_int;
 
-	if (!server_ban_select_criteria(client, request, params,
-	                                &name, &type_name,
-	                                &tkl_type_char, &tkl_type_int,
+	if (!server_ban_exception_select_criteria(client, request, params, 0,
+	                                &name, &exception_types,
 	                                &usermask, &hostmask, &soft))
 	{
 		return;
 	}
 
-	if (!(tkl = find_tkl_serverban(tkl_type_int, usermask, hostmask, soft)))
+	if (!(tkl = find_tkl_banexception(TKL_EXCEPTION|TKL_GLOBAL, usermask, hostmask, soft)) &&
+	    !(tkl = find_tkl_banexception(TKL_EXCEPTION, usermask, hostmask, soft)))
 	{
-		rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Ban not found");
+		rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Ban exception not found");
 		return;
 	}
 
@@ -191,33 +179,28 @@ RPC_CALL_FUNC(rpc_server_ban_get)
 	json_decref(result);
 }
 
-RPC_CALL_FUNC(rpc_server_ban_del)
+RPC_CALL_FUNC(rpc_server_ban_exception_del)
 {
 	json_t *result, *list, *item;
-	const char *name, *type_name;
+	const char *name, *exception_types;
 	const char *set_by;
+	const char *error;
 	char *usermask, *hostmask;
 	int soft;
 	TKL *tkl;
-	char tkl_type_char;
-	int tkl_type_int;
-	const char *tkllayer[10];
-	char tkl_type_str[2];
+	const char *tkllayer[11];
 
-	if (!server_ban_select_criteria(client, request, params,
-	                                &name, &type_name,
-	                                &tkl_type_char, &tkl_type_int,
+	if (!server_ban_exception_select_criteria(client, request, params, 0,
+	                                &name, &exception_types,
 	                                &usermask, &hostmask, &soft))
 	{
 		return;
 	}
 
-	tkl_type_str[0] = tkl_type_char;
-	tkl_type_str[1] = '\0';
-
-	if (!(tkl = find_tkl_serverban(tkl_type_int, usermask, hostmask, soft)))
+	if (!(tkl = find_tkl_banexception(TKL_EXCEPTION|TKL_GLOBAL, usermask, hostmask, soft)) &&
+	    !(tkl = find_tkl_banexception(TKL_EXCEPTION, usermask, hostmask, soft)))
 	{
-		rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Ban not found");
+		rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Ban exception not found");
 		return;
 	}
 
@@ -229,14 +212,19 @@ RPC_CALL_FUNC(rpc_server_ban_del)
 	json_expand_tkl(result, "tkl", tkl, 1);
 
 	tkllayer[1] = "-";
-	tkllayer[2] = tkl_type_str;
+	tkllayer[2] = "E";
 	tkllayer[3] = usermask;
 	tkllayer[4] = hostmask;
 	tkllayer[5] = set_by;
-	tkllayer[6] = NULL;
+	tkllayer[6] = "0";
+	tkllayer[7] = "-";
+	tkllayer[8] = "-";
+	tkllayer[9] = "-";
+	tkllayer[10] = NULL;
 	cmd_tkl(&me, NULL, 6, tkllayer);
 
-	if (!find_tkl_serverban(tkl_type_int, usermask, hostmask, soft))
+	if (!find_tkl_banexception(TKL_EXCEPTION|TKL_GLOBAL, usermask, hostmask, soft) &&
+	    !find_tkl_banexception(TKL_EXCEPTION, usermask, hostmask, soft))
 	{
 		rpc_response(client, request, result);
 	} else {
@@ -248,32 +236,28 @@ RPC_CALL_FUNC(rpc_server_ban_del)
 	json_decref(result);
 }
 
-RPC_CALL_FUNC(rpc_server_ban_add)
+RPC_CALL_FUNC(rpc_server_ban_exception_add)
 {
 	json_t *result, *list, *item;
-	const char *name, *type_name;
+	const char *name, *exception_types;
 	const char *set_by;
+	const char *error;
 	char *usermask, *hostmask;
 	int soft;
 	TKL *tkl;
-	char tkl_type_char;
-	int tkl_type_int;
-	char tkl_type_str[2];
 	const char *reason;
 	const char *str;
 	time_t tkl_expire_at;
 	time_t tkl_set_at = TStime();
 
-	if (!server_ban_select_criteria(client, request, params,
-	                                &name, &type_name,
-	                                &tkl_type_char, &tkl_type_int,
+	if (!server_ban_exception_select_criteria(client, request, params, 1,
+	                                &name, &exception_types,
 	                                &usermask, &hostmask, &soft))
 	{
 		return;
 	}
 
-	tkl_type_str[0] = tkl_type_char;
-	tkl_type_str[1] = '\0';
+	// FIXME: where is set_by? is this missing in others as well? :p -> OPTIONAL!
 
 	REQUIRE_PARAM_STRING("reason", reason);
 
@@ -303,15 +287,17 @@ RPC_CALL_FUNC(rpc_server_ban_add)
 		return;
 	}
 
-	if (find_tkl_serverban(tkl_type_int, usermask, hostmask, soft))
+	if (find_tkl_banexception(TKL_EXCEPTION|TKL_GLOBAL, usermask, hostmask, soft) ||
+	    find_tkl_banexception(TKL_EXCEPTION, usermask, hostmask, soft))
 	{
-		rpc_error(client, request, JSON_RPC_ERROR_ALREADY_EXISTS, "A ban with that mask already exists");
+		rpc_error(client, request, JSON_RPC_ERROR_ALREADY_EXISTS, "A ban exception with that mask already exists");
 		return;
 	}
 
-	tkl = tkl_add_serverban(tkl_type_int, usermask, hostmask, reason,
-	                        set_by, tkl_expire_at, tkl_set_at,
-	                        soft, 0);
+	tkl = tkl_add_banexception(TKL_EXCEPTION|TKL_GLOBAL, usermask, hostmask,
+	                           NULL, reason,
+	                           set_by, tkl_expire_at, tkl_set_at,
+	                           soft, exception_types, 0);
 
 	if (!tkl)
 	{

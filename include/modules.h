@@ -22,7 +22,7 @@
 #define MODULES_H
 #include "types.h"
 #define MAXCUSTOMHOOKS  30
-#define MAXHOOKTYPES	150
+#define MAXHOOKTYPES	200
 #define MAXCALLBACKS	30
 #define MAXEFUNCTIONS	128
 #if defined(_WIN32)
@@ -611,13 +611,15 @@ typedef struct {
 
 /** No special flags set */
 #define RPC_HANDLER_FLAGS_NONE			0x0
+#define RPC_HANDLER_FLAGS_UNFILTERED		0x1	/**< Don't filter input (don't reject strings bigger than 510 in length or containing \r or \n) */
 
-/** Message Tag Handler */
+/** RPC Tag Handler */
 typedef struct RPCHandler RPCHandler;
 struct RPCHandler {
 	RPCHandler *prev, *next;
 	char *method;                                             /**< Name of the method handler, eg "client.get" */
 	int flags;                                                /**< A flag of RPC_HANDLER_FLAG_* */
+	LogLevel loglevel;                                        /**< Log level to use for this call: for example ULOG_DEBUG for .list calls, leave 0 for default */
 	void (*call)(Client *, json_t *request, json_t *params);  /**< RPC call: use RPC_CALL_FUNC() ! */
 	Module *owner;                                            /**< Module introducing this. */
 	char unloaded;                                            /**< Internal flag to indicate module is being unloaded */
@@ -629,6 +631,7 @@ struct RPCHandler {
 typedef struct {
 	char *method;
 	int flags;
+	LogLevel loglevel;
 	void (*call)(Client *, json_t *request, json_t *params);
 } RPCHandlerInfo;
 
@@ -994,6 +997,11 @@ extern int LoadPersistentLongX(ModuleInfo *modinfo, const char *varshortname, lo
 extern void SavePersistentLongX(ModuleInfo *modinfo, const char *varshortname, long var);
 #define SavePersistentLong(modinfo, var) SavePersistentLongX(modinfo, #var, var)
 
+extern int LoadPersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long *var);
+#define LoadPersistentLongLong(modinfo, var) LoadPersistentLongLongX(modinfo, #var, &var)
+extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long var);
+#define SavePersistentLongLong(modinfo, var) SavePersistentLongLongX(modinfo, #var, var)
+
 /** Hooks trigger on "events", such as a new user connecting or joining a channel,
  * see https://www.unrealircd.org/docs/Dev:Hook_API for background info.
  * You are suggested to use CTRL+F on this page to search for any useful hook,
@@ -1231,6 +1239,8 @@ extern void SavePersistentLongX(ModuleInfo *modinfo, const char *varshortname, l
 #define HOOKTYPE_ACCEPT		116
 /** See hooktype_pre_local_handshake_timeout */
 #define HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT	117
+/** See hooktype_rehash_log */
+#define HOOKTYPE_REHASH_LOG	118
 
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
@@ -2283,6 +2293,14 @@ int hooktype_json_expand_channel(Channel *channel, int detail, json_t *j);
  */
 int hooktype_pre_local_handshake_timeout(Client *client, const char **comment);
 
+/** Called when a REHASH completed (either succesfully or with a failure).
+ * This gives the full rehash log. Used by the JSON-RPC interface.
+ * @param failure		Set to 1 if the rehash failed, otherwise 0.
+ * @param t			The JSON object containing the rehash log and other information.
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_rehash_log(int failure, json_t *rehash_log);
+
 /** @} */
 
 #ifdef GCC_TYPECHECKING
@@ -2402,7 +2420,8 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_JSON_EXPAND_CLIENT_USER) && !ValidateHook(hooktype_json_expand_client_user, func)) || \
         ((hooktype == HOOKTYPE_JSON_EXPAND_CLIENT_SERVER) && !ValidateHook(hooktype_json_expand_client_server, func)) || \
         ((hooktype == HOOKTYPE_JSON_EXPAND_CHANNEL) && !ValidateHook(hooktype_json_expand_channel, func)) || \
-        ((hooktype == HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT) && !ValidateHook(hooktype_pre_local_handshake_timeout, func)) ) \
+        ((hooktype == HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT) && !ValidateHook(hooktype_pre_local_handshake_timeout, func)) || \
+        ((hooktype == HOOKTYPE_REHASH_LOG) && !ValidateHook(hooktype_rehash_log, func)) ) \
         _hook_error_incompatible();
 #endif /* GCC_TYPECHECKING */
 
@@ -2434,6 +2453,7 @@ enum EfunctionType {
 	EFUNC_DO_MODE,
 	EFUNC_SET_MODE,
 	EFUNC_SET_CHANNEL_MODE,
+	EFUNC_SET_CHANNEL_TOPIC,
 	EFUNC_CMD_UMODE,
 	EFUNC_REGISTER_USER,
 	EFUNC_TKL_HASH,
@@ -2511,6 +2531,7 @@ enum EfunctionType {
 	EFUNC_FIND_TKL_SPAMFILTER,
 	EFUNC_FIND_TKL_EXCEPTION,
 	EFUNC_SERVER_BAN_PARSE_MASK,
+	EFUNC_SERVER_BAN_EXCEPTION_PARSE_MASK,
 	EFUNC_TKL_ADDED,
 	EFUNC_ADD_SILENCE,
 	EFUNC_DEL_SILENCE,
@@ -2536,8 +2557,13 @@ enum EfunctionType {
 	EFUNC_RPC_RESPONSE,
 	EFUNC_RPC_ERROR,
 	EFUNC_RPC_ERROR_FMT,
+	EFUNC_RPC_SEND_REQUEST_TO_REMOTE,
+	EFUNC_RPC_SEND_RESPONSE_TO_REMOTE,
+	EFUNC_RRPC_SUPPORTED,
+	EFUNC_RRPC_SUPPORTED_SIMPLE,
 	EFUNC_WEBSOCKET_HANDLE_WEBSOCKET,
 	EFUNC_WEBSOCKET_CREATE_PACKET,
+	EFUNC_WEBSOCKET_CREATE_PACKET_EX,
 	EFUNC_WEBSOCKET_CREATE_PACKET_SIMPLE,
 };
 
