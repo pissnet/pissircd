@@ -139,7 +139,7 @@ RPC_CALL_FUNC(rpc_server_get)
 	}
 
 	result = json_object();
-	json_expand_client(result, "server", acptr, 1);
+	json_expand_client(result, "server", acptr, 99);
 	rpc_response(client, request, result);
 	json_decref(result);
 }
@@ -234,7 +234,7 @@ RPC_CALL_FUNC(rpc_server_connect)
 	const char *server, *link_name;
 	Client *acptr;
 	ConfigItem_link *link;
-	ConfigItem_deny_link *deny;
+	const char *err;
 
 	OPTIONAL_PARAM_STRING("server", server);
 	if (server)
@@ -276,9 +276,9 @@ RPC_CALL_FUNC(rpc_server_connect)
 		return;
 	}
 
-	if (check_deny_link(link, 0))
+	if ((err = check_deny_link(link, 0)))
 	{
-		rpc_error(client, request, JSON_RPC_ERROR_DENIED, "Server linking is denied via a deny link { } block");
+		rpc_error_fmt(client, request, JSON_RPC_ERROR_DENIED, "Server linking is denied via a deny link { } block: %s", err);
 		return;
 	}
 
@@ -297,8 +297,6 @@ RPC_CALL_FUNC(rpc_server_disconnect)
 	json_t *result, *list, *item;
 	const char *server, *link_name, *reason;
 	Client *acptr, *target;
-	ConfigItem_link *link;
-	ConfigItem_deny_link *deny;
 	MessageTag *mtags = NULL;
 
 	OPTIONAL_PARAM_STRING("server", server);

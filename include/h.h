@@ -105,7 +105,6 @@ extern MODVAR ConfigItem_link		*conf_link;
 extern MODVAR ConfigItem_sni		*conf_sni;
 extern MODVAR ConfigItem_ban		*conf_ban;
 extern MODVAR ConfigItem_deny_channel  *conf_deny_channel;
-extern MODVAR ConfigItem_deny_link	*conf_deny_link;
 extern MODVAR ConfigItem_allow_channel *conf_allow_channel;
 extern MODVAR ConfigItem_deny_version	*conf_deny_version;
 extern MODVAR ConfigItem_alias		*conf_alias;
@@ -149,7 +148,6 @@ extern ConfigItem_sni *find_sni(const char *name);
 extern ConfigItem_ulines	*find_uline(const char *host);
 extern ConfigItem_tld		*find_tld(Client *cptr);
 extern ConfigItem_link		*find_link(const char *servername);
-extern ConfigItem_deny_link *check_deny_link(ConfigItem_link *link, int auto_connect);
 extern ConfigItem_ban 		*find_ban(Client *, const char *host, short type);
 extern ConfigItem_ban 		*find_banEx(Client *,const char *host, short type, short type2);
 extern ConfigItem_vhost	*find_vhost(const char *name);
@@ -228,6 +226,8 @@ extern const char *extban_conv_param_nuh_or_extban(BanContext *b, Extban *extban
 extern const char *extban_conv_param_nuh(BanContext *b, Extban *extban);
 extern Ban *is_banned(Client *, Channel *, int, const char **, const char **);
 extern Ban *is_banned_with_nick(Client *, Channel *, int, const char *, const char **, const char **);
+extern int ban_exists(Ban *lst, const char *str);
+extern int ban_exists_ignore_time(Ban *lst, const char *str);
 
 extern Client *find_client(const char *, Client *);
 extern Client *find_name(const char *, Client *);
@@ -495,11 +495,11 @@ extern MODVAR RealCommand *CommandHash[256];
 extern void init_CommandHash(void);
 
 /* CRULE */
-char *crule_parse(char *);
-int crule_test(char *);
-char *crule_errstring(int);
-int crule_eval(char *);
-void crule_free(char **);
+extern struct CRuleNode* crule_parse(const char*);
+extern void crule_free(struct CRuleNode**);
+extern int crule_eval(struct CRuleNode* rule);
+extern int crule_test(const char *rule);
+extern const char *crule_errstring(int errcode);
 
 /*
  * Close all local socket connections, invalidate client fd's
@@ -671,6 +671,7 @@ extern void IRCToRTF(unsigned char *buffer, unsigned char *string);
 extern void verify_opercount(Client *, const char *);
 extern int valid_host(const char *host, int strict);
 extern int valid_username(const char *username);
+extern int valid_vhost(const char *userhost);
 extern int count_oper_sessions(const char *);
 extern char *unreal_mktemp(const char *dir, const char *suffix);
 extern char *unreal_getpathname(const char *filepath, char *path);
@@ -865,6 +866,7 @@ extern MODVAR int (*websocket_handle_websocket)(Client *client, WebRequest *web,
 extern MODVAR int (*websocket_create_packet)(int opcode, char **buf, int *len);
 extern MODVAR int (*websocket_create_packet_ex)(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize);
 extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
+extern MODVAR const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 /* /Efuncs */
 
 /* TLS functions */
@@ -1039,7 +1041,7 @@ extern int verify_certificate(SSL *ssl, const char *hostname, char **errstr);
 extern const char *certificate_name(SSL *ssl);
 extern void start_of_normal_client_handshake(Client *acptr);
 extern void clicap_pre_rehash(void);
-extern void clicap_post_rehash(void);
+extern void clicap_check_for_changes(void);
 extern void unload_all_unused_mtag_handlers(void);
 extern void send_cap_notify(int add, const char *token);
 extern void sendbufto_one(Client *to, char *msg, unsigned int quick);
@@ -1047,6 +1049,7 @@ extern MODVAR int current_serial;
 extern const char *spki_fingerprint(Client *acptr);
 extern const char *spki_fingerprint_ex(X509 *x509_cert);
 extern int is_module_loaded(const char *name);
+extern int is_blacklisted_module(const char *name);
 extern void close_std_descriptors(void);
 extern void banned_client(Client *acptr, const char *bantype, const char *reason, int global, int noexit);
 extern char *mystpcpy(char *dst, const char *src);
@@ -1177,6 +1180,7 @@ extern int is_file_readable(const char *file, const char *dir);
 /* json.c */
 extern json_t *json_string_unreal(const char *s);
 extern const char *json_object_get_string(json_t *j, const char *name);
+extern int json_object_get_integer(json_t *j, const char *name, int default_value);
 extern int json_object_get_boolean(json_t *j, const char *name, int default_value);
 extern json_t *json_timestamp(time_t v);
 extern const char *timestamp_iso8601_now(void);

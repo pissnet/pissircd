@@ -39,6 +39,9 @@
 #include <openssl/rand.h>
 #include <openssl/md5.h>
 #include <openssl/ripemd.h>
+#ifdef HAS_X509_check_host
+#include <openssl/x509v3.h>
+#endif
 #include <jansson.h>
 #include "common.h"
 #include "sys.h"
@@ -104,7 +107,6 @@ typedef struct ConfigItem_vhost ConfigItem_vhost;
 typedef struct ConfigItem_link	ConfigItem_link;
 typedef struct ConfigItem_ban ConfigItem_ban;
 typedef struct ConfigItem_deny_dcc ConfigItem_deny_dcc;
-typedef struct ConfigItem_deny_link ConfigItem_deny_link;
 typedef struct ConfigItem_deny_channel ConfigItem_deny_channel;
 typedef struct ConfigItem_deny_version ConfigItem_deny_version;
 typedef struct ConfigItem_alias ConfigItem_alias;
@@ -180,7 +182,9 @@ typedef OperPermission (*OperClassEntryEvalCallback)(OperClassACLEntryVar* varia
 #define	KEYLEN		23
 #define LINKLEN		32
 #define	BUFSIZE		512	/* WARNING: *DONT* CHANGE THIS!!!! */
-#define READBUFSIZE	8192	/* for the read buffer */
+#define MAXTAGSIZE	8192	/**< Maximum length of message tags (4K user + 4K server) */
+#define MAXLINELENGTH	(MAXTAGSIZE+BUFSIZE)	/**< Maximum length of a line on IRC: 4k client tags + 4k server tags + 512 bytes (IRCv3) */
+#define READBUFSIZE	MAXLINELENGTH	/* for the read buffer */
 #define	MAXRECIPIENTS 	20
 #define	MAXSILELENGTH	NICKLEN+USERLEN+HOSTLEN+10
 #define IDLEN		12
@@ -850,8 +854,10 @@ typedef struct Whowas {
 	char *username;
 	char *hostname;
 	char *virthost;
+	char *ip;
 	char *servername;
 	char *realname;
+	char *account;
 	long umodes;
 	time_t   logoff;
 	struct Client *online;	/* Pointer to new nickname for chasing or NULL */
@@ -1454,7 +1460,8 @@ typedef enum PreprocessorItem {
 
 typedef enum PreprocessorPhase {
 	PREPROCESSOR_PHASE_INITIAL	= 1,
-	PREPROCESSOR_PHASE_MODULE	= 2
+	PREPROCESSOR_PHASE_SECONDARY	= 2,
+	PREPROCESSOR_PHASE_MODULE	= 3
 } PreprocessorPhase;
 
 typedef enum AuthenticationType {
@@ -1481,6 +1488,30 @@ struct AuthConfig {
 #ifndef HAVE_CRYPT
 #define crypt DES_crypt
 #endif
+
+/* CRULE stuff */
+
+#define CRULE_ALL		0
+#define CRULE_AUTO		1
+
+/* some constants and shared data types */
+#define CR_MAXARGLEN 80         /**< Maximum arg length (must be > HOSTLEN) */
+#define CR_MAXARGS 3            /**< Maximum number of args for a rule */
+
+/** Evaluation function for a connection rule. */
+typedef int (*crule_funcptr) (int, void **);
+
+/** CRULE - Node in a connection rule tree. */
+struct CRuleNode {
+  crule_funcptr funcptr; /**< Evaluation function for this node. */
+  int numargs;           /**< Number of arguments. */
+  void *arg[CR_MAXARGS]; /**< Array of arguments.  For operators, each arg
+                            is a tree element; for functions, each arg is
+                            a string. */
+};
+typedef struct CRuleNode CRuleNode;
+typedef struct CRuleNode* CRuleNodePtr;
+
 
 /*
  * conf2 stuff -stskeeps
@@ -1558,9 +1589,6 @@ struct ConfigFlag_tld
 #define CONF_BAN_TYPE_CONF	0
 #define CONF_BAN_TYPE_AKILL	1
 #define CONF_BAN_TYPE_TEMPORARY 2
-
-#define CRULE_ALL		0
-#define CRULE_AUTO		1
 
 struct ConfigItem {
 	ConfigItem *prev, *next;
@@ -1886,13 +1914,6 @@ struct ConfigItem_deny_dcc {
 	char			*filename, *reason;
 };
 
-struct ConfigItem_deny_link {
-	ConfigItem_deny_link *prev, *next;
-	ConfigFlag_except flag;
-	ConfigItem_mask  *mask;
-	char *rule, *prettyrule;
-};
-
 struct ConfigItem_deny_version {
 	ConfigItem_deny_version	*prev, *next;
 	ConfigFlag		flag;
@@ -1991,6 +2012,7 @@ struct SecurityGroup {
 	int reputation_score;
 	long connect_time;
 	int webirc;
+	int websocket;
 	int tls;
 	NameList *ip;
 	ConfigItem_mask *mask;
@@ -2001,6 +2023,7 @@ struct SecurityGroup {
 	int exclude_reputation_score;
 	long exclude_connect_time;
 	int exclude_webirc;
+	int exclude_websocket;
 	int exclude_tls;
 	NameList *exclude_ip;
 	ConfigItem_mask *exclude_mask;
@@ -2420,6 +2443,16 @@ typedef enum JsonRpcError {
                                                          } \
                                                      } while(0)
 
+#define REQUIRE_PARAM_INTEGER(name, varname)         do { \
+                                                         json_t *t = json_object_get(params, name); \
+                                                         if (!t || !json_is_integer(t)) \
+                                                         { \
+                                                             rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Missing parameter: '%s'", name); \
+                                                             return; \
+                                                         } \
+                                                         varname = json_integer_value(t); \
+                                                     } while(0)
+
 #define REQUIRE_PARAM_BOOLEAN(name, varname)         do { \
                                                          json_t *vvv = json_object_get(params, name); \
                                                          if (!v || !json_is_boolean(v)) \
@@ -2431,6 +2464,7 @@ typedef enum JsonRpcError {
                                                      } while(0)
 
 #define OPTIONAL_PARAM_STRING(name, varname)         varname = json_object_get_string(params, name)
+#define OPTIONAL_PARAM_INTEGER(name, varname, def)   varname = json_object_get_integer(params, name, def)
 #define OPTIONAL_PARAM_BOOLEAN(name, varname, def)   varname = json_object_get_boolean(params, name, def)
 
 #endif /* __struct_include__ */

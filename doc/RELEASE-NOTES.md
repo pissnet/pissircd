@@ -1,23 +1,114 @@
-UnrealIRCd 6.0.7-git
+UnrealIRCd 6.0.8-git
 =================
-
-This is the git version (development version) for future 6.0.7. This is work
-in progress.
+This is the git version (development version) for future 6.0.8. This is work
+in progress and not a stable version.
 
 ### Enhancements:
-* Add support for remote IRCv3 Standard Replies (`SREPLY` server-to-server
-  command)
+* New [channel mode `+F`](https://www.unrealircd.org/docs/Channel_anti-flood_settings)
+  (uppercase f). This allows the user to choose a "flood profile",
+  which (behind the scenes) translates to something similar to an `+f` mode.
+  This so end-users can simply choose an `+F` profile without having to learn
+  the complex channel mode `+f`.
+  * For example `+F normal` effectively results in
+    `[7c#C15,30j#R10,10k#K15,40m#M10,10n#N15]:15`
+  * Multiple profiles are available and changing them is possible,
+    see [the documentation](https://www.unrealircd.org/docs/Channel_anti-flood_settings).
+  * Any settings in mode `+f` will override the ones of the `+F` profile.
+    To see the effective flood settings, use `MODE #channel F`.
+* When channel mode `+f` or `+F` detect that a flood is caused by >75% of
+  ["unknown-users"](https://www.unrealircd.org/docs/Security-group_block),
+  the server will now set a temporary ban on `~security-group:unknown-users`.
+  It will still set `+i` and other modes if the flood keeps on going
+  (eg. is caused by known-users).
+* Both features only work properly if all servers are on 6.0.8-git or later.
+
+### Changes:
+* The [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) calls
+  `channel.list`, `channel.get`, `user.list` and `user.get` now support
+  an optional argument `object_detail_level` which specifies how detailed
+  the [Channel](https://www.unrealircd.org/docs/JSON-RPC:Channel#Structure_of_a_channel)
+  and [User](https://www.unrealircd.org/docs/JSON-RPC:User#Structure_of_a_client_object)
+  response object will be. Especially useful if you don't need all the
+  details in the `.list` calls.
+
+UnrealIRCd 6.0.7
+-----------------
+
+UnrealIRCd 6.0.7 makes WHOWAS show more information to IRCOps and adds an
+experimental spamfilter feature. It also contains other enhancements and
+quite a number of bug fixes. One notable change is that on linking of anope
+or atheme, every server will now check if they have ulines { } for that
+services server, since it's a common mistake to forget this, leading to
+desyncs or other weird problems.
+
+### Enhancements:
+* [Spamfilter](https://www.unrealircd.org/docs/Spamfilter) can now be made UTF8-aware:
+  * This is experimental, to enable: `set { spamfilter { utf8 yes; } }`
+  * Case insensitive matches will then work better. For example, for extended
+    Latin, a spamfilter on `ę` then also matches `Ę`.
+  * Other PCRE2 features such as [\p](https://www.pcre.org/current/doc/html/pcre2syntax.html#SEC5)
+    can then be used. For example the regex `\p{Arabic}` would block all Arabic script.
+    See also this [full list of scripts](https://www.pcre.org/current/doc/html/pcre2syntax.html#SEC7).
+    Please use this new tool with care. Blocking an entire language or script
+    is quite a drastic measure.
+  * As a consequence of this we require PCRE2 10.36 or newer. If your system
+    PCRE2 is older, then the UnrealIRCd-shipped-library version will be compiled
+    and `./Config` may take a little longer than usual.
+* `WHOWAS` now shows IP address and account information to IRCOps
 * Allow services to send a couple of protocol messages in the
   unregistered / SASL stage. These are: `CHGHOST`, `CHGIDENT`
   and `SREPLY`
   * This allows services to set the vhost on a user during SASL,
     so the user receives the vhost straight from the start, before
     all the auto-joining/re-rejoining of channels.
+  * Future anope/atheme/etc services will presumably support this.
+* [WebSocket](https://www.unrealircd.org/docs/WebSocket_support) status is
+  now synced over the network and an extra default
+  [security group](https://www.unrealircd.org/docs/Security-group_block)
+  `websocket-users` has been added. Similarly there is now
+  security-group::websocket and security-group::exclude-websocket item.
+  Same for [mask items](https://www.unrealircd.org/docs/Mask_item) such
+  as in [set::restrict-commands::command::except](https://www.unrealircd.org/docs/Restrict_commands).
+* Support for IRCv3 [Standard Replies](https://ircv3.net/specs/extensions/standard-replies).
+  Right now nothing fancy yet, other than us sending `ACCOUNT_REQUIRED_TO_CONNECT`
+  from the authprompt module when a user is
+  [soft-banned](https://www.unrealircd.org/docs/Soft_ban).
+* Add support for sending IRCv3 Standard Replies intra-server, eg
+  from services (`SREPLY` server-to-server command)
+* Support `NO_COLOR` environment variable, as per [no-color.org](https://no-color.org).
 
 ### Changes:
 * We now verify that all servers have
   [ulines { }](https://www.unrealircd.org/docs/Ulines_block) for Anope and
   Atheme servers and reject the link if this is not the case.
+* The `FLOOD_BLOCKED` log message now shows the target of the flood
+  for `target-flood-user` and `target-flood-channel`.
+* When an IRCOp sets `+H` to hide ircop status, only the swhois items that
+  were added through oper will be hidden (and not the ones added by eg. vhost).
+  Previously all were hidden.
+* Update shipped libraries: c-ares to 1.19.0, Jansson to 2.14, PCRE2 to 10.42,
+  and on Windows LibreSSL to 3.6.2 and cURL to 8.0.1.
+
+### Fixes:
+* Crash if a third party module is loaded which allows very large message tags
+  (e.g. has no length check)
+* Crash if an IRCOp uses
+  [`unrealircd.org/json-log`](https://www.unrealircd.org/docs/JSON_logging#Enabling_on_IRC)
+  on IRC and during `REHASH` some module sends log output during MOD_INIT
+  (eg. with some 3rd party modules)
+* Crash when parsing [deny link block](https://www.unrealircd.org/docs/Deny_link_block)
+* The [Module manager](https://www.unrealircd.org/docs/Module_manager)
+  now works on FreeBSD and similar.
+* In `LUSERS` the "unknown connection(s)" count was wrong. This was just a
+  harmless counting error with no other effects.
+* Silence warnings on Clang 15+ (eg. Ubuntu 23.04)
+* Don't download `GeoIP.dat` if you have 
+  [`blacklist-module geoip_classic;`](https://www.unrealircd.org/docs/Blacklist-module_directive)
+* Channel mode `+S` stripping too much on incorrect color codes.
+* Make [`@if module-loaded()`](https://www.unrealircd.org/docs/Defines_and_conditional_config)
+  work correctly for modules that are about to be unloaded during REHASH.
+* Some missing notices if remotely REHASHing a server, and one duplicate line.
+* Check invalid host setting in oper::vhost, just like we already have in vhost::vhost.
 
 UnrealIRCd 6.0.6
 -----------------

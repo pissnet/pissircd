@@ -30,6 +30,8 @@
 // TODO: Make configurable at compile time (runtime won't do, as we haven't read the config file)
 #define show_event_console 0
 
+#define MAXLOGLENGTH 16384	/**< Maximum length of a log entry (which may be multiple lines) */
+
 /* Variables */
 Log *logs[NUM_LOG_DESTINATIONS] = { NULL, NULL, NULL, NULL, NULL };
 Log *temp_logs[NUM_LOG_DESTINATIONS] = { NULL, NULL, NULL, NULL, NULL };
@@ -1039,7 +1041,7 @@ void do_unreal_log_disk(LogLevel loglevel, const char *subsystem, const char *ev
 		{
 			for (m = msg; m; m = m->next)
 			{
-				char text_buf[8192];
+				static char text_buf[MAXLOGLENGTH];
 				snprintf(text_buf, sizeof(text_buf), "%s%s %s.%s%s %s: %s\n",
 					timebuf, from_server->name,
 					subsystem, event_id, m->next?"+":"", log_level_valtostring(loglevel), m->line);
@@ -1426,7 +1428,7 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 	json_t *j = NULL;
 	json_t *j_details = NULL;
 	json_t *t;
-	char msgbuf[8192];
+	char msgbuf[MAXLOGLENGTH];
 	const char *loglevel_string = log_level_valtostring(loglevel);
 	MultiLine *mmsg;
 	Client *from_server = NULL;
@@ -1475,7 +1477,7 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 	 * details later on.
 	 */
 	if (client)
-		json_expand_client(j_details, "client", client, 0);
+		json_expand_client(j_details, "client", client, 3);
 	/* Additional details (if any) */
 	while ((d = va_arg(vl, LogData *)))
 	{
@@ -1491,10 +1493,10 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 					json_object_set_new(j_details, d->key, json_null());
 				break;
 			case LOG_FIELD_CLIENT:
-				json_expand_client(j_details, d->key, d->value.client, 0);
+				json_expand_client(j_details, d->key, d->value.client, 3);
 				break;
 			case LOG_FIELD_CHANNEL:
-				json_expand_channel(j_details, d->key, d->value.channel, 0);
+				json_expand_channel(j_details, d->key, d->value.channel, 1);
 				break;
 			case LOG_FIELD_OBJECT:
 				json_object_set_new(j_details, d->key, d->value.object);
@@ -1546,6 +1548,22 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 
 	// NOTE: code duplication further down!
 
+	/* This one should only be in do_unreal_log_internal()
+	 * and never in do_unreal_log_internal_from_remote()
+	 */
+	if (remote_rehash_client &&
+	    ((!strcmp(event_id, "CONFIG_ERROR_GENERIC") ||
+	      !strcmp(event_id, "CONFIG_WARNING_GENERIC") ||
+	      !strcmp(event_id, "CONFIG_INFO_GENERIC"))
+	     ||
+	     (loop.config_status >= CONFIG_STATUS_TEST)) &&
+	    strcmp(subsystem, "rawtraffic"))
+	{
+		sendto_log(remote_rehash_client, "NOTICE", remote_rehash_client->name,
+		           iConf.server_notice_colors, iConf.server_notice_show_event,
+		           loglevel, subsystem, event_id, mmsg, json_serialized, from_server);
+	}
+
 	/* Free everything */
 	safe_free(json_serialized);
 	safe_free_multiline(mmsg);
@@ -1592,7 +1610,7 @@ void free_log_block(Log *l)
 
 int log_tests(void)
 {
-	if (snomask_num_destinations <= 1)
+	if (snomask_num_destinations == 0)
 	{
 		unreal_log(ULOG_ERROR, "config", "LOG_SNOMASK_BLOCK_MISSING", NULL,
 		           "Missing snomask logging configuration:\n"
@@ -1600,7 +1618,6 @@ int log_tests(void)
 		           "include \"snomasks.default.conf\";");
 		return 0;
 	}
-	snomask_num_destinations = 0;
 	return 1;
 }
 
@@ -1649,6 +1666,7 @@ void postconf_defaults_log_block(void)
 void log_pre_rehash(void)
 {
 	*snomasks_in_use_testing = '\0';
+	snomask_num_destinations = 0;
 }
 
 /* Called after CONFIG_TEST right before CONFIG_RUN */

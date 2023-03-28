@@ -52,7 +52,6 @@ static int	_conf_link		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_ban		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_set		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_deny		(ConfigFile *conf, ConfigEntry *ce);
-static int	_conf_deny_link		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_deny_channel	(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_deny_version	(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_require		(ConfigFile *conf, ConfigEntry *ce);
@@ -228,7 +227,6 @@ ConfigItem_link		*conf_link = NULL;
 ConfigItem_ban		*conf_ban = NULL;
 ConfigItem_deny_channel *conf_deny_channel = NULL;
 ConfigItem_allow_channel *conf_allow_channel = NULL;
-ConfigItem_deny_link	*conf_deny_link = NULL;
 ConfigItem_deny_version *conf_deny_version = NULL;
 ConfigItem_alias	*conf_alias = NULL;
 ConfigResource	*config_resources = NULL;
@@ -1416,8 +1414,6 @@ void config_error(FORMAT_STRING(const char *format), ...)
 	if ((ptr = strchr(buffer, '\n')) != NULL)
 		*ptr = '\0';
 	unreal_log_raw(ULOG_ERROR, "config", "CONFIG_ERROR_GENERIC", NULL, buffer);
-	if (remote_rehash_client)
-		sendnotice(remote_rehash_client, "error: %s", buffer);
 	/* We cannot live with this */
 	config_error_flag = 1;
 }
@@ -1474,8 +1470,6 @@ void config_status(FORMAT_STRING(const char *format), ...)
 	if ((ptr = strchr(buffer, '\n')) != NULL)
 		*ptr = '\0';
 	unreal_log_raw(ULOG_INFO, "config", "CONFIG_INFO_GENERIC", NULL, buffer);
-	if (remote_rehash_client)
-		sendnotice(remote_rehash_client, "%s", buffer);
 }
 
 void config_warn(FORMAT_STRING(const char *format), ...)
@@ -1490,8 +1484,6 @@ void config_warn(FORMAT_STRING(const char *format), ...)
 	if ((ptr = strchr(buffer, '\n')) != NULL)
 		*ptr = '\0';
 	unreal_log_raw(ULOG_WARNING, "config", "CONFIG_WARNING_GENERIC", NULL, buffer);
-	if (remote_rehash_client)
-		sendnotice(remote_rehash_client, "[warning] %s", buffer);
 }
 
 void config_warn_duplicate(const char *filename, int line, const char *entry)
@@ -2072,9 +2064,10 @@ int config_test(void)
 		return -1;
 	}
 
+	loop.config_status = CONFIG_STATUS_POSTTEST;
+
 	preprocessor_resolve_conditionals_all(PREPROCESSOR_PHASE_MODULE);
 
-	loop.config_status = CONFIG_STATUS_POSTTEST;
 	if (!config_test_all())
 	{
 		config_error("IRCd configuration failed to pass testing");
@@ -2140,7 +2133,6 @@ int config_test(void)
 	loop.config_status = CONFIG_STATUS_POSTLOAD;
 	postconf();
 	unreal_log(ULOG_INFO, "config", "CONFIG_LOADED", NULL, "Configuration loaded");
-	clicap_post_rehash();
 	unload_all_unused_mtag_handlers();
 	return 0;
 }
@@ -2241,6 +2233,8 @@ int config_read_file(const char *filename, const char *display_name)
 			if (!strcmp(ce->name, "blacklist-module"))
 				 _test_blacklist_module(cfptr, ce);
 
+		preprocessor_resolve_conditionals_ce(&cfptr->items, PREPROCESSOR_PHASE_SECONDARY);
+
 		/* Load urls */
 		config_parse_and_queue_urls(cfptr->items);
 
@@ -2337,7 +2331,6 @@ void config_rehash()
 	ConfigItem_listen	 	*listen_ptr;
 	ConfigItem_tld			*tld_ptr;
 	ConfigItem_vhost		*vhost_ptr;
-	ConfigItem_deny_link		*deny_link_ptr;
 	ConfigItem_deny_channel		*deny_channel_ptr;
 	ConfigItem_allow_channel	*allow_channel_ptr;
 	ConfigItem_admin		*admin_ptr;
@@ -2482,14 +2475,6 @@ void config_rehash()
 
 	remove_config_tkls();
 
-	for (deny_link_ptr = conf_deny_link; deny_link_ptr; deny_link_ptr = (ConfigItem_deny_link *) next) {
-		next = (ListStruct *)deny_link_ptr->next;
-		safe_free(deny_link_ptr->prettyrule);
-		unreal_delete_masks(deny_link_ptr->mask);
-		crule_free(&deny_link_ptr->rule);
-		DelListItem(deny_link_ptr, conf_deny_link);
-		safe_free(deny_link_ptr);
-	}
 	for (deny_version_ptr = conf_deny_version; deny_version_ptr; deny_version_ptr = (ConfigItem_deny_version *) next) {
 		next = (ListStruct *)deny_version_ptr->next;
 		safe_free(deny_version_ptr->mask);
@@ -3077,30 +3062,6 @@ ConfigItem_link *find_link(const char *servername)
 		if (!link->flag.temporary && match_simple(link->servername, servername))
 		{
 		    return link;
-		}
-	}
-	return NULL;
-}
-
-/** Check if this link should be denied due to deny link { } configuration
- * @param link		The link block
- * @param auto_connect	Set this to 1 if this is called from auto connect code
- *			(it will then check both CRULE_AUTO + CRULE_ALL)
- *			set it to 0 otherwise (will not check CRULE_AUTO blocks).
- * @returns The deny block if the server should be denied, or NULL if no deny block.
- */
-ConfigItem_deny_link *check_deny_link(ConfigItem_link *link, int auto_connect)
-{
-	ConfigItem_deny_link *d;
-
-	for (d = conf_deny_link; d; d = d->next)
-	{
-		if ((auto_connect == 0) && (d->flag.type == CRULE_AUTO))
-			continue;
-		if (unreal_mask_match_string(link->servername, d->mask) &&
-		    crule_eval(d->rule))
-		{
-			return d;
 		}
 	}
 	return NULL;
@@ -4144,6 +4105,12 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 					config_warn_duplicate(cep->file->filename,
 						cep->line_number, "oper::vhost");
 					continue;
+				}
+				if (!valid_vhost(cep->value))
+				{
+					config_error("%s:%i: oper::vhost contains illegal characters or is too long: '%s'",
+					             cep->file->filename, cep->line_number, cep->value);
+					errors++;
 				}
 				has_vhost = 1;
 			}
@@ -6013,39 +5980,11 @@ int	_test_vhost(ConfigFile *conf, ConfigEntry *ce)
 				errors++;
 				continue;
 			}
-			if ((at = strchr(cep->value, '@')))
+			if (!valid_vhost(cep->value))
 			{
-				for (tmp = cep->value; tmp != at; tmp++)
-				{
-					if (*tmp == '~' && tmp == cep->value)
-						continue;
-					if (!isallowed(*tmp))
-						break;
-				}
-				if (tmp != at)
-				{
-					config_error("%s:%i: vhost::vhost contains an invalid ident",
-						cep->file->filename, cep->line_number);
-					errors++;
-				}
-				host = at+1;
-			}
-			else
-				host = cep->value;
-			if (!*host)
-			{
-				config_error("%s:%i: vhost::vhost does not have a host set",
-					cep->file->filename, cep->line_number);
+				config_error("%s:%i: oper::vhost contains illegal characters or is too long: '%s'",
+					     cep->file->filename, cep->line_number, cep->value);
 				errors++;
-			}
-			else
-			{
-				if (!valid_host(host, 0))
-				{
-					config_error("%s:%i: vhost::vhost contains an invalid host",
-						cep->file->filename, cep->line_number);
-					errors++;
-				}
 			}
 		}
 		else if (!strcmp(cep->name, "login"))
@@ -7604,6 +7543,18 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 				int lag_penalty_bytes = -1;
 				for (ceppp = cepp->items; ceppp; ceppp = ceppp->next)
 				{
+					/* Check hooks first */
+					int used = 0;
+					for (h = Hooks[HOOKTYPE_CONFIGRUN]; h; h = h->next)
+					{
+						int used = (*(h->func.intfunc))(conf,ceppp,CONFIG_SET_ANTI_FLOOD);
+						if (used == 1)
+							break;
+					}
+					if (used == 1)
+						continue; /* module handled it */
+					if (used == 2)
+						break; /* module handled it and we must stop entire block processing */
 					if (!strcmp(ceppp->name, "handshake-data-flood"))
 					{
 						for (cep4 = ceppp->items; cep4; cep4 = cep4->next)
@@ -7657,7 +7608,7 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 						tempiConf.throttle_count = cnt;
 						tempiConf.throttle_period = period;
 					}
-					if (!strcmp(ceppp->name, "max-concurrent-conversations"))
+					else if (!strcmp(ceppp->name, "max-concurrent-conversations"))
 					{
 						/* We use a hack here to make it fit our storage format */
 						char buf[64];
@@ -7676,15 +7627,6 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 						}
 						snprintf(buf, sizeof(buf), "%d:%ld", users, every);
 						config_parse_flood_generic(buf, &tempiConf, cepp->name, FLD_CONVERSATIONS);
-					}
-					else
-					{
-						for (h = Hooks[HOOKTYPE_CONFIGRUN]; h; h = h->next)
-						{
-							int value = (*(h->func.intfunc))(conf,ceppp,CONFIG_SET_ANTI_FLOOD);
-							if (value == 1)
-								break;
-						}
 					}
 				}
 				if ((lag_penalty != -1) && (lag_penalty_bytes != -1))
@@ -7799,6 +7741,10 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 				else if (!strcmp(cepp->name, "stop-on-first-match"))
 				{
 					tempiConf.spamfilter_stop_on_first_match = config_checkval(cepp->value, CFG_YESNO);
+				}
+				else if (!strcmp(cepp->name, "utf8"))
+				{
+					tempiConf.spamfilter_utf8 = config_checkval(cepp->value, CFG_YESNO);
 				}
 			}
 		}
@@ -8443,9 +8389,52 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 
 				for (ceppp = cepp->items; ceppp; ceppp = ceppp->next)
 				{
-					int everyone = !strcmp(cepp->name, "everyone") ? 1 : 0;
-					int for_everyone = flood_option_is_for_everyone(ceppp->name);
+					int everyone;
+					int for_everyone;
+					int used = 0;
+					Hook *h;
 
+					/* First, check hooks... */
+					for (h = Hooks[HOOKTYPE_CONFIGTEST]; h; h = h->next)
+					{
+						int value, errs = 0;
+						if (h->owner && !(h->owner->flags & MODFLAG_TESTING)
+							&& !(h->owner->options & MOD_OPT_PERM))
+							continue;
+						value = (*(h->func.intfunc))(conf,ceppp,CONFIG_SET_ANTI_FLOOD,&errs);
+						if (value == 2)
+						{
+							used = 2;
+							break;
+						} else
+						if (value == 1)
+						{
+							used = 1;
+							break;
+						} else
+						if (value == -1)
+						{
+							used = 1;
+							errors += errs;
+							break;
+						} else
+						if (value == -2)
+						{
+							used = 2;
+							errors += errs;
+							break;
+						}
+					}
+					if (used == 1)
+						continue; /* module handled it */
+					if (used == 2)
+						break; /* module handled it and we must stop entire block processing */
+
+					/* Prevent users from using options that belong in "everyone"
+					 * at other places, and vice-versa.
+					 */
+					everyone = !strcmp(cepp->name, "everyone") ? 1 : 0;
+					for_everyone = flood_option_is_for_everyone(ceppp->name);
 					if (everyone && !for_everyone)
 					{
 						config_error("%s:%i: %s cannot be in the set::anti-flood::everyone block. "
@@ -8690,43 +8679,10 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 					}
 					else
 					{
-						/* hmm.. I don't like this method. but I just quickly copied it from CONFIG_ALLOW for now... */
-						int used = 0;
-						Hook *h;
-						for (h = Hooks[HOOKTYPE_CONFIGTEST]; h; h = h->next)
-						{
-							int value, errs = 0;
-							if (h->owner && !(h->owner->flags & MODFLAG_TESTING)
-								&& !(h->owner->options & MOD_OPT_PERM))
-								continue;
-							value = (*(h->func.intfunc))(conf,ceppp,CONFIG_SET_ANTI_FLOOD,&errs);
-							if (value == 2)
-								used = 1;
-							if (value == 1)
-							{
-								used = 1;
-								break;
-							}
-							if (value == -1)
-							{
-								used = 1;
-								errors += errs;
-								break;
-							}
-							if (value == -2)
-							{
-								used = 1;
-								errors += errs;
-							}
-						}
-						if (!used)
-						{
-							config_error_unknownopt(ceppp->file->filename,
-								ceppp->line_number, "set::anti-flood",
-								ceppp->name);
-							errors++;
-						}
-						continue;
+						config_error_unknownopt(ceppp->file->filename,
+							ceppp->line_number, "set::anti-flood",
+							ceppp->name);
+						errors++;
 					}
 				}
 				if (has_lag_penalty+has_lag_penalty_bytes == 1)
@@ -8930,6 +8886,9 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 				} else
 #endif
 				if (!strcmp(cepp->name, "stop-on-first-match"))
+				{
+				} else
+				if (!strcmp(cepp->name, "utf8"))
 				{
 				} else
 				{
@@ -9924,8 +9883,6 @@ Hook *h;
 
 	if (!strcmp(ce->value, "channel"))
 		_conf_deny_channel(conf, ce);
-	else if (!strcmp(ce->value, "link"))
-		_conf_deny_link(conf, ce);
 	else if (!strcmp(ce->value, "version"))
 		_conf_deny_version(conf, ce);
 	else
@@ -9978,34 +9935,6 @@ int	_conf_deny_channel(ConfigFile *conf, ConfigEntry *ce)
 	AddListItem(deny, conf_deny_channel);
 	return 0;
 }
-int	_conf_deny_link(ConfigFile *conf, ConfigEntry *ce)
-{
-	ConfigItem_deny_link 	*deny = NULL;
-	ConfigEntry 	    	*cep;
-
-	deny = safe_alloc(sizeof(ConfigItem_deny_link));
-	for (cep = ce->items; cep; cep = cep->next)
-	{
-		if (!strcmp(cep->name, "mask"))
-		{
-			unreal_add_masks(&deny->mask, cep);
-		}
-		else if (!strcmp(cep->name, "rule"))
-		{
-			deny->rule = (char *)crule_parse(cep->value);
-			safe_strdup(deny->prettyrule, cep->value);
-		}
-		else if (!strcmp(cep->name, "type")) {
-			if (!strcmp(cep->value, "all"))
-				deny->flag.type = CRULE_ALL;
-			else if (!strcmp(cep->value, "auto"))
-				deny->flag.type = CRULE_AUTO;
-		}
-	}
-	AddListItem(deny, conf_deny_link);
-	return 0;
-}
-
 int	_conf_deny_version(ConfigFile *conf, ConfigEntry *ce)
 {
 	ConfigItem_deny_version *deny = NULL;
@@ -10138,102 +10067,6 @@ int     _test_deny(ConfigFile *conf, ConfigEntry *ce)
 			config_error("%s:%d: You cannot have both ::mask and ::match. "
 				     "You should only use %s %s::match.",
 				     ce->file->filename, ce->line_number, ce->name, ce->value);
-			errors++;
-		}
-	}
-	else if (!strcmp(ce->value, "link"))
-	{
-		char has_mask = 0, has_rule = 0, has_type = 0;
-		for (cep = ce->items; cep; cep = cep->next)
-		{
-			if (!cep->items)
-			{
-				if (config_is_blankorempty(cep, "deny link"))
-				{
-					errors++;
-					continue;
-				}
-				else if (!strcmp(cep->name, "mask"))
-				{
-					has_mask = 1;
-				} else if (!strcmp(cep->name, "rule"))
-				{
-					int val = 0;
-					if (has_rule)
-					{
-						config_warn_duplicate(cep->file->filename,
-							cep->line_number, "deny link::rule");
-						continue;
-					}
-					has_rule = 1;
-					if ((val = crule_test(cep->value)))
-					{
-						config_error("%s:%i: deny link::rule contains an invalid expression: %s",
-							cep->file->filename,
-							cep->line_number,
-							crule_errstring(val));
-						errors++;
-					}
-				}
-				else if (!strcmp(cep->name, "type"))
-				{
-					if (has_type)
-					{
-						config_warn_duplicate(cep->file->filename,
-							cep->line_number, "deny link::type");
-						continue;
-					}
-					has_type = 1;
-					if (!strcmp(cep->value, "auto"))
-					;
-					else if (!strcmp(cep->value, "all"))
-					;
-					else {
-						config_status("%s:%i: unknown deny link type",
-						cep->file->filename, cep->line_number);
-						errors++;
-					}
-				}
-				else
-				{
-					config_error_unknown(cep->file->filename,
-						cep->line_number, "deny link", cep->name);
-					errors++;
-				}
-			}
-			else
-			{
-				// Sections
-				if (!strcmp(cep->name, "mask"))
-				{
-					if (cep->value || cep->items)
-						has_mask = 1;
-				}
-				else
-				{
-					config_error_unknown(cep->file->filename,
-						cep->line_number, "deny link", cep->name);
-					errors++;
-					continue;
-				}
-			}
-		}
-		if (!has_mask)
-		{
-			config_error_missing(ce->file->filename, ce->line_number,
-				"deny link::mask");
-			errors++;
-		}
-		if (!has_rule)
-		{
-			config_error_missing(ce->file->filename, ce->line_number,
-				"deny link::rule");
-			errors++;
-		}
-		if (!has_type)
-		{
-			config_error_missing(ce->file->filename, ce->line_number,
-				"deny link::type");
 			errors++;
 		}
 	}
@@ -10738,7 +10571,7 @@ void request_rehash(Client *client)
 	/* Start a new json_rehash_log */
 	json_rehash_log = json_object();
 	if (client)
-		json_expand_client(json_rehash_log, "rehash_client", client, 1);
+		json_expand_client(json_rehash_log, "rehash_client", client, 99);
 	j = json_array();
 	json_object_set_new(json_rehash_log, "log", j);
 
@@ -10773,6 +10606,7 @@ int rehash_internal(Client *client)
 	unload_all_unused_history_backends();
 	unload_all_unused_rpc_handlers();
 	// unload_all_unused_moddata(); -- this will crash
+	clicap_check_for_changes();
 	umodes_check_for_changes();
 	charsys_check_for_changes();
 

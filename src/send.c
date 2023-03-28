@@ -36,7 +36,7 @@ static int vmakebuf_local_withprefix(char *buf, size_t buflen, Client *from, con
 
 /* These are two local (static) buffers used by the various send functions */
 static char sendbuf[2048];
-static char sendbuf2[4096];
+static char sendbuf2[MAXLINELENGTH];
 
 /** This is used to ensure no duplicate messages are sent
  * to the same server uplink/direction. In send functions
@@ -284,13 +284,8 @@ void sendbufto_one(Client *to, char *msg, unsigned int quick)
 		{
 			/* The message includes one or more message tags:
 			 * Spec-wise the rules allow about 8K for message tags
-			 * and then 512 bytes for the remainder of the message.
-			 * Since we do not allow user tags and only permit a
-			 * limited set of tags we can have our own limits for
-			 * the outgoing messages that we generate: a maximum of
-			 * 500 bytes for message tags and 512 for the remainder.
-			 * These limits will never be hit unless there is a bug
-			 * somewhere.
+			 * (MAXTAGSIZE) and then 512 bytes for
+			 * the remainder of the message (BUFSIZE).
 			 */
 			p = strchr(msg+1, ' ');
 			if (!p)
@@ -300,7 +295,7 @@ void sendbufto_one(Client *to, char *msg, unsigned int quick)
 				           log_data_string("buf", msg));
 				return;
 			}
-			if (p - msg > 4094)
+			if (p - msg > MAXTAGSIZE)
 			{
 				unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_OVERSIZED_MSG", to,
 				           "Oversized message to $client (length $length): $buf",
@@ -324,7 +319,7 @@ void sendbufto_one(Client *to, char *msg, unsigned int quick)
 		len = quick;
 	}
 
-	if (len >= 10240)
+	if (len >= MAXLINELENGTH)
 	{
 		unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_OVERSIZED_MSG2", to,
 			   "Oversized message to $client (length $length): $buf",
@@ -899,9 +894,9 @@ void vsendto_prefix_one(Client *to, Client *from, MessageTag *mtags, const char 
 	const char *mtags_str = mtags ? mtags_to_string(mtags, to) : NULL;
 
 	if (to && from && MyUser(to) && from->user)
-		vmakebuf_local_withprefix(sendbuf, sizeof sendbuf, from, pattern, vl);
+		vmakebuf_local_withprefix(sendbuf, sizeof(sendbuf)-3, from, pattern, vl);
 	else
-		ircvsnprintf(sendbuf, sizeof(sendbuf), pattern, vl);
+		ircvsnprintf(sendbuf, sizeof(sendbuf)-3, pattern, vl);
 
 	if (BadPtr(mtags_str))
 	{
@@ -909,7 +904,7 @@ void vsendto_prefix_one(Client *to, Client *from, MessageTag *mtags, const char 
 		sendbufto_one(to, sendbuf, 0);
 	} else {
 		/* Message tags need to be prepended */
-		snprintf(sendbuf2, sizeof(sendbuf2), "@%s %s", mtags_str, sendbuf);
+		snprintf(sendbuf2, sizeof(sendbuf2)-3, "@%s %s", mtags_str, sendbuf);
 		sendbufto_one(to, sendbuf2, 0);
 	}
 }

@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.0.7-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.0.8-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -34,7 +34,7 @@ UNREAL_VERSION_MAJOR=["0"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["7"]
+UNREAL_VERSION_MINOR=["8"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
@@ -256,6 +256,9 @@ check_cc_flag([-Wsign-compare], [CFLAGS="$CFLAGS -Wno-sign-compare"])
 
 dnl Don't warn about empty body, we use this, eg via Debug(()) or in if's.
 check_cc_flag([-Wempty-body], [CFLAGS="$CFLAGS -Wno-empty-body"])
+
+dnl This warns about all our hook calls - RunHook() and others
+check_cc_flag([-Wdeprecated-non-prototype], [CFLAGS="$CFLAGS -Wno-deprecated-non-prototype"])
 
 dnl Yeah this old clang version is a bit problematic
 dnl (ships in Ubuntu 16.04 for example)
@@ -549,6 +552,7 @@ CHECK_SSL_CTX_SET_MIN_PROTO_VERSION
 CHECK_SSL_CTX_SET_SECURITY_LEVEL
 CHECK_ASN1_TIME_diff
 CHECK_X509_get0_notAfter
+CHECK_X509_check_host
 AC_ARG_ENABLE(dynamic-linking, [AS_HELP_STRING([--disable-dynamic-linking], [Make the IRCd statically link with shared objects rather than dynamically (noone knows if disabling dynamic linking actually does anything or not)])],
 	[enable_dynamic_linking=$enableval], [enable_dynamic_linking="yes"])
 AS_IF([test $enable_dynamic_linking = "yes"],
@@ -582,12 +586,12 @@ export PATH_SEPARATOR
 dnl Use system pcre2 when available, unless --without-system-pcre2.
 has_system_pcre2="no"
 AS_IF([test "x$with_system_pcre2" = "xyes"],[
-PKG_CHECK_MODULES([PCRE2], libpcre2-8 >= 10.00,[has_system_pcre2=yes
+PKG_CHECK_MODULES([PCRE2], libpcre2-8 >= 10.36,[has_system_pcre2=yes
 AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libpcre2*])],[has_system_pcre2=no])])
 
 AS_IF([test "$has_system_pcre2" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW PCRE2 RELEASE!
-pcre2_version="10.40"
+pcre2_version="10.42"
 AC_MSG_RESULT(extracting PCRE2 regex library)
 cur_dir=`pwd`
 cd extras
@@ -728,7 +732,7 @@ AS_IF([test "$has_system_cares" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW C-ARES RELEASE!
 dnl NOTE: when changing this here, ALSO change it in extras/curlinstall
 dnl       and in the comment in this file around line 400!
-cares_version="1.18.1"
+cares_version="1.19.0"
 AC_MSG_RESULT(extracting c-ares resolver library)
 cur_dir=`pwd`
 cd extras
@@ -802,7 +806,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libjansson*])],[h
 
 AS_IF([test "$has_system_jansson" = "no"],[
 dnl REMEMBER TO CHANGE WITH A NEW JANSSON RELEASE!
-jansson_version="2.13.1"
+jansson_version="2.14"
 AC_MSG_RESULT(extracting jansson library)
 cur_dir=`pwd`
 cd extras
