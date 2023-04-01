@@ -10,11 +10,16 @@
 ModuleHeader MOD_HEADER
   = {
 	"rpc/rpc",
-	"1.0.2",
+	"1.0.3",
 	"RPC module for remote management",
 	"UnrealIRCd Team",
 	"unrealircd-6",
     };
+
+/** Maximum length of an rpc-user THIS { }.
+ * As we use the "RPC:" prefix it is nicklen minus that.
+ */
+#define RPCUSERLEN (NICKLEN-4)
 
 /* Structs */
 typedef struct RPCUser RPCUser;
@@ -73,6 +78,7 @@ int rpc_handle_auth(Client *client, WebRequest *web);
 int rpc_parse_auth_basic_auth(Client *client, WebRequest *web, char **username, char **password);
 int rpc_parse_auth_uri(Client *client, WebRequest *web, char **username, char **password);
 RPC_CALL_FUNC(rpc_rpc_info);
+RPC_CALL_FUNC(rpc_rpc_set_issuer);
 CMD_FUNC(cmd_rrpc);
 EVENT(rpc_remote_timeout);
 json_t *rrpc_data(RRPC *r);
@@ -139,6 +145,16 @@ MOD_INIT()
 	if (!RPCHandlerAdd(modinfo->handle, &r))
 	{
 		config_error("[rpc.info] Could not register RPC handler");
+		return MOD_FAILED;
+	}
+
+	memset(&r, 0, sizeof(r));
+	r.method = "rpc.set_issuer";
+	r.loglevel = ULOG_DEBUG;
+	r.call = rpc_rpc_set_issuer;
+	if (!RPCHandlerAdd(modinfo->handle, &r))
+	{
+		config_error("[rpc.set_issuer] Could not register RPC handler");
 		return MOD_FAILED;
 	}
 
@@ -258,6 +274,21 @@ int rpc_config_run_ex_listen(ConfigFile *cf, ConfigEntry *ce, int type, void *pt
 	return 1;
 }
 
+/** Valid name for rpc-user THISNAME { } ? */
+static int valid_rpc_user_name(const char *str)
+{
+	const char *p;
+
+	if (strlen(str) > RPCUSERLEN)
+		return 0;
+
+	for (p = str; *p; p++)
+		if (!isalnum(*p) && !strchr("_-", *p))
+			return 0;
+
+	return 1;
+}
+
 int rpc_config_test_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 {
 	int errors = 0;
@@ -272,9 +303,18 @@ int rpc_config_test_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type, int *err
 	{
 		config_error("%s:%d: rpc-user block needs to have a name, eg: rpc-user apiuser { }",
 		             ce->file->filename, ce->line_number);
-		errors++;
+		*errs = 1;
+		return -1; /* quick return */
 	}
 
+	if (!valid_rpc_user_name(ce->value))
+	{
+		config_error("%s:%d: rpc-user block has invalid name '%s'. "
+		             "Can be max %d long and may only contain a-z, A-Z, 0-9, - and _.",
+		             ce->file->filename, ce->line_number,
+		             ce->value, RPCUSERLEN);
+		errors++;
+	}
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (!strcmp(cep->name, "match"))
@@ -458,13 +498,22 @@ int rpc_packet_in_websocket(Client *client, char *readbuf, int length)
 
 int rpc_packet_in_unix_socket(Client *client, const char *readbuf, int *length)
 {
+	char buf[READBUFSIZE];
+
 	if (!RPC_PORT(client) || !(client->local->listener->socket_type == SOCKET_TYPE_UNIX) || (*length <= 0))
 		return 1; /* Not for us */
 
-	// FIXME: this assumes a single request in 'readbuf' while in fact:
-	// - it could only contain partial JSON, eg no ending } yet
-	// - there could be multiple requests
-	rpc_call_text(client, readbuf, *length);
+	dbuf_put(&client->local->recvQ, readbuf, *length);
+
+	while (DBufLength(&client->local->recvQ))
+	{
+		int len = dbuf_getmsg(&client->local->recvQ, buf);
+		if (len <= 0)
+			break;
+		rpc_call_text(client, buf, len);
+		if (IsDead(client))
+			break;
+	}
 
 	return 0;
 }
@@ -482,14 +531,19 @@ void rpc_close(Client *client)
  */
 void rpc_call_text(Client *client, const char *readbuf, int len)
 {
-	char buf[2048];
 	json_t *request = NULL;
 	json_error_t jerr;
+#if JANSSON_VERSION_HEX >= 0x020100
+	const char *buf = readbuf;
+	request = json_loadb(buf, len, JSON_REJECT_DUPLICATES, &jerr);
+#else
+	char buf[2048];
 
 	*buf = '\0';
 	strlncpy(buf, readbuf, sizeof(buf), len);
 
 	request = json_loads(buf, JSON_REJECT_DUPLICATES, &jerr);
+#endif
 	if (!request)
 	{
 		unreal_log(ULOG_INFO, "rpc", "RPC_INVALID_JSON", client,
@@ -689,6 +743,58 @@ int sanitize_params(Client *client, json_t *request, json_t *j)
 	return 1;
 }
 
+/** Log the RPC request */
+void rpc_call_log(Client *client, RPCHandler *handler, json_t *request, const char *method, json_t *params)
+{
+	const char *key;
+	json_t *value_object;
+	char params_string[512], tbuf[256];
+
+	*params_string = '\0';
+	json_object_foreach(params, key, value_object)
+	{
+		const char *value = json_get_value(value_object);
+		if (value)
+		{
+			snprintf(tbuf, sizeof(tbuf), "%s='%s', ", key, value);
+			strlcat(params_string, tbuf, sizeof(params_string));
+		}
+	}
+	if (*params_string)
+		params_string[strlen(params_string)-2] = '\0'; /* cut off last comma */
+
+	// TODO: pass log_data_json() or something, pass the entire 'request' ? For JSON logging
+
+	if (client->rpc && client->rpc->issuer)
+	{
+		if (*params_string)
+		{
+			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
+				   "[rpc] RPC call $method by $client ($issuer): $params_string",
+				   log_data_string("issuer", client->rpc->issuer),
+				   log_data_string("method", method),
+				   log_data_string("params_string", params_string));
+		} else {
+			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
+				   "[rpc] RPC call $method by $client ($issuer)",
+				   log_data_string("issuer", client->rpc->issuer),
+				   log_data_string("method", method));
+		}
+	} else {
+		if (*params_string)
+		{
+			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
+				   "[rpc] RPC call $method by $client: $params_string",
+				   log_data_string("method", method),
+				   log_data_string("params_string", params_string));
+		} else {
+			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
+				   "[rpc] RPC call $method by $client",
+				   log_data_string("method", method));
+		}
+	}
+}
+
 /** Handle the RPC request: request is in JSON */
 void rpc_call(Client *client, json_t *request)
 {
@@ -763,9 +869,7 @@ void rpc_call(Client *client, json_t *request)
 		json_object_set_new(request, "params", params);
 	}
 
-	unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
-	           "[rpc] Client $client: RPC call $method",
-	           log_data_string("method", method));
+	rpc_call_log(client, handler, request, method, params);
 
 #ifdef DEBUGMODE
 	{
@@ -1007,6 +1111,31 @@ RPC_CALL_FUNC(rpc_rpc_info)
 		json_object_set_new(methods, r->method, item);
 	}
 
+	rpc_response(client, request, result);
+	json_decref(result);
+}
+
+RPC_CALL_FUNC(rpc_rpc_set_issuer)
+{
+	json_t *result;
+	const char *name;
+	char buf[512];
+
+	REQUIRE_PARAM_STRING("name", name);
+
+	/* Do some validation on the name */
+	strlcpy(buf, name, sizeof(buf));
+	if (!do_remote_nick_name(buf) || strcmp(buf, name))
+	{
+		rpc_error(client, request, JSON_RPC_ERROR_INVALID_NAME,
+		          "The 'name' contains illegal characters or is too long. "
+		          "The same rules as for nick names apply.");
+		return;
+	}
+
+	safe_strdup(client->rpc->issuer, name);
+
+	result = json_boolean(1);
 	rpc_response(client, request, result);
 	json_decref(result);
 }

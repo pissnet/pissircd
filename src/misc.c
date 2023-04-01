@@ -1507,6 +1507,10 @@ int websocket_create_packet_simple_default_handler(int opcode, const char **buf,
 	return -1;
 }
 
+void mtag_add_issued_by_default_handler(MessageTag **mtags, Client *client, MessageTag *recv_mtags)
+{
+}
+
 /** my_timegm: mktime()-like function which will use GMT/UTC.
  * Strangely enough there is no standard function for this.
  * On some *NIX OS's timegm() may be available, sometimes only
