@@ -152,11 +152,15 @@ int server_ban_select_criteria(Client *client, json_t *request, json_t *params,
 		return 0;
 	}
 
-	if (!server_ban_parse_mask(client, 0, *tkl_type_int, *name, usermask, hostmask, soft, &error))
+	if (!server_ban_parse_mask(client, 0, *tkl_type_char, *name, usermask, hostmask, soft, &error))
 	{
 		rpc_error_fmt(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Error: %s", error);
 		return 0;
 	}
+
+	/* Hm, shouldn't this be done by server_ban_parse_mask() ? */
+	if (*soft && (*usermask[0] == '%'))
+		*usermask = *usermask + 1;
 
 	return 1;
 }
@@ -197,6 +201,7 @@ RPC_CALL_FUNC(rpc_server_ban_del)
 	const char *name, *type_name;
 	const char *set_by;
 	char *usermask, *hostmask;
+	char usermask_mess[256];
 	int soft;
 	TKL *tkl;
 	char tkl_type_char;
@@ -230,7 +235,16 @@ RPC_CALL_FUNC(rpc_server_ban_del)
 
 	tkllayer[1] = "-";
 	tkllayer[2] = tkl_type_str;
-	tkllayer[3] = usermask;
+	if (soft)
+	{
+		/* I don't like this fiddling.
+		 * It will be gone when we move from cmd_tkl() to a real function though.
+		 */
+		snprintf(usermask_mess, sizeof(usermask_mess), "%%%s", usermask);
+		tkllayer[3] = usermask_mess;
+	} else {
+		tkllayer[3] = usermask;
+	}
 	tkllayer[4] = hostmask;
 	tkllayer[5] = set_by;
 	tkllayer[6] = NULL;

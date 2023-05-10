@@ -137,6 +137,7 @@ void rpc_channel_set_mode(Client *client, json_t *request, json_t *params)
 {
 	json_t *result, *item;
 	const char *channelname, *modes, *parameters;
+	MessageTag *mtags = NULL;
 	Channel *channel;
 
 	REQUIRE_PARAM_STRING("channel", channelname);
@@ -149,7 +150,9 @@ void rpc_channel_set_mode(Client *client, json_t *request, json_t *params)
 		return;
 	}
 
-	set_channel_mode(channel, modes, parameters);
+	mtag_add_issued_by(&mtags, client, NULL);
+	set_channel_mode(channel, mtags, modes, parameters);
+	safe_free_message_tags(mtags);
 
 	/* Simply return success */
 	result = json_boolean(1);
@@ -191,8 +194,8 @@ void rpc_channel_set_topic(Client *client, json_t *request, json_t *params)
 void rpc_channel_kick(Client *client, json_t *request, json_t *params)
 {
 	json_t *result, *item;
-	const char *args[5];
 	const char *channelname, *nick, *reason;
+	MessageTag *mtags = NULL;
 	Channel *channel;
 	Client *acptr;
 	time_t set_at = 0;
@@ -213,12 +216,9 @@ void rpc_channel_kick(Client *client, json_t *request, json_t *params)
 		return;
 	}
 
-	args[0] = NULL;
-	args[1] = channel->name;
-	args[2] = acptr->name;
-	args[3] = reason;
-	args[4] = NULL;
-	do_cmd(&me, NULL, "KICK", reason ? 4 : 3, args);
+	mtag_add_issued_by(&mtags, client, NULL);
+	kick_user(mtags, channel, &me, acptr, reason);
+	safe_free_message_tags(mtags);
 
 	/* Simply return success
 	 * TODO: actually we can do a find_member() check and such to see if the user is kicked!

@@ -10,6 +10,9 @@
  * @brief JSON functions - used for logging and RPC.
  */
 
+/** Are we currently in the logging code? */
+int log_json_filter = 0;
+
 /** Calculate expansion of a JSON string thanks to double escaping.
  * orig => JSON => IRC
  *    " => \"   => \\"
@@ -47,8 +50,13 @@ json_t *json_string_unreal(const char *s)
 	if (s == NULL)
 		return json_null();
 
-	stripped = StripControlCodesEx(s, buf1, sizeof(buf1), UNRL_STRIP_LOW_ASCII|UNRL_STRIP_KEEP_LF);
-	verified_s = unrl_utf8_make_valid(buf1, buf2, sizeof(buf2), 0);
+	if (log_json_filter)
+	{
+		stripped = StripControlCodesEx(s, buf1, sizeof(buf1), UNRL_STRIP_LOW_ASCII|UNRL_STRIP_KEEP_LF);
+		verified_s = unrl_utf8_make_valid(buf1, buf2, sizeof(buf2), 0);
+	} else {
+		verified_s = unrl_utf8_make_valid(s, buf2, sizeof(buf2), 0);
+	}
 
 	return json_string(verified_s);
 }
@@ -200,6 +208,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 	char buf[BUFSIZE+1];
 	json_t *child;
 	json_t *user = NULL;
+	time_t ts;
 
 	if (key)
 	{
@@ -253,8 +262,8 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		json_object_set_new(child, "server_port", json_integer(client->local->listener->port));
 	if (client->local && client->local->port)
 		json_object_set_new(child, "client_port", json_integer(client->local->port));
-	if (client->local && client->local->creationtime)
-		json_object_set_new(child, "connected_since", json_timestamp(client->local->creationtime));
+	if ((ts = get_creationtime(client)))
+		json_object_set_new(child, "connected_since", json_timestamp(ts));
 	if (client->local && client->local->idle_since)
 		json_object_set_new(child, "idle_since", json_timestamp(client->local->idle_since));
 

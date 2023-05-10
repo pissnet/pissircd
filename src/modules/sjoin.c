@@ -452,10 +452,13 @@ CMD_FUNC(cmd_sjoin)
 				MessageTag *mtags = NULL;
 
 				add_user_to_channel(channel, acptr, item_modes);
-				unreal_log(ULOG_INFO, "join", "REMOTE_CLIENT_JOIN", acptr,
-					   "User $client joined $channel",
-					   log_data_channel("channel", channel),
-					   log_data_string("modes", item_modes));
+				if (!(acptr->uplink && !IsSynched(acptr->uplink)))
+				{
+					unreal_log(ULOG_INFO, "join", "REMOTE_CLIENT_JOIN", acptr,
+						   "User $client joined $channel",
+						   log_data_channel("channel", channel),
+						   log_data_string("modes", item_modes));
+				}
 				RunHook(HOOKTYPE_REMOTE_JOIN, acptr, channel, recv_mtags);
 				new_message_special(acptr, recv_mtags, &mtags, ":%s JOIN %s", acptr->name, channel->name);
 				send_join_to_local_users(acptr, channel, mtags);
@@ -528,21 +531,21 @@ CMD_FUNC(cmd_sjoin)
 			/* Adding of list modes */
 			if (*item_modes == 'b')
 			{
-				if (add_listmode_ex(&channel->banlist, client, channel, item, setby, setat) != -1)
+				if (add_listmode_ex(&channel->banlist, client, channel, item, setby, setat) == 1)
 				{
 					Addit('b', item);
 				}
 			}
 			if (*item_modes == 'e')
 			{
-				if (add_listmode_ex(&channel->exlist, client, channel, item, setby, setat) != -1)
+				if (add_listmode_ex(&channel->exlist, client, channel, item, setby, setat) == 1)
 				{
 					Addit('e', item);
 				}
 			}
 			if (*item_modes == 'I')
 			{
-				if (add_listmode_ex(&channel->invexlist, client, channel, item, setby, setat) != -1)
+				if (add_listmode_ex(&channel->invexlist, client, channel, item, setby, setat) == 1)
 				{
 					Addit('I', item);
 				}

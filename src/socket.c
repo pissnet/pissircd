@@ -659,7 +659,6 @@ void close_connection(Client *client)
 		--OpenFiles;
 		DBufClear(&client->local->sendQ);
 		DBufClear(&client->local->recvQ);
-
 	}
 
 	client->direction = NULL;
@@ -832,7 +831,7 @@ Client *add_connection(ConfigItem_listen *listener, int fd)
 	client->local->listener->clients++;
 
 	if (listener->socket_type == SOCKET_TYPE_UNIX)
-		ip = "127.0.0.1";
+		ip = listener->spoof_ip ? listener->spoof_ip : "127.0.0.1";
 	else
 		ip = getpeerip(client, fd, &port);
 
@@ -950,7 +949,15 @@ void start_of_normal_client_handshake(Client *client)
 		{
 			/* Resolving in progress */
 			SetDNSLookup(client);
-		} else {
+		} else
+		if (he->h_name == NULL)
+		{
+			/* Host was negatively cached */
+			unreal_free_hostent(he);
+			if (should_show_connect_info(client))
+				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FAIL_DNS);
+		} else
+		{
 			/* Host was in our cache */
 			client->local->hostp = he;
 			if (should_show_connect_info(client))
