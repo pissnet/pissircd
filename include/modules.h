@@ -285,11 +285,13 @@ struct Cmode {
 
 	/** Free and remove parameter from list.
 	 * This function pointer is NULL (unused) for modes without parameters.
-	 * @param parastruct		The parameter struct
+	 * @param parastruct	The parameter struct
+	 * @param soft		This is set to 1 if you may 'resist freeing'
+	 *			(used by floodprot module to have active F profile even if -F).
 	 * @returns Normally return 0, must return 1 if it 'resisted' freeing.
 	 * @note In most cases you will just call safe_free() on 'list'
 	 */
-	int (*free_param)(void *parastruct);
+	int (*free_param)(void *parastruct, int soft);
 
 	/** duplicate a struct and return a pointer to duplicate.
 	 * This function pointer is NULL (unused) for modes without parameters.
@@ -319,6 +321,11 @@ struct Cmode {
 	/** Unsetting also eats/requires a parameter. Unusual, but possible. */
 	char unset_with_param;
 
+	/** Is this mode available for chanmode +f, and if so for which flood type?
+	 * eg 'j' for join flood.
+	 */
+	char flood_type_action;
+
 	/** Is this mode being unloaded?
 	 * This is set to 1 if the chanmode module providing this mode is unloaded
 	 * and we are waiting to see if in our new round of loads a "new" chanmode
@@ -326,7 +333,7 @@ struct Cmode {
 	 * should never be 0 outside an internal rehash.
 	 */
 	char unloaded;
-	
+
 	/** Slot number - Can be used instead of GETPARAMSLOT() */
 	int param_slot;
 	
@@ -348,11 +355,12 @@ typedef struct {
 	void *		(*put_param)(void *, const char *);
 	const char *	(*get_param)(void *);
 	const char *	(*conv_param)(const char *, Client *, Channel *);
-	int		(*free_param)(void *);
+	int		(*free_param)(void *, int);
 	void *		(*dup_struct)(void *);
 	int		(*sjoin_check)(Channel *, void *, void *);
 	char		local;
 	char		unset_with_param;
+	char		flood_type_action;
 } CmodeInfo;
 
 /** Get a slot number for a param - eg GETPARAMSLOT('k') */
@@ -1831,11 +1839,12 @@ int hooktype_tkl_del(Client *client, TKL *tkl);
  * @param subsystem		Subsystem (eg "operoverride")
  * @param event_id		Event ID (eg "SAJOIN_COMMAND")
  * @param msg			Message(s) in text form
- * @param json_serialized	The associated JSON text
+ * @param json			The JSON log entry
+ * @param json_serialized	The serialized JSON log entry (as a string)
  * @param timebuf		The [xxxx] time buffer, for convenience
  * @return The return value is ignored (use return 0)
  */
-int hooktype_log(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, const char *json_serialized, const char *timebuf);
+int hooktype_log(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, json_t *json, const char *json_serialized, const char *timebuf);
 
 /** Called when a local user matches a spamfilter (function prototype for HOOKTYPE_LOCAL_SPAMFILTER).
  * @param client		The client

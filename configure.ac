@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.1.0-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.1.1-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -34,7 +34,7 @@ UNREAL_VERSION_MAJOR=["1"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["0"]
+UNREAL_VERSION_MINOR=["1"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
@@ -612,6 +612,7 @@ cd pcre2-$pcre2_version
 AC_MSG_RESULT(compiling PCRE2 regex library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing PCRE2 regex library)
+rm -f "$PRIVATELIBDIR/"libpcre2*
 $ac_cv_prog_MAKER install || exit 1
 PCRE2_CFLAGS="-I$cur_dir/extras/pcre2/include"
 AC_SUBST(PCRE2_CFLAGS)
@@ -706,6 +707,7 @@ CFLAGS="$save_cflags"
 AC_MSG_RESULT(compiling sodium resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing sodium resolver library)
+rm -f "$PRIVATELIBDIR/"libsodium*
 $ac_cv_prog_MAKER install || exit 1
 SODIUM_CFLAGS="-I$cur_dir/extras/sodium/include"
 AC_SUBST(SODIUM_CFLAGS)
@@ -756,6 +758,7 @@ CFLAGS="$save_cflags"
 AC_MSG_RESULT(compiling c-ares resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing c-ares resolver library)
+rm -f "$PRIVATELIBDIR/"libcares*
 $ac_cv_prog_MAKER install || exit 1
 CARES_CFLAGS="-I$cur_dir/extras/c-ares/include"
 AC_SUBST(CARES_CFLAGS)
@@ -831,6 +834,7 @@ CFLAGS="$save_cflags"
 AC_MSG_RESULT(compiling jansson resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing jansson resolver library)
+rm -f "$PRIVATELIBDIR/"libjansson*
 $ac_cv_prog_MAKER install || exit 1
 JANSSON_CFLAGS="-I$cur_dir/extras/jansson/include"
 AC_SUBST(JANSSON_CFLAGS)

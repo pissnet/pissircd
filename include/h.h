@@ -286,6 +286,7 @@ extern void sendto_channel(Channel *channel, Client *from, Client *skip,
 extern void sendto_local_common_channels(Client *user, Client *skip,
                                          long clicap, MessageTag *mtags,
                                          FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,5,6)));
+extern void quit_sendto_local_common_channels(Client *user, MessageTag *mtags, const char *reason);
 extern void sendto_match_servs(Channel *, Client *, FORMAT_STRING(const char *), ...) __attribute__((format(printf,3,4)));
 extern void sendto_match_butone(Client *, Client *, const char *, int, MessageTag *,
     FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,6,7)));
@@ -315,8 +316,33 @@ extern void sendnotice(Client *to, FORMAT_STRING(const char *pattern), ...) __at
  * @endcode
  * @ingroup SendFunctions
  */
-#define sendnumeric(to, numeric, ...) sendnumericfmt(to, numeric, STR_ ## numeric, ##__VA_ARGS__)
-extern void sendnumericfmt(Client *to, int numeric, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,3,4)));
+#define sendnumeric(to, numeric, ...) sendtaggednumericfmt(to, NULL, numeric, STR_ ## numeric, ##__VA_ARGS__)
+
+/** Send numeric message to a client - format to user specific needs.
+ * This will ignore the numeric definition of src/numeric.c and always send ":me.name numeric clientname "
+ * followed by the pattern and format string you choose.
+ * @param to		The recipient
+ * @param numeric	The numeric, one of RPL_* or ERR_*, see src/numeric.c
+ * @param pattern	The format string / pattern to use.
+ * @param ...		Format string parameters.
+ * @note Don't forget to add a colon if you need it (eg `:%%s`), this is a common mistake.
+ */
+#define sendnumericfmt(to, numeric, ...) sendtaggednumericfmt(to, NULL, numeric, __VA_ARGS__)
+
+/** Send numeric message to a client - format to user specific needs.
+ * This will ignore the numeric definition of src/numeric.c and always send ":me.name numeric clientname "
+ * followed by the pattern and format string you choose.
+ * @param to		The recipient
+ * @param mtags     NULL, or NULL-terminated array of message tags
+ * @param numeric	The numeric, one of RPL_* or ERR_*, see src/numeric.c
+ * @param pattern	The format string / pattern to use.
+ * @param ...		Format string parameters.
+ * @note Don't forget to add a colon if you need it (eg `:%%s`), this is a common mistake.
+ */
+#define sendtaggednumeric(to, mtags, numeric, ...) sendtaggednumericfmt(to, mtags, numeric, STR_ ## numeric, ##__VA_ARGS__)
+
+extern void sendtaggednumericfmt(Client *to, MessageTag *mtags, int numeric, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,4,5)));
+
 extern void sendtxtnumeric(Client *to, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf,2,3)));
 /** Build numeric message so it is ready to be sent to a client - rarely used, normally you use sendnumeric() instead.
  * This function is normally only used in eg CAN_KICK and CAN_SET_TOPIC, where
@@ -411,7 +437,13 @@ extern uint64_t siphash_raw(const char *in, size_t len, const char *k);
 extern uint64_t siphash_nocase(const char *in, const char *k);
 extern void siphash_generate_key(char *k);
 extern void init_hash(void);
-uint64_t hash_whowas_name(const char *name);
+extern void add_whowas_to_clist(WhoWas **, WhoWas *);
+extern void del_whowas_from_clist(WhoWas **, WhoWas *);
+extern void add_whowas_to_list(WhoWas **, WhoWas *);
+extern void del_whowas_from_list(WhoWas **, WhoWas *);
+extern uint64_t hash_whowas_name(const char *name);
+extern void create_whowas_entry(Client *client, WhoWas *e, WhoWasEvent event);
+extern void free_whowas_fields(WhoWas *e);
 extern int add_to_client_hash_table(const char *, Client *);
 extern int del_from_client_hash_table(const char *, Client *);
 extern int add_to_id_hash_table(const char *, Client *);
@@ -627,6 +659,8 @@ extern void *safe_alloc_sensitive(size_t size);
 /** Safely destroy a string in memory (but do not free!) */
 #define destroy_string(str) sodium_memzero(str, strlen(str))
 
+#define safe_json_decref(result)	do { json_decref(result); result = NULL; } while(0)
+
 /** @} */
 extern char *our_strdup(const char *str);
 extern char *our_strldup(const char *str, size_t max);
@@ -750,7 +784,7 @@ extern MODVAR int (*can_join)(Client *client, Channel *channel, const char *key,
 extern MODVAR void (*do_mode)(Channel *channel, Client *client, MessageTag *mtags, int parc, const char *parv[], time_t sendts, int samode);
 extern MODVAR MultiLineMode *(*set_mode)(Channel *channel, Client *cptr, int parc, const char *parv[], u_int *pcount,
                             char pvar[MAXMODEPARAMS][MODEBUFLEN + 3]);
-extern MODVAR void (*set_channel_mode)(Channel *channel, const char *modes, const char *parameters);
+extern MODVAR void (*set_channel_mode)(Channel *channel, MessageTag *mtags, const char *modes, const char *parameters);
 extern MODVAR void (*set_channel_topic)(Client *client, Channel *channel, MessageTag *recv_mtags, const char *topic, const char *set_by, time_t set_at);
 extern MODVAR void (*cmd_umode)(Client *, MessageTag *, int, const char **);
 extern MODVAR int (*register_user)(Client *client);
@@ -1180,6 +1214,7 @@ extern void read_until(char **p, char *stopchars);
 extern int is_ip_valid(const char *ip);
 extern int is_file_readable(const char *file, const char *dir);
 /* json.c */
+extern int log_json_filter;
 extern json_t *json_string_unreal(const char *s);
 extern const char *json_object_get_string(json_t *j, const char *name);
 extern int json_object_get_integer(json_t *j, const char *name, int default_value);
@@ -1267,7 +1302,7 @@ extern const char *log_type_valtostring(LogType v);
 #endif
 extern void do_unreal_log(LogLevel loglevel, const char *subsystem, const char *event_id, Client *client, const char *msg, ...) __attribute__((format(printf,5,0)));
 extern void do_unreal_log_raw(LogLevel loglevel, const char *subsystem, const char *event_id, Client *client, const char *msg, ...);
-extern void do_unreal_log_internal_from_remote(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, const char *json_serialized, Client *from_server);
+extern void do_unreal_log_internal_from_remote(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, json_t *json, const char *json_serialized, Client *from_server);
 extern LogData *log_data_string(const char *key, const char *str);
 extern LogData *log_data_char(const char *key, const char c);
 extern LogData *log_data_integer(const char *key, int64_t integer);
@@ -1290,10 +1325,20 @@ extern const char *log_level_valtostring(LogLevel loglevel);
 extern LogLevel log_level_stringtoval(const char *str);
 extern int valid_event_id(const char *s);
 extern int valid_subsystem(const char *s);
+extern LogSource *add_log_source(const char *str);
+extern void free_log_sources(LogSource *l);
+extern int log_sources_match(LogSource *logsource, LogLevel loglevel, const char *subsystem, const char *event_id, int matched_already);
 extern const char *timestamp_iso8601_now(void);
 extern const char *timestamp_iso8601(time_t v);
 extern int is_valid_snomask(char c);
 extern int is_valid_snomask_string_testing(const char *str, char **wrong);
+extern MODVAR LogEntry *memory_log;
+extern MODVAR LogEntry *memory_log_tail;
+extern MODVAR int memory_log_entries;
+extern void free_memory_log_item(LogEntry *e);
+extern void memory_log_do_add_message(time_t t, LogLevel loglevel, const char *subsystem, const char *event_id, json_t *json);
+extern void memory_log_add_message(time_t t, LogLevel loglevel, const char *subsystem, const char *event_id, json_t *json);
+extern EVENT(memory_log_cleaner);
 /* end of logging */
 extern void add_fake_lag(Client *client, long msec);
 extern char *prefix_with_extban(const char *remainder, BanContext *b, Extban *extban, char *buf, size_t buflen);
@@ -1310,6 +1355,7 @@ extern const char *displayurl(const char *url);
 extern char *url_getfilename(const char *url);
 extern void download_file_async(const char *url, time_t cachetime, vFP callback, void *callback_data, char *original_url, int maxredirects);
 extern void url_init(void);
+extern void url_cancel_handle_by_callback_data(void *ptr);
 extern EVENT(url_socket_timeout);
 /* end of url stuff */
 extern char *collapse(char *pattern);
@@ -1337,6 +1383,8 @@ extern void procio_post_rehash(int failure);
 /* end of proc i/o */
 extern int minimum_msec_since_last_run(struct timeval *tv_old, long minimum);
 extern long get_connected_time(Client *client);
+extern time_t get_creationtime(Client *client);
 extern const char *StripControlCodes(const char *text);
 extern const char *StripControlCodesEx(const char *text, char *output, size_t outputlen, int strip_flags);
 extern MODVAR Module *Modules;
+extern const char *command_issued_by_rpc(MessageTag *mtags);

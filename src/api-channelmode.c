@@ -423,6 +423,7 @@ Cmode *CmodeAdd(Module *module, CmodeInfo req, Cmode_t *mode)
 	cm->sjoin_check = req.sjoin_check;
 	cm->local = req.local;
 	cm->unset_with_param = req.unset_with_param;
+	cm->flood_type_action = req.flood_type_action;
 	cm->owner = module;
 	cm->unloaded = 0;
 
@@ -534,7 +535,7 @@ static void unload_extcmode_commit(Cmode *cmode)
 					}
 					free_message_tags(mtags);
 
-					cmode->free_param(GETPARASTRUCT(channel, cmode->letter));
+					cmode->free_param(GETPARASTRUCT(channel, cmode->letter), 0);
 					channel->mode.mode &= ~cmode->mode;
 				}
 			}
@@ -627,7 +628,7 @@ void cm_putparameter(Channel *channel, char mode, const char *str)
  */
 void cm_freeparameter(Channel *channel, char mode)
 {
-	int n = GETPARAMHANDLERBYLETTER(mode)->free_param(GETPARASTRUCT(channel, mode));
+	int n = GETPARAMHANDLERBYLETTER(mode)->free_param(GETPARASTRUCT(channel, mode), 1);
 	if (n == 0)
 		GETPARASTRUCT(channel, mode) = NULL;
 }
@@ -714,7 +715,7 @@ void extcmode_free_paramlist(void **ar)
 		handler = GETPARAMHANDLERBYSLOT(i);
 		if (!handler)
 			continue; /* nothing here... */
-		handler->free_param(ar[handler->param_slot]);
+		handler->free_param(ar[handler->param_slot], 0);
 		ar[handler->param_slot] = NULL;
 	}
 }

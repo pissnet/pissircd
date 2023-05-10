@@ -1,17 +1,79 @@
-UnrealIRCd 6.1.0-git
+UnrealIRCd 6.1.1-git
 =================
-This is the git version (development version) for future 6.1.0. This is work
-in progress and not a stable version.
+This is the git version (development version) for future 6.1.1. This is work
+in progress and may not be a stable version.
+
+### Enhancements:
+* New setting [set::handshake-boot-delay](https://www.unrealircd.org/docs/Set_block#set%3A%3Ahandshake-boot-delay)
+  which allows server linking autoconnects to kick in (and incoming
+  servers on serversonly ports), before allowing clients in. This
+  potentially avoids part of the mess when initially linking on-boot.
+  This option is not turned on by default, you have to set it explicitly.
+  * This is not a useful feature on hubs, as they don't have clients.
+  * It can be useful on client servers, if you `autoconnect` to your hub.
+  * If you connect services to a server with clients this can be useful
+    as well, especially in single-server setups. You would have to set
+    a low `retrywait` in your anope conf (or similar services package)
+    of like `5s` instead of the default `60s`.
+    Then after an IRCd restart, your services link in before your clients
+    and your IRC users have SASL available straight from the start.
+* JSON-RPC:
+  * New call `log.list` to fetch past 1000 log entries. This functionality
+    is only loaded if you include `rpc.modules.default.conf`, so not wasting
+    any memory on servers that are not used for JSON-RPC.
+
+### Changes:
+* Some small DNS performance improvements:
+  * We now 'negatively cache' unresolved hosts for 60 seconds.
+  * The maximum number of cached records (positive and negative) was raised
+    to 4096.
+  * We no longer use "search domains" to avoid silly lookups for like
+    `4.3.2.1.dnsbl.dronebl.org.mydomain.org`.
+* Data buffer chunks bumped from 512 bytes to ~4K. This results in less write
+  calls (lower CPU usage) and more data per TCP/IP packet.
+* Blacklist hits are now logged globally. This means they show up in
+  snomask `B`, are logged, and show up in the webpanel "Logs" view.
+* The event `REMOTE_CLIENT_JOIN` was mass-triggered when servers were
+  syncing. They are now hidden, like `REMOTE_CLIENT_CONNECT`.
+
+### Fixes:
+* Crash on FreeBSD/NetBSD when using JSON-RPC, due to clashing rpc_call
+  symbol in their libc library.
+* When using the webpanel, if an IRC client tried to connect with the same
+  IP as the webpanel server, it would often receive the error "Too many
+  unknown connections". This only affected non-localhost connections.
+
+UnrealIRCd 6.1.0
+-----------------
+This is UnrealIRCd 6.1.0 stable. It is the direct successor to 6.0.7, there
+will be no 6.0.8.
+
+This release contains several channel mode `+f` enhancements and introduces a
+new channel mode `+F` which works with flood profiles like `+F normal` and
+`+F strict`. It is much easier for users than the scary looking mode +f.
+
+UnrealIRCd 6.1.0 also contains lots of JSON-RPC improvements, which is used
+by the [UnrealIRCd admin panel](https://www.unrealircd.org/docs/UnrealIRCd_webpanel).
+Live streaming of logs has been added and the webpanel now communicates to
+UnrealIRCd which web user issued a command (eg: who issued a kill, who
+changed a channel mode, ..).
+
+Other improvements are whowasdb (persistent WHOWAS history) and a new guide
+on running a Tor Onion service. The release also fixes a crash bug related
+to remote includes and fixes multiple memory leaks.
+
+See the full release notes below. As usual on *NIX you can upgrade easily
+with the command: `./unrealircd upgrade`
 
 ### Enhancements:
 * Channel flood protection improvements:
   * New [channel mode `+F`](https://www.unrealircd.org/docs/Channel_anti-flood_settings)
-    (uppercase f). This allows the user to choose a "flood profile",
+    (uppercase F). This allows the user to choose a "flood profile",
     which (behind the scenes) translates to something similar to an `+f` mode.
     This so end-users can simply choose an `+F` profile without having to learn
     the complex channel mode `+f`.
     * For example `+F normal` effectively results in
-      `[7c#C15,30j#R10,10k#K15,40m#M10,10n#N15]:15`
+      `[7c#C15,30j#R10,10k#K15,40m#M10,8n#N15]:15`
     * Multiple profiles are available and changing them is possible,
       see [the documentation](https://www.unrealircd.org/docs/Channel_anti-flood_settings).
     * Any settings in mode `+f` will override the ones of the `+F` profile.
@@ -19,7 +81,7 @@ in progress and not a stable version.
   * You can optionally set a default profile via
     [set::anti-flood::channel::default-profile](https://www.unrealircd.org/docs/Channel_anti-flood_settings#Default_profile).
     This profile is used if the channel is `-F`. If the user does not
-    want channel flood protection then they have to use an explicit `+F none`.
+    want channel flood protection then they have to use an explicit `+F off`.
   * When channel mode `+f` or `+F` detect that a flood is caused by >75% of
     ["unknown-users"](https://www.unrealircd.org/docs/Security-group_block),
     the server will now set a temporary ban on `~security-group:unknown-users`.
@@ -29,18 +91,27 @@ in progress and not a stable version.
     for channel mode `+f`/`+F`.
   * When a server splits on the network, we now temporarily disable +f/+F
     join-flood protection for 75 seconds
-    ([set::modef-split-delay](https://www.unrealircd.org/docs/Set_block#set::modef-split-delay)).
+    ([set::anti-flood::channel::split-delay](https://www.unrealircd.org/docs/Channel_anti-flood_settings#config)).
     This because a server splitting could mean that server has network problems
     or has died (or restarted), in which case the clients would typically
     reconnect to the remaining other servers, triggering an +f/+F join-flood and
     channels ending up being `+i` and such. That is not good because we want
-    +f/+F to be as efortless as possible, with as little false positives as
+    +f/+F to be as effortless as possible, with as little false positives as
     possible.
     * If your network has 5+ servers and the user load is spread evenly among
       them, then you could disable this feature by setting the amount of seconds
       to `0`. This because in such a scenario only 1/5th (20%) of the users
       would reconnect and hopefully don't trigger +f/+F join floods.
-  * All these features only work properly if all servers are on 6.1.0-git or later.
+  * All these features only work properly if all servers are on 6.1.0-rc1 or later.
+* New module `whowasdb` (persistent `WHOWAS` history): this saves the WHOWAS
+  history on disk periodically and when we terminate, so next server boot
+  still has the WHOWAS history. This module is currently not loaded by default.
+* New option [listen::spoof-ip](https://www.unrealircd.org/docs/Listen_block#spoof-ip),
+  only valid when using UNIX domain sockets (so listen::file).
+  This way you can override the IP address that users come online with when
+  they use the socket (default was and still is `127.0.0.1`).
+* Add a new guide [Running Tor Onion service with UnrealIRCd](https://www.unrealircd.org/docs/Running_Tor_Onion_service_with_UnrealIRCd)
+  which uses the new listen::spoof-ip and optionally requires a services account.
 * [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC):
   * Logging of JSON-RPC requests (eg. via snomask `+R`) has been improved,
     it now shows:
@@ -56,10 +127,23 @@ in progress and not a stable version.
     and [User](https://www.unrealircd.org/docs/JSON-RPC:User#Structure_of_a_client_object)
     response object will be. Especially useful if you don't need all the
     details in the list calls.
+  * New JSON-RPC methods
+    [`log.subscribe`](https://www.unrealircd.org/docs/JSON-RPC:Log#log.subscribe) and
+    [`log.unsubscribe`](https://www.unrealircd.org/docs/JSON-RPC:Log#log.unsubscribe)
+    to allow real-time streaming of
+    [JSON log events](https://www.unrealircd.org/docs/JSON_logging).
   * New JSON-RPC method
     [`rpc.set_issuer`](https://www.unrealircd.org/docs/JSON-RPC:Rpc#rpc.set_issuer)
     to indiciate who is actually issuing the requests. The admin panel uses this
     to communicate who is logged in to the panel so this info can be used in logging.
+  * New JSON-RPC methods
+    [`rpc.add_timer`](https://www.unrealircd.org/docs/JSON-RPC:Rpc#rpc.add_timer) and
+    [`rpc.del_timer`](https://www.unrealircd.org/docs/JSON-RPC:Rpc#rpc.del_timer)
+    so you can schedule JSON-RPC calls, like stats.get, to be executed every xyz msec.
+  * New JSON-RPC method
+    [`whowas.get`](https://www.unrealircd.org/docs/JSON-RPC:Whowas#whowas.get)
+    to fetch WHOWAS history.
+  * Low ASCII is no longer filtered out in strings in JSON-RPC, only in JSON logging.
 * A new message tag `unrealircd.org/issued-by` which is IRCOp-only (and
   used intra-server) to communicate who actually issued a command.
   See [docs](https://www.unrealircd.org/issued-by).
@@ -72,15 +156,37 @@ in progress and not a stable version.
   [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) instructions.
 * The [blacklist-module](https://www.unrealircd.org/docs/Blacklist-module_directive)
   directive now accepts wildcards, eg `blacklist-module rpc/*;`
+* The setting set::modef-boot-delay has been moved to
+  [set::anti-flood::channel::boot-delay](https://www.unrealircd.org/docs/Channel_anti-flood_settings#config).
+* We now only exempt `127.0.0.1` and `::1` from banning by default
+  (hardcoded in the source). Previously we exempted whole `127.*` but
+  that gets in the way if you want to allow Tor with a
+  [require authentication](https://www.unrealircd.org/docs/Require_authentication_block)
+  block or soft-ban. Now you can just tell Tor to bind to `127.0.0.2`
+  so its not affected by the default exemption.
+
+### Fixes:
+* Crash if there is a parse error in an included file and there are
+  other remote included files still being downloaded.
+* Memory leak in WHOWAS
+* Memory leak when connecting to a TLS server fails
+* Workaround a bug in some websocket implementations where the WSOP_PONG
+  frame is unmasked (now permitted).
 
 ### Developers and protocol:
-* The `cmode.put_param` is now `int` instead of `void`. You normally
-  `return 0` here. You can `return 1` if you resist freeing, which is
-  rare and only used by `+F` with set::anti-flood::channel::default-profile.
+* The `cmode.free_param` definition changed. It now has an extra argument
+  `int soft` and for return value you will normally `return 0` here.
+  You can `return 1` if you resist freeing, which is rare and only used by
+  `+F` with set::anti-flood::channel::default-profile.
+* New `cmode.flood_type_action` which can be used to indicate a channel mode
+  can be used from +f/+F as an action. You need to specify for which
+  flood type your mode is, eg `cmode.flood_type_action = 'j';` for joinflood.
 * JSON-RPC supports
   [UNIX domain sockets](https://www.unrealircd.org/docs/JSON-RPC:Technical_documentation#UNIX_domain_socket)
-  for making RPC calls. If those are used, we now split on `\n` (newline)
+  for making RPC calls. If this is used, we now split on `\n` (newline)
   so multiple parallel requests can be handled properly.
+* Message tag `unrealircd.org/issued-by`, sent to IRCOps only.
+  See [docs](https://www.unrealircd.org/issued-by).
 
 UnrealIRCd 6.0.7
 -----------------

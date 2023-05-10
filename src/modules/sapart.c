@@ -52,20 +52,41 @@ MOD_UNLOAD()
 	return MOD_SUCCESS;
 }
 
-static void log_sapart(Client *client, Client *target, const char *channels, const char *comment)
+static void log_sapart(Client *client, MessageTag *mtags, Client *target, const char *channels, const char *comment)
 {
-	if (comment)
+	const char *issuer = command_issued_by_rpc(mtags);
+
+	if (issuer)
 	{
-		unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $client used SAPART to make $target part $channels ($reason)",
-			   log_data_client("target", target),
-			   log_data_string("channels", channels),
-			   log_data_string("reason", comment));
-	}
-	else
-	{
-		unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $client used SAPART to make $target part $channels",
-			   log_data_client("target", target),
-			   log_data_string("channels", channels));
+		if (comment)
+		{
+			unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $issuer used SAPART to make $target part $channels ($reason)",
+				   log_data_string("issuer", issuer),
+				   log_data_client("target", target),
+				   log_data_string("channels", channels),
+				   log_data_string("reason", comment));
+		}
+		else
+		{
+			unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $issuer used SAPART to make $target part $channels",
+				   log_data_string("issuer", issuer),
+				   log_data_client("target", target),
+				   log_data_string("channels", channels));
+		}
+	} else {
+		if (comment)
+		{
+			unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $client used SAPART to make $target part $channels ($reason)",
+				   log_data_client("target", target),
+				   log_data_string("channels", channels),
+				   log_data_string("reason", comment));
+		}
+		else
+		{
+			unreal_log(ULOG_INFO, "sacmds", "SAPART_COMMAND", client, "SAPART: $client used SAPART to make $target part $channels",
+				   log_data_client("target", target),
+				   log_data_string("channels", channels));
+		}
 	}
 }
 
@@ -83,6 +104,7 @@ CMD_FUNC(cmd_sapart)
 {
 	Client *target;
 	Channel *channel;
+	MessageTag *mtags = NULL;
 	Membership *lp;
 	char *name, *p = NULL;
 	int i;
@@ -120,7 +142,7 @@ CMD_FUNC(cmd_sapart)
 
 	if (!MyUser(target))
 	{
-		log_sapart(client, target, parv[2], comment);
+		log_sapart(client, recv_mtags, target, parv[2], comment);
 		return;
 	}
 
@@ -165,7 +187,7 @@ CMD_FUNC(cmd_sapart)
 
 	strlcpy(request, jbuf, sizeof(request));
 
-	log_sapart(client, target, request, comment);
+	log_sapart(client, recv_mtags, target, request, comment);
 
 	if (comment)
 	{
@@ -180,7 +202,9 @@ CMD_FUNC(cmd_sapart)
 	parv[2] = comment ? commentx : NULL; // comment
 
 	/* Now, do the actual parting: */
-	do_cmd(target, NULL, "PART", comment ? 3 : 2, parv);
+	mtag_add_issued_by(&mtags, client, recv_mtags);
+	do_cmd(target, mtags, "PART", comment ? 3 : 2, parv);
+	safe_free_message_tags(mtags);
 
 	/* NOTE: target may be killed now due to the part reason @ spamfilter */
 }

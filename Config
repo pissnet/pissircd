@@ -375,7 +375,7 @@ echo "We will now ask you a number of questions. You can just press ENTER to acc
 echo ""
 
 # This needs to be updated each release so auto-upgrading works for settings, modules, etc!!:
-UNREALRELEASES="unrealircd-6.0.6 unrealircd-6.0.5 unrealircd-6.0.5-rc2 unrealircd-6.0.5-rc1 unrealircd-6.0.4.2 unrealircd-6.0.4.1 unrealircd-6.0.4 unrealircd-6.0.4-rc2 unrealircd-6.0.4-rc1 unrealircd-6.0.3 unrealircd-6.0.2 unrealircd-6.0.1.1 unrealircd-6.0.1 unrealircd-6.0.0 unrealircd-6.0.0-rc2 unrealircd-6.0.0-rc1 unrealircd-6.0.0-beta4 unrealircd-6.0.0-beta3 unrealircd-6.0.0-beta2 unrealircd-6.0.0-beta1 unrealircd-5.2.3 unrealircd-5.2.2 unrealircd-5.2.1.1 unrealircd-5.2.1 unrealircd-5.2.1-rc1 unrealircd-5.2.0.2 unrealircd-5.2.0.1 unrealircd-5.2.0 unrealircd-5.2.0-rc1 unrealircd-5.0.9.1 unrealircd-5.0.9 unrealircd-5.0.9-rc1 unrealircd-5.0.8 unrealircd-5.0.8-rc1 unrealircd-5.0.7 unrealircd-5.0.7-rc1 unrealircd-5.0.6"
+UNREALRELEASES="unrealircd-6.1.0 unrealircd-6.1.0-rc2 unrealircd-6.1.0-rc1 unrealircd-6.0.7 unrealircd-6.0.6 unrealircd-6.0.5 unrealircd-6.0.5-rc2 unrealircd-6.0.5-rc1 unrealircd-6.0.4.2 unrealircd-6.0.4.1 unrealircd-6.0.4 unrealircd-6.0.4-rc2 unrealircd-6.0.4-rc1 unrealircd-6.0.3 unrealircd-6.0.2 unrealircd-6.0.1.1 unrealircd-6.0.1 unrealircd-6.0.0 unrealircd-6.0.0-rc2 unrealircd-6.0.0-rc1 unrealircd-6.0.0-beta4 unrealircd-6.0.0-beta3 unrealircd-6.0.0-beta2 unrealircd-6.0.0-beta1 unrealircd-5.2.3 unrealircd-5.2.2 unrealircd-5.2.1.1 unrealircd-5.2.1 unrealircd-5.2.1-rc1 unrealircd-5.2.0.2 unrealircd-5.2.0.1 unrealircd-5.2.0 unrealircd-5.2.0-rc1 unrealircd-5.0.9.1 unrealircd-5.0.9 unrealircd-5.0.9-rc1 unrealircd-5.0.8 unrealircd-5.0.8-rc1 unrealircd-5.0.7 unrealircd-5.0.7-rc1 unrealircd-5.0.6"
 if [ -f "config.settings" ]; then
 	. ./config.settings
 else
@@ -525,6 +525,29 @@ if [ -z "$cc" ] ; then
 	SSLDIR="$TEST"
 else 
 	SSLDIR=`eval echo $cc` # modified
+fi
+
+if [ "$SSLDIR" != "" -a "$SSLDIR" != "/usr" ]; then
+	echo ""
+	echo "You answered previous question manually. Just note that if the library is not"
+	echo "in your default library path then UnrealIRCd may fail to start with an error"
+	echo "that it cannot find certain .so files (libraries). In that case you would have"
+	echo "to either set the LD_LIBARY_PATH environment variable, or you could update the"
+	echo "Makefile to link with -Wl,-rpath,$SSLDIR or similar."
+	echo ""
+	if [ "$SSLDIR" = "/usr/local" ]; then
+		echo "**** CAUTION ****"
+		echo "You have chosen to use OpenSSL from /usr/local. Just be aware that if you"
+		echo "use the LD_LIBRARY_PATH or -Wl,-rpath,$SSLDIR from above,"
+		echo "that you are diverting OTHER libraries to that path as well."
+		echo "It's not only loading OpenSSL from /usr/local but also potentially other"
+		echo "libraries like PCRE2, Jansson, or any of the other libraries that"
+		echo "UnrealIRCd uses (including dependencies about 40 libs in total!)"
+		echo "All that can result in weird issues and crashes!"
+		echo ""
+	fi
+	echo "Press enter to continue with the rest of the questions, or CTRL+C to abort."
+	read cc
 fi
 
 TEST=""

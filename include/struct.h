@@ -274,7 +274,9 @@ struct Log {
 	/* for destination::file */
 	char *file;
 	char *filefmt;
-	long maxsize;
+	long max_size;
+	int max_lines;
+	long long max_time;
 	int logfd;
 	/* for destination::channel */
 	int color;
@@ -283,8 +285,18 @@ struct Log {
 };
 
 /** This is used for deciding the <index> in logs[<index>] and temp_logs[<index>] */
-typedef enum LogDestination { LOG_DEST_SNOMASK=0, LOG_DEST_OPER=1, LOG_DEST_REMOTE=2, LOG_DEST_CHANNEL=3, LOG_DEST_DISK=4 } LogDestination;
-#define NUM_LOG_DESTINATIONS 5
+typedef enum LogDestination { LOG_DEST_SNOMASK=0, LOG_DEST_OPER=1, LOG_DEST_REMOTE=2, LOG_DEST_CHANNEL=3, LOG_DEST_DISK=4, LOG_DEST_MEMORY=5 } LogDestination;
+#define NUM_LOG_DESTINATIONS 6
+
+typedef struct LogEntry LogEntry;
+struct LogEntry {
+	LogEntry *prev, *next;
+	time_t t;
+	char loglevel;
+	char *subsystem;
+	char *event_id;
+	json_t *json;
+};
 
 /*
 ** 'offsetof' is defined in ANSI-C. The following definition
@@ -859,7 +871,10 @@ typedef struct Whowas {
 	char *realname;
 	char *account;
 	long umodes;
-	time_t   logoff;
+	time_t logon;
+	time_t logoff;
+	time_t connected_since;
+	WhoWasEvent event;
 	struct Client *online;	/* Pointer to new nickname for chasing or NULL */
 	struct Whowas *next;	/* for hash table... */
 	struct Whowas *prev;	/* for hash table... */
@@ -1443,6 +1458,7 @@ struct RPCClient {
 	char *rpc_user; /**< Name of the rpc-user block after authentication, NULL during pre-auth */
 	char *issuer; /**< Optional name of the issuer, set by rpc.set_issuer(), eg logged in user on admin panel, can be NULL */
 	json_t *rehash_request; /**< If a REHASH (request) is currently running, otherwise NULL */
+	LogSource *log_sources; /**< Subscribed to which log sources */
 };
 
 struct MessageTag {
@@ -1846,6 +1862,7 @@ struct ConfigItem_listen {
 	int options;			/**< e.g. LISTENER_BOUND if active */
 	int clients;			/**< Clients connected to this socket / listener */
 	int fd;				/**< File descriptor (if open), or -1 (if not open yet) */
+	char *spoof_ip;			/**< listen::spoof-ip (only for listen::file, if you want to override 127.0.0.1) */
 	SSL_CTX *ssl_ctx;		/**< SSL/TLS context */
 	TLSOptions *tls_options;	/**< SSL/TLS options */
 	WebServer *webserver;		/**< For the webserver module */
