@@ -83,6 +83,7 @@ int stats_class(Client *, const char *);
 int stats_officialchannels(Client *, const char *);
 int stats_spamfilter(Client *, const char *);
 int stats_fdtable(Client *, const char *);
+int stats_linecache(Client *client, const char *para);
 
 #define SERVER_AS_PARA 0x1
 #define FLAGS_AS_PARA 0x2
@@ -134,6 +135,7 @@ struct statstab StatsTable[] = {
 	{ 'v', "denyver",	stats_denyver,		0 		},
 	{ 'x', "notlink",	stats_notlink,		0 		},
 	{ 'y', "class",		stats_class,		0 		},
+	{ '9', "linecache",	stats_linecache,	0		},
 	{ 0, 	NULL, 		NULL, 			0		}
 };
 
@@ -738,12 +740,14 @@ static void stats_set_anti_flood(Client *client, FloodSettings *f)
 
 	for (i=0; floodoption_names[i]; i++)
 	{
+		if (f->limit[i] == 0)
+			continue; /* unconfigured */
 		if (i == FLD_CONVERSATIONS)
 		{
 			sendtxtnumeric(client, "anti-flood::%s::%s: %d users, new user every %s",
 				f->name, floodoption_names[i],
 				(int)f->limit[i], pretty_time_val(f->period[i]));
-		}
+		} else
 		if (i == FLD_LAG_PENALTY)
 		{
 			sendtxtnumeric(client, "anti-flood::%s::lag-penalty: %d msec",
@@ -751,8 +755,7 @@ static void stats_set_anti_flood(Client *client, FloodSettings *f)
 			sendtxtnumeric(client, "anti-flood::%s::lag-penalty-bytes: %d",
 				f->name,
 				f->limit[i] == INT_MAX ? 0 : (int)f->limit[i]);
-		}
-		else
+		} else
 		{
 			sendtxtnumeric(client, "anti-flood::%s::%s: %d per %s",
 				f->name, floodoption_names[i],
@@ -795,7 +798,7 @@ int stats_set(Client *client, const char *para)
 	sendtxtnumeric(client, "kline-address: %s", KLINE_ADDRESS);
 	if (GLINE_ADDRESS)
 		sendtxtnumeric(client, "gline-address: %s", GLINE_ADDRESS);
-	sendtxtnumeric(client, "modes-on-connect: %s", get_usermode_string_raw(CONN_MODES));
+	//sendtxtnumeric(client, "modes-on-connect: %s", get_usermode_string_raw(CONN_MODES));
 	sendtxtnumeric(client, "modes-on-oper: %s", get_usermode_string_raw(OPER_MODES));
 	*modebuf = *parabuf = 0;
 	chmode_str(&iConf.modes_on_join, modebuf, parabuf, sizeof(modebuf), sizeof(parabuf));
@@ -809,8 +812,8 @@ int stats_set(Client *client, const char *para)
 		char *longflags = allow_user_stats_long_to_short();
 		sendtxtnumeric(client, "allow-user-stats: %s%s", ALLOW_USER_STATS, longflags ? longflags : "");
 	}
-	if (RESTRICT_USERMODES)
-		sendtxtnumeric(client, "restrict-usermodes: %s", RESTRICT_USERMODES);
+//	if (RESTRICT_USERMODES)
+//		sendtxtnumeric(client, "restrict-usermodes: %s", RESTRICT_USERMODES);
 	if (RESTRICT_CHANNELMODES)
 		sendtxtnumeric(client, "restrict-channelmodes: %s", RESTRICT_CHANNELMODES);
 	if (RESTRICT_EXTENDEDBANS)
@@ -850,12 +853,12 @@ int stats_set(Client *client, const char *para)
 	sendtxtnumeric(client, "options::mkpasswd-for-everyone: %d", MKPASSWD_FOR_EVERYONE);
 	sendtxtnumeric(client, "options::allow-insane-bans: %d", ALLOW_INSANE_BANS);
 	sendtxtnumeric(client, "options::allow-part-if-shunned: %d", ALLOW_PART_IF_SHUNNED);
-	sendtxtnumeric(client, "maxchannelsperuser: %i", MAXCHANNELSPERUSER);
+	//sendtxtnumeric(client, "maxchannelsperuser: %i", iConf.maxchannelsperuser);
 	sendtxtnumeric(client, "ping-warning: %i seconds", PINGWARNING);
-	sendtxtnumeric(client, "auto-join: %s", AUTO_JOIN_CHANS ? AUTO_JOIN_CHANS : "0");
+	//sendtxtnumeric(client, "auto-join: %s", AUTO_JOIN_CHANS ? AUTO_JOIN_CHANS : "0");
 	sendtxtnumeric(client, "oper-auto-join: %s", OPER_AUTO_JOIN_CHANS ? OPER_AUTO_JOIN_CHANS : "0");
-	sendtxtnumeric(client, "static-quit: %s", STATIC_QUIT ? STATIC_QUIT : "<none>");
-	sendtxtnumeric(client, "static-part: %s", STATIC_PART ? STATIC_PART : "<none>");
+	//sendtxtnumeric(client, "static-quit: %s", STATIC_QUIT ? STATIC_QUIT : "<none>");
+	//sendtxtnumeric(client, "static-part: %s", STATIC_PART ? STATIC_PART : "<none>");
 	sendtxtnumeric(client, "who-limit: %d", WHOLIMIT);
 	sendtxtnumeric(client, "silence-limit: %d", SILENCE_LIMIT);
 	sendtxtnumeric(client, "ban-version-tkl-time: %s", pretty_time_val(BAN_VERSION_TKL_TIME));
@@ -1053,5 +1056,26 @@ int stats_linkinfoint(Client *client, const char *para, int all)
 				acptr->name, acptr->server->flags.synced ? "SYNCED" : "NOT SYNCED!!");
 	}
 #endif
+	return 0;
+}
+
+int stats_linecache(Client *client, const char *para)
+{
+	ClientCapability *e;
+
+	if (!ValidatePermissionsForPath("server:info:stats",client,NULL,NULL,NULL))
+	{
+		sendnumeric(client, ERR_NOPRIVILEGES);
+		return 0;
+	}
+
+	sendtxtnumeric(client, "Line cache: caps that have an effect message tags:");
+	for (e = clicaps; e; e = e->next)
+		if (e->cap & clicaps_affecting_mtag)
+			sendtxtnumeric(client, "CAP %s", e->name);
+
+	//sendtxtnumeric(client, " ");
+	//sendtxtnumeric(client, "Line statistics:");	
+
 	return 0;
 }

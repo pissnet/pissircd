@@ -26,10 +26,36 @@
 
 #include "unrealircd.h"
 
+/* Local structs */
+typedef enum LineCacheUserType { LCUT_NORMAL=0, LCUT_OPER=1, LCUT_REMOTE=2 } LineCacheUserType;
+
+typedef struct LineCacheLine LineCacheLine;
+struct LineCacheLine
+{
+	LineCacheLine *prev, *next;
+	LineCacheUserType user_type;
+	unsigned long caps;
+	int line_opts;			/**< Cached line message options (rare) */
+	char *line;			/**< Entire cached line, including message tags (if appropriate) and \r\n */
+	int linelen;			/**< strlen(line) */
+};
+
+typedef struct LineCache LineCache;
+struct LineCache
+{
+	// later: possible options?
+	LineCacheLine *items;
+};
+
 /* Some forward declarions are needed */
 void vsendto_one(Client *to, MessageTag *mtags, const char *pattern, va_list vl);
 void vsendto_prefix_one(Client *to, Client *from, MessageTag *mtags, const char *pattern, va_list vl) __attribute__((format(printf,4,0)));
 static int vmakebuf_local_withprefix(char *buf, size_t buflen, Client *from, const char *pattern, va_list vl) __attribute__((format(printf,4,0)));
+static void vsendto_prefix_one_cached(LineCache *cache, int line_opts, Client *to, Client *from, MessageTag *mtags, const char *pattern, va_list vl) __attribute__((format(printf,6,0)));
+static LineCache *linecache_init(void);
+static void linecache_free(LineCache *cache);
+static void linecache_add(LineCache *cache, int line_opts, Client *to, const char *line, int linelen);
+static LineCacheLine *linecache_get(LineCache *cache, int line_opts, Client *to);
 
 #define ADD_CRLF(buf, len) { if (len > 510) len = 510; \
                              buf[len++] = '\r'; buf[len++] = '\n'; buf[len] = '\0'; } while(0)
@@ -46,47 +72,6 @@ static char sendbuf2[MAXLINELENGTH];
  * and if so, sending is skipped.
  */
 MODVAR int  current_serial;
-
-/** Mark the socket as "dead".
- * This is used when exit_client() cannot be used from the
- * current code because doing so would be (too) unexpected.
- * The socket is closed later in the main loop.
- * NOTE: this function is becoming less important, now that
- *       exit_client() will not actively free the client.
- *       Still, sometimes we need to use dead_socket()
- *       since we don't want to be doing IsDead() checks after
- *       each and every sendto...().
- * @param to		Client to mark as dead
- * @param notice	The quit reason to use
- */
-int dead_socket(Client *to, const char *notice)
-{
-	DBufClear(&to->local->recvQ);
-	DBufClear(&to->local->sendQ);
-
-	if (IsDeadSocket(to))
-		return -1; /* already pending to be closed */
-
-	SetDeadSocket(to);
-
-	/* We may get here because of the 'CPR' in check_deadsockets().
-	 * In which case, we return -1 as well.
-	 */
-	if (to->local->error_str)
-		return -1; /* don't overwrite & don't send multiple times */
-	
-	if (!IsUser(to) && !IsUnknown(to) && !IsRPC(to) && !IsControl(to) && !IsClosing(to))
-	{
-		/* Looks like a duplicate error message to me?
-		 * If so, remove it here.
-		 */
-		unreal_log(ULOG_ERROR, "link", "LINK_CLOSING", to,
-		           "Link to server $client.details closed: $reason",
-		           log_data_string("reason", notice));
-	}
-	safe_strdup(to->local->error_str, notice);
-	return -1;
-}
 
 /** This is a callback function from the event loop.
  * All it does is call send_queued().
@@ -234,6 +219,53 @@ void vsendto_one(Client *to, MessageTag *mtags, const char *pattern, va_list vl)
 	}
 }
 
+/** Prepare a line for sendbufto_one() */
+static int sendbufto_one_prepare_line(Client *to, char *msg)
+{
+	char *p = msg;
+	int len;
+
+	if (*msg == '@')
+	{
+		/* The message includes one or more message tags:
+		 * Spec-wise the rules allow about 8K for message tags
+		 * (MAXTAGSIZE) and then 512 bytes for
+		 * the remainder of the message (BUFSIZE).
+		 */
+		p = strchr(msg+1, ' ');
+		if (!p)
+		{
+			unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_MALFORMED_MSG", to,
+				   "Malformed message to $client: $buf",
+				   log_data_string("buf", msg));
+			return 0;
+		}
+		if (p - msg > MAXTAGSIZE)
+		{
+			unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_OVERSIZED_MSG", to,
+				   "Oversized message to $client (length $length): $buf",
+				   log_data_integer("length", p - msg),
+				   log_data_string("buf", msg));
+			return 0;
+		}
+		p++; /* skip space character */
+	}
+	len = strlen(p);
+	if (!len || (p[len - 1] != '\n'))
+	{
+		if (len > 510)
+			len = 510;
+		p[len++] = '\r';
+		p[len++] = '\n';
+		p[len] = '\0';
+	}
+
+	/* Return length, that is:
+	 * p-msg = message tag len (can be 0)
+	 * len = normal IRC message including \r\n
+	 */
+	return (p - msg) + len;
+}
 
 /** Send a line buffer to the client.
  * This function is used (usually indirectly) for pretty much all
@@ -279,42 +311,9 @@ void sendbufto_one(Client *to, char *msg, unsigned int quick)
 	 */
 	if (!quick)
 	{
-		char *p = msg;
-		if (*msg == '@')
-		{
-			/* The message includes one or more message tags:
-			 * Spec-wise the rules allow about 8K for message tags
-			 * (MAXTAGSIZE) and then 512 bytes for
-			 * the remainder of the message (BUFSIZE).
-			 */
-			p = strchr(msg+1, ' ');
-			if (!p)
-			{
-				unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_MALFORMED_MSG", to,
-				           "Malformed message to $client: $buf",
-				           log_data_string("buf", msg));
-				return;
-			}
-			if (p - msg > MAXTAGSIZE)
-			{
-				unreal_log(ULOG_WARNING, "send", "SENDBUFTO_ONE_OVERSIZED_MSG", to,
-				           "Oversized message to $client (length $length): $buf",
-				           log_data_integer("length", p - msg),
-				           log_data_string("buf", msg));
-				return;
-			}
-			p++; /* skip space character */
-		}
-		len = strlen(p);
-		if (!len || (p[len - 1] != '\n'))
-		{
-			if (len > 510)
-				len = 510;
-			p[len++] = '\r';
-			p[len++] = '\n';
-			p[len] = '\0';
-		}
-		len = strlen(msg); /* (note: we could use pointer jugling to avoid a strlen here) */
+		len = sendbufto_one_prepare_line(to, msg);
+		if (len == 0)
+			return;
 	} else {
 		len = quick;
 	}
@@ -454,6 +453,8 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 	Member *lp;
 	Client *acptr;
 	char member_modes_ext[64];
+	LineCache *cache;
+	char check_invisible = 0;
 
 	if (member_modes)
 	{
@@ -461,7 +462,11 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 		member_modes = member_modes_ext;
 	}
 
+	if ((sendflags & CHECK_INVISIBLE) && invisible_user_in_channel(from, channel))
+		check_invisible = 1;
+
 	++current_serial;
+	cache = linecache_init();
 	for (lp = channel->members; lp; lp = lp->next)
 	{
 		acptr = lp->client;
@@ -474,6 +479,9 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 			continue;
 		/* Don't send to NOCTCP clients */
 		if (has_user_mode(acptr, 'T') && (sendflags & SKIP_CTCP))
+			continue;
+		/* Sender ('from') is invisible for 'acptr' and we were asked to CHECK_INVISIBLE */
+		if (check_invisible && !check_channel_access_member(lp, "hoaq") && (from != acptr))
 			continue;
 		/* Now deal with 'member_modes' (if not NULL) */
 		if (member_modes && !check_channel_access_member(lp, member_modes))
@@ -488,7 +496,7 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 			if (sendflags & SEND_LOCAL)
 			{
 				va_start(vl, pattern);
-				vsendto_prefix_one(acptr, from, mtags, pattern, vl);
+				vsendto_prefix_one_cached(cache, 0, acptr, from, mtags, pattern, vl);
 				va_end(vl);
 			}
 		}
@@ -501,7 +509,7 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 				if (acptr->direction->local->serial != current_serial)
 				{
 					va_start(vl, pattern);
-					vsendto_prefix_one(acptr, from, mtags, pattern, vl);
+					vsendto_prefix_one_cached(cache, 0, acptr, from, mtags, pattern, vl);
 					va_end(vl);
 
 					acptr->direction->local->serial = current_serial;
@@ -528,7 +536,7 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 				if (acptr->direction->local->serial != current_serial)
 				{
 					va_start(vl, pattern);
-					vsendto_prefix_one(acptr, from, mtags, pattern, vl);
+					vsendto_prefix_one_cached(cache, 0, acptr, from, mtags, pattern, vl);
 					va_end(vl);
 
 					acptr->direction->local->serial = current_serial;
@@ -536,6 +544,7 @@ void sendto_channel(Channel *channel, Client *from, Client *skip,
 			}
 		}
 	}
+	linecache_free(cache);
 }
 
 /** Send a message to a server, taking into account server options if needed.
@@ -592,19 +601,17 @@ void sendto_local_common_channels(Client *user, Client *skip, long clicap, Messa
 	Membership *channels;
 	Member *users;
 	Client *acptr;
+	LineCache *cache;
+	char check_invisible;
 
-	/* We now create the buffer _before_ we send it to the clients. -- Syzop */
-	*sendbuf = '\0';
-	va_start(vl, pattern);
-	vmakebuf_local_withprefix(sendbuf, sizeof sendbuf, user, pattern, vl);
-	va_end(vl);
-
+	cache = linecache_init();
 	++current_serial;
-
 	if (user->user)
 	{
 		for (channels = user->user->channel; channels; channels = channels->next)
 		{
+			check_invisible = invisible_user_in_channel(user, channels->channel); // FIXME: we only have a slow version of this function
+
 			for (users = channels->channel->members; users; users = users->next)
 			{
 				acptr = users->client;
@@ -621,14 +628,18 @@ void sendto_local_common_channels(Client *user, Client *skip, long clicap, Messa
 				if (acptr == skip)
 					continue; /* the one to skip */
 
-				if (!user_can_see_member(acptr, user, channels->channel))
+				// FIXME: use user_can_see_member_fast()
+				if (check_invisible && user_can_see_member(acptr, user, channels->channel))
 					continue; /* the sending user (quit'ing or nick changing) is 'invisible' -- skip */
 
 				acptr->local->serial = current_serial;
-				sendto_one(acptr, mtags, "%s", sendbuf);
+				va_start(vl, pattern);
+				vsendto_prefix_one_cached(cache, 0, acptr, user, mtags, pattern, vl);
+				va_end(vl);
 			}
 		}
 	}
+	linecache_free(cache);
 }
 
 /** Send a QUIT message to all local users on all channels where
@@ -971,6 +982,115 @@ void vsendto_prefix_one(Client *to, Client *from, MessageTag *mtags, const char 
 	} else {
 		/* Message tags need to be prepended */
 		snprintf(sendbuf2, sizeof(sendbuf2)-3, "@%s %s", mtags_str, sendbuf);
+		sendbufto_one(to, sendbuf2, 0);
+	}
+}
+
+static LineCache *linecache_init(void)
+{
+	LineCache *e = safe_alloc(sizeof(LineCache));
+	return e;
+}
+
+static void linecache_free(LineCache *cache)
+{
+	LineCacheLine *e, *e_next;
+	for (e = cache->items; e; e = e_next)
+	{
+		e_next = e->next;
+		safe_free(e->line);
+		safe_free(e);
+	}
+	safe_free(cache);
+}
+
+static LineCacheUserType linecache_usertype(Client *to)
+{
+	if (!MyConnect(to))
+		return LCUT_REMOTE;
+	if (IsOper(to))
+		return LCUT_OPER;
+	return LCUT_NORMAL;
+}
+
+static unsigned long linecache_caps(Client *to)
+{
+	if (!MyConnect(to))
+	{
+		/* Depending on PROTOCTL MTAGS of the directly linked uplink
+		 * we either send all message tags or no message tags
+		 */
+		if (SupportMTAGS(to->direction))
+			return -1; /* 0xffffff... (iotw: all) */
+		else
+			return 0; /* none */
+	} else {
+		return to->local->caps & clicaps_affecting_mtag;
+	}
+}
+
+static void linecache_add(LineCache *cache, int line_opts, Client *to, const char *line, int linelen)
+{
+	LineCacheLine *e = safe_alloc(sizeof(LineCacheLine));
+	e->user_type = linecache_usertype(to);
+	e->caps = linecache_caps(to);
+	safe_strdup(e->line, line);
+	e->linelen = linelen ? linelen : strlen(line);
+	AddListItem(e, cache->items);
+}
+
+static LineCacheLine *linecache_get(LineCache *cache, int line_opts, Client *to)
+{
+	LineCacheLine *l;
+	int user_type = linecache_usertype(to);
+	int caps = linecache_caps(to);
+
+	for (l = cache->items; l; l = l->next)
+		if ((l->caps == caps) && (l->user_type == user_type) && (l->line_opts == line_opts))
+			return l;
+
+	return NULL;
+}
+
+/** Cached version of "send a message to a single client", expand the sender prefix - va_list variant.
+ * This is the cached version of vsendto_prefix_one()
+ * @param cache		The LineCache to use
+ * @param line_opts	LineCache options for this particular message/line (usually 0)
+ * @param to		The client to send to
+ * @param mtags		Any message tags associated with this message (can be NULL)
+ * @param pattern	The format string / pattern to use.
+ * @param ...		Format string parameters.
+ */
+static void vsendto_prefix_one_cached(LineCache *cache, int line_opts, Client *to, Client *from, MessageTag *mtags, const char *pattern, va_list vl)
+{
+	const char *mtags_str;
+	LineCacheLine *l;
+	int len;
+
+	if ((l = linecache_get(cache, line_opts, to)))
+	{
+		sendbufto_one(to, l->line, l->linelen);
+		return;
+	}
+
+	mtags_str = mtags ? mtags_to_string(mtags, to) : NULL;
+
+	if (to && from && MyUser(to) && from->user)
+		vmakebuf_local_withprefix(sendbuf, sizeof(sendbuf)-3, from, pattern, vl);
+	else
+		ircvsnprintf(sendbuf, sizeof(sendbuf)-3, pattern, vl);
+
+	if (BadPtr(mtags_str))
+	{
+		/* Simple message without message tags */
+		len = sendbufto_one_prepare_line(to, sendbuf);
+		linecache_add(cache, line_opts, to, sendbuf, len);
+		sendbufto_one(to, sendbuf, len);
+	} else {
+		/* Message tags need to be prepended */
+		snprintf(sendbuf2, sizeof(sendbuf2)-3, "@%s %s", mtags_str, sendbuf);
+		len = sendbufto_one_prepare_line(to, sendbuf2);
+		linecache_add(cache, line_opts, to, sendbuf2, len);
 		sendbufto_one(to, sendbuf2, 0);
 	}
 }

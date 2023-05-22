@@ -495,6 +495,7 @@ struct Versionflag {
 typedef struct MessageTagHandler MessageTagHandler;
 
 #define CLICAP_FLAGS_NONE               0x0
+#define CLICAP_FLAGS_AFFECTS_MTAGS	0x1	/**< Setting this clientcapability can have an effect on which message tags are displayed or their content */
 #define CLICAP_FLAGS_ADVERTISE_ONLY     0x4
 
 typedef struct ClientCapability ClientCapability;
@@ -833,6 +834,7 @@ extern MODVAR Hook		*Hooks[MAXHOOKTYPES];
 extern MODVAR Hooktype		Hooktypes[MAXCUSTOMHOOKS];
 extern MODVAR Callback *Callbacks[MAXCALLBACKS], *RCallbacks[MAXCALLBACKS];
 extern MODVAR ClientCapability *clicaps;
+extern MODVAR long clicaps_affecting_mtag;
 
 extern Event *EventAdd(Module *module, const char *name, vFP event, void *data, long every_msec, int count);
 extern void   EventDel(Event *event);
@@ -1250,6 +1252,10 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 #define HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT	117
 /** See hooktype_rehash_log */
 #define HOOKTYPE_REHASH_LOG	118
+/** See hooktype_dns_finished */
+#define HOOKTYPE_DNS_FINISHED	119
+/** See hooktype_reconfigure_web_listener */
+#define HOOKTYPE_RECONFIGURE_WEB_LISTENER	120
 
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
@@ -1940,10 +1946,11 @@ int hooktype_can_join_limitexceeded(Client *client, Channel *channel, const char
  * For example, the delayjoin module (+d/+D) will 'return 0' here if the user is hidden due to delayed join.
  * @param client		The client
  * @param channel		The channel
+ * @param client_member		The client Member * struct in the channel
  * @retval 0 The user is NOT visible
  * @retval 1 The user is visible
  */
-int hooktype_visible_in_channel(Client *client, Channel *channel);
+int hooktype_visible_in_channel(Client *client, Channel *channel, Member *client_member);
 
 /** Called to check if the channel of a user should be shown in WHOIS/WHO (function prototype for HOOKTYPE_SEE_CHANNEL_IN_WHOIS).
  * @param client		The client ASKING, eg doing the /WHOIS.
@@ -2304,12 +2311,26 @@ int hooktype_json_expand_channel(Channel *channel, int detail, json_t *j);
 int hooktype_pre_local_handshake_timeout(Client *client, const char **comment);
 
 /** Called when a REHASH completed (either succesfully or with a failure).
- * This gives the full rehash log. Used by the JSON-RPC interface.
+ * This gives the full rehash log. Used by the JSON-RPC interface. (function prototype for HOOKTYPE_REHASH_LOG)
  * @param failure		Set to 1 if the rehash failed, otherwise 0.
  * @param t			The JSON object containing the rehash log and other information.
  * @return The return value is ignored (use return 0)
  */
 int hooktype_rehash_log(int failure, json_t *rehash_log);
+
+/** Called when DNS has been done for a client (or has not been done because it was skipped).
+ * (function prototype for HOOKTYPE_DNS_FINISHED)
+ * @param client		The client
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_dns_finished(Client *client);
+
+/** Called when an listener is removed from the conf but there are still clients - very specific corner case.
+ * (function prototype for HOOKTYPE_RECONFIGURE_WEB_LISTENER)
+ * @param listener		The listener
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_reconfigure_web_listener(ConfigItem_listen *listener);
 
 /** @} */
 
@@ -2431,7 +2452,8 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_JSON_EXPAND_CLIENT_SERVER) && !ValidateHook(hooktype_json_expand_client_server, func)) || \
         ((hooktype == HOOKTYPE_JSON_EXPAND_CHANNEL) && !ValidateHook(hooktype_json_expand_channel, func)) || \
         ((hooktype == HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT) && !ValidateHook(hooktype_pre_local_handshake_timeout, func)) || \
-        ((hooktype == HOOKTYPE_REHASH_LOG) && !ValidateHook(hooktype_rehash_log, func)) ) \
+        ((hooktype == HOOKTYPE_REHASH_LOG) && !ValidateHook(hooktype_rehash_log, func)) || \
+        ((hooktype == HOOKTYPE_DNS_FINISHED) && !ValidateHook(hooktype_dns_finished, func)) ) \
         _hook_error_incompatible();
 #endif /* GCC_TYPECHECKING */
 

@@ -4,6 +4,46 @@ This is the git version (development version) for future 6.1.1. This is work
 in progress and may not be a stable version.
 
 ### Enhancements:
+* Two new features that are conditionally on:
+  * SSL/TLS users will now correctly receive the error message if they are
+    rejected due to throttling (connect-flood) and some other situations.
+  * DNS lookups are done before throttling. This allows exempting a hostname
+    from both maxperip and connect-flood restrictions.  
+    A good example for IRCCloud would be:
+    ```
+    except ban {
+        mask *.irccloud.com;
+        type { maxperip; connect-flood; }
+    }
+    ```
+  * Both features are temporarily disabled whenever a 
+    [high rate of connection attempts](https://www.unrealircd.org/docs/FAQ#hi-conn-rate)
+    is detected, to save CPU and other resources during such an attack.
+    The default rate is 1000 per second, so this would be unusual to trigger
+    accidentally.
+* It is now possible to override some set settings per-security group by
+  having a set block with a name, like `set unknown-users { }`
+  * You could use this to set more limitations for unknown-users:
+    ```
+    set unknown-users {
+            max-channels-per-user 5;
+            static-quit "Quit";
+            static-part yes;
+    }
+    ```
+  * Or to set higher values (higher than the normal set block)
+    for trusted users:
+    ```
+    security-group trusted-bots {
+            account { BotOne; BotTwo; }
+    }
+    set trusted-bots {
+            max-channels-per-user 25;
+    }
+    ```
+  * Currently the following settings can be used in a set xxx { } block:
+    set::auto-join, set::modes-on-connect, set::restrict-usermodes,
+    set::max-channels-per-user, set::static-quit, set::static-part.
 * New setting [set::handshake-boot-delay](https://www.unrealircd.org/docs/Set_block#set%3A%3Ahandshake-boot-delay)
   which allows server linking autoconnects to kick in (and incoming
   servers on serversonly ports), before allowing clients in. This
@@ -23,6 +63,15 @@ in progress and may not be a stable version.
     any memory on servers that are not used for JSON-RPC.
 
 ### Changes:
+* You can no longer (accidentally) load an old `modules.default.conf`.
+  People must always use the shipped version of this file as the file VERY
+  clearly says in the beginning (see also that file for instructions on
+  how to deal with customizations). People run into lots of (strange)
+  problems, not only missing nice new functionality, but also Services not
+  working because the svslogin module is not loaded, etc.  
+  Usually mistakes with an old modules.default.conf are not deliberate,
+  like a cp *.conf of an old installation, so this error should be helpful
+  for those users (who otherwise tend to bang their head for hours).
 * Some small DNS performance improvements:
   * We now 'negatively cache' unresolved hosts for 60 seconds.
   * The maximum number of cached records (positive and negative) was raised

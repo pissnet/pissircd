@@ -424,7 +424,9 @@ typedef enum ClientStatus {
 #define CLIENT_FLAG_NOHANDSHAKEDELAY	0x20000000	/**< No handshake delay */
 #define CLIENT_FLAG_SERVER_DISCONNECT_LOGGED	0x40000000	/**< Server disconnect message is (already) logged */
 #define CLIENT_FLAG_ASYNC_RPC			0x80000000	/**< Asynchronous remote RPC request - special case for rehash etc. */
-
+#define CLIENT_FLAG_IPUSERS_BUMPED	0x100000000	/**< The IpUsersBucket for this IP has been bumped (and needs to be decreased on disconnect) */
+#define CLIENT_FLAG_DEADSOCKET_IS_BANNED	0x200000000	/**< The deadsocket message should also send ERR_YOUREBANNEDCREEP and such */
+#define CLIENT_FLAG_CONNECT_FLOOD_CHECKED	0x400000000	/**< connect-flood has been checked (there are two hooks, so need this) */
 /** @} */
 
 #define OPER_SNOMASKS "+bBcdfkqsSoO"
@@ -583,7 +585,7 @@ typedef enum ClientStatus {
 #define ClearAsyncRPC(x)		do { (x)->flags &= ~CLIENT_FLAG_ASYNC_RPC; } while(0)
 /** @} */
 
-#define IsIPV6(x)			((x)->local->socket_type == SOCKET_TYPE_IPV6)
+#define IsIPV6(x)			((x)->local ? (((x)->local->socket_type == SOCKET_TYPE_IPV6) ? 1 : 0) : (strchr((x)->ip,':') ? 1 : 0))
 #define IsUnixSocket(x)			((x)->local->socket_type == SOCKET_TYPE_UNIX)
 #define SetIPV6(x)			do { (x)->local->socket_type = SOCKET_TYPE_IPV6; } while(0)
 #define SetUnixSocket(x)			do { (x)->local->socket_type = SOCKET_TYPE_UNIX; } while(0)
@@ -2018,6 +2020,26 @@ struct ConfigItem_offchans {
 	char *topic;
 };
 
+typedef union DynamicSetOption {
+	long long number;
+	char *string;
+} DynamicSetOption;
+
+typedef enum SetOption {
+	SET_AUTO_JOIN			= 0,	/**< set::auto-join */
+	SET_MODES_ON_CONNECT		= 1,	/**< set::modes-on-connect */
+	SET_RESTRICT_USERMODES		= 2,	/**< set::restrict-usermodes */
+	SET_MAX_CHANNELS_PER_USER	= 3,	/**< set::max-channels-per-user */
+	SET_STATIC_QUIT			= 4,	/**< set::static-quit */
+	SET_STATIC_PART			= 5	/**< set::static-part */
+} SetOption;
+#define MAXDYNAMICSETTINGS 16
+
+typedef struct DynamicSetBlock {
+	DynamicSetOption settings[MAXDYNAMICSETTINGS];
+	char isset[MAXDYNAMICSETTINGS];
+} DynamicSetBlock;
+
 #define SECURITYGROUPLEN 48
 struct SecurityGroup {
 	SecurityGroup *prev, *next;
@@ -2047,6 +2069,8 @@ struct SecurityGroup {
 	ConfigItem_mask *exclude_mask;
 	NameList *exclude_security_group;
 	NameValuePrioList *exclude_extended;
+	/* Settings */
+	DynamicSetBlock settings;
 };
 
 #define HM_HOST 1
@@ -2284,6 +2308,15 @@ struct ThrottlingBucket
 	char count;
 };
 
+typedef struct IpUsersBucket IpUsersBucket;
+struct IpUsersBucket
+{
+	IpUsersBucket *prev, *next;
+	char rawip[16];
+	int local_clients;
+	int global_clients;
+};
+
 typedef struct CoreChannelModeTable CoreChannelModeTable;
 struct CoreChannelModeTable {
 	long mode;			/**< Mode value (which bit will be set) */
@@ -2411,6 +2444,7 @@ struct ConfigItem_badword {
 #define SEND_ALL	(SEND_LOCAL|SEND_REMOTE)
 #define SKIP_DEAF	0x4
 #define SKIP_CTCP	0x8
+#define CHECK_INVISIBLE	0x10
 
 typedef struct GeoIPResult GeoIPResult;
 struct GeoIPResult {

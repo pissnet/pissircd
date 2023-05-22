@@ -937,33 +937,6 @@ const char *cmdname_by_spamftarget(int target)
 	return "???";
 }
 
-/** Returns 1 if this is a channel from set::auto-join or set::oper-auto-join */
-int is_autojoin_chan(const char *chname)
-{
-	char buf[512];
-	char *p, *name;
-
-	if (OPER_AUTO_JOIN_CHANS)
-	{
-		strlcpy(buf, OPER_AUTO_JOIN_CHANS, sizeof(buf));
-
-		for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
-			if (!strcasecmp(name, chname))
-				return 1;
-	}
-
-	if (AUTO_JOIN_CHANS)
-	{
-		strlcpy(buf, AUTO_JOIN_CHANS, sizeof(buf));
-
-		for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
-			if (!strcasecmp(name, chname))
-				return 1;
-	}
-
-	return 0;
-}
-
 /** Add name entries from config */
 void unreal_add_names(NameList **n, ConfigEntry *ce)
 {
@@ -1192,13 +1165,6 @@ void banned_client(Client *client, const char *bantype, const char *reason, int 
 	{
 		sendnumeric(client, ERR_YOUREBANNEDCREEP, buf);
 		sendnotice(client, "%s", buf);
-	} else {
-		send_raw_direct(client, ":%s %d %s :%s",
-		         me.name, ERR_YOUREBANNEDCREEP,
-		         (*client->name ? client->name : "*"),
-		         buf);
-		send_raw_direct(client, ":%s NOTICE %s :%s",
-		         me.name, (*client->name ? client->name : "*"), buf);
 	}
 
 	/* The final message in the ERROR is shorter. */
@@ -1221,8 +1187,8 @@ void banned_client(Client *client, const char *bantype, const char *reason, int 
 		exit_client(client, mtags, buf);
 	} else {
 		/* Special handling for direct Z-line code */
-		send_raw_direct(client, "ERROR :Closing Link: [%s] (%s)",
-		           client->ip, buf);
+		client->flags |= CLIENT_FLAG_DEADSOCKET_IS_BANNED;
+		dead_socket(client, buf);
 	}
 	safe_free_message_tags(mtags);
 }

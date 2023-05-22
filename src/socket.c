@@ -34,6 +34,7 @@ int readcalls = 0;
 void completed_connection(int, int, void *);
 void set_sock_opts(int, Client *, SocketType);
 void set_ipv6_opts(int);
+void close_all_listeners(void);
 void close_listener(ConfigItem_listen *listener);
 static char readbuf[BUFSIZE];
 char zlinebuf[BUFSIZE];
@@ -81,7 +82,7 @@ void close_connections(void)
 		}
 	}
 
-	close_unbound_listeners();
+	close_all_listeners();
 
 	OpenFiles = 0;
 
@@ -420,18 +421,14 @@ void close_listener(ConfigItem_listen *listener)
 	}
 }
 
-/** Close all listeners that were pending to be closed. */
-void close_unbound_listeners(void)
+/** Close all listeners - eg on DIE or RESTART */
+void close_all_listeners(void)
 {
 	ConfigItem_listen *aconf, *aconf_next;
 
 	/* close all 'extra' listening ports we have */
-	for (aconf = conf_listen; aconf != NULL; aconf = aconf_next)
-	{
-		aconf_next = aconf->next;
-		if (aconf->flag.temporary)
-			close_listener(aconf);
-	}
+	for (aconf = conf_listen; aconf != NULL; aconf = aconf->next)
+		close_listener(aconf);
 }
 
 int maxclients = 1024 - CLIENTS_RESERVE;
@@ -878,14 +875,25 @@ refuse_client:
 	irccounts.unknown++;
 	client->status = CLIENT_STATUS_UNKNOWN;
 	list_add(&client->lclient_node, &unknown_list);
+	connections_past_period++;
 
 	for (h = Hooks[HOOKTYPE_ACCEPT]; h; h = h->next)
 	{
 		int value = (*(h->func.intfunc))(client);
 		if (value == HOOK_DENY)
 		{
-			irccounts.unknown--;
-			goto refuse_client;
+			if (quick_close || !(listener->options & LISTENER_TLS))
+			{
+				/* If we are under attack or the client is
+				 * not using SSL/TLS then take the quick close
+				 * code path which rejects the client immediately.
+				 */
+				deadsocket_exit(client, 1);
+				irccounts.unknown--;
+				goto refuse_client;
+			} else {
+				/* continue, and even do the SSL/TLS handshake */
+			}
 		}
 		if (value != HOOK_CONTINUE)
 			break;
@@ -923,6 +931,104 @@ refuse_client:
 	return client;
 }
 
+/** Mark the socket as "dead".
+ * This is used when exit_client() cannot be used from the
+ * current code because doing so would be (too) unexpected.
+ * The socket is closed later in the main loop.
+ * NOTE: this function is becoming less important, now that
+ *       exit_client() will not actively free the client.
+ *       Still, sometimes we need to use dead_socket()
+ *       since we don't want to be doing IsDead() checks after
+ *       each and every sendto...().
+ * @param to		Client to mark as dead
+ * @param notice	The quit reason to use
+ */
+int dead_socket(Client *to, const char *notice)
+{
+	DBufClear(&to->local->recvQ);
+	DBufClear(&to->local->sendQ);
+
+	if (IsDeadSocket(to))
+		return -1; /* already pending to be closed */
+
+	SetDeadSocket(to);
+
+	/* We may get here because of the 'CPR' in check_deadsockets().
+	 * In which case, we return -1 as well.
+	 */
+	if (to->local->error_str)
+		return -1; /* don't overwrite & don't send multiple times */
+	
+	if (!IsUser(to) && !IsUnknown(to) && !IsRPC(to) && !IsControl(to) && !IsClosing(to))
+	{
+		/* Looks like a duplicate error message to me?
+		 * If so, remove it here.
+		 */
+		unreal_log(ULOG_ERROR, "link", "LINK_CLOSING", to,
+		           "Link to server $client.details closed: $reason",
+		           log_data_string("reason", notice));
+	}
+	safe_strdup(to->local->error_str, notice);
+	return -1;
+}
+
+void deadsocket_exit(Client *client, int special)
+{
+	/* First clear the deadsocket flag, so the sending routines are 'on' again */
+	ClearDeadSocket(client);
+	if (client->flags & CLIENT_FLAG_DEADSOCKET_IS_BANNED)
+	{
+		/* For this case we need to send some extra lines */
+		sendnumeric(client, ERR_YOUREBANNEDCREEP, client->local->error_str);
+		sendnotice(client, "%s", client->local->error_str);
+	}
+
+	if (special)
+	{
+		sendto_one(client, NULL, "ERROR :Closing Link: %s (%s)", get_client_name(client, FALSE),
+			client->local->error_str ? client->local->error_str : "Dead socket");
+		send_queued(client);
+		/* Caller takes care of freeing 'client' - only used by HOOKTYPE_ACCEPT */
+		return;
+	} else {
+		exit_client(client, NULL, client->local->error_str ? client->local->error_str : "Dead socket");
+	}
+}
+
+typedef enum DNSFinishedType {
+	DNS_FINISHED_NONE=0,            /**< We finished because DNS lookups are disabled */
+	DNS_FINISHED_FAIL=1,            /**< DNS lookup failed (cached or uncached) */
+	DNS_FINISHED_SUCCESS=2,         /**< DNS lookup succeeded (uncached) */
+	DNS_FINISHED_SUCCESS_CACHED=3   /**< DNS lookup succeeded (cached DNS entry) */
+} DNSFinishedType;
+
+void dns_finished(Client *client, DNSFinishedType type)
+{
+	switch(type)
+	{
+		case DNS_FINISHED_FAIL:
+			if (should_show_connect_info(client))
+				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FAIL_DNS);
+			break;
+		case DNS_FINISHED_SUCCESS:
+			if (should_show_connect_info(client))
+				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FIN_DNS);
+			break;
+		case DNS_FINISHED_SUCCESS_CACHED:
+			if (should_show_connect_info(client))
+				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FIN_DNSC);
+			break;
+		default:
+			break;
+	}
+
+	/* Set sockhost to resolved hostname already */
+	if (client->local->hostp)
+	        set_sockhost(client, client->local->hostp->h_name);
+
+	RunHook(HOOKTYPE_DNS_FINISHED, client);
+}
+
 /** Start of normal client handshake - DNS and ident lookups, etc.
  * @param client	The client
  * @note This is called directly after accept() -> add_connection() for plaintext.
@@ -943,7 +1049,18 @@ void start_of_normal_client_handshake(Client *client)
 		he = unrealdns_doclient(client);
 
 		if (client->local->hostp)
-			goto doauth; /* Race condition detected, DNS has been done, continue with auth */
+		{
+			/* Race condition detected, DNS has been done.
+			 * Hmmm.. actually I don't think this can be triggered?
+			 * If this were a legit case then we need to figure out
+			 * how to trigger this and if dns_finished() has been
+			 * called already or not.
+			 */
+#ifdef DEBUGMODE
+			abort();
+#endif
+			goto doauth;
+		}
 
 		if (!he)
 		{
@@ -954,15 +1071,16 @@ void start_of_normal_client_handshake(Client *client)
 		{
 			/* Host was negatively cached */
 			unreal_free_hostent(he);
-			if (should_show_connect_info(client))
-				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FAIL_DNS);
+			dns_finished(client, DNS_FINISHED_FAIL);
 		} else
 		{
 			/* Host was in our cache */
 			client->local->hostp = he;
-			if (should_show_connect_info(client))
-				sendto_one(client, NULL, ":%s %s", me.name, REPORT_FIN_DNSC);
+			dns_finished(client, DNS_FINISHED_SUCCESS_CACHED);
 		}
+	} else {
+		/* Still need to call this, so our hooks get called */
+		dns_finished(client, DNS_FINISHED_NONE);
 	}
 
 doauth:
@@ -978,12 +1096,10 @@ void proceed_normal_client_handshake(Client *client, struct hostent *he)
 {
 	ClearDNSLookup(client);
 	client->local->hostp = he;
-	if (should_show_connect_info(client))
-	{
-		sendto_one(client, NULL, ":%s %s",
-		           me.name,
-		           client->local->hostp ? REPORT_FIN_DNS : REPORT_FAIL_DNS);
-	}
+	if (client->local->hostp)
+		dns_finished(client, DNS_FINISHED_SUCCESS_CACHED);
+	else
+		dns_finished(client, DNS_FINISHED_FAIL);
 }
 
 /** Read a packet from a client.

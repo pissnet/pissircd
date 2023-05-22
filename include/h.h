@@ -258,7 +258,6 @@ extern MODVAR int readcalls, udpfd, resfd;
 extern Client *add_connection(ConfigItem_listen *, int);
 extern int check_server_init(Client *);
 extern void close_connection(Client *);
-extern void close_unbound_listeners();
 extern int get_sockerr(Client *);
 extern int inetport(ConfigItem_listen *, char *, int, int);
 extern void init_sys();
@@ -432,6 +431,7 @@ extern void del_queries(const char *);
 #define CHAN_HASH_TABLE_SIZE 32768
 #define WHOWAS_HASH_TABLE_SIZE 32768
 #define THROTTLING_HASH_TABLE_SIZE 8192
+#define IPUSERS_HASH_TABLE_SIZE 8192
 extern uint64_t siphash(const char *in, const char *k);
 extern uint64_t siphash_raw(const char *in, size_t len, const char *k);
 extern uint64_t siphash_nocase(const char *in, const char *k);
@@ -456,8 +456,12 @@ extern Client *hash_find_id(const char *, Client *);
 extern Client *hash_find_nickatserver(const char *, Client *);
 extern Channel *find_channel(const char *name);
 extern Client *hash_find_server(const char *, Client *);
-extern struct MODVAR ThrottlingBucket *ThrottlingHash[THROTTLING_HASH_TABLE_SIZE];
-
+extern IpUsersBucket *find_ipusers_bucket(Client *client);
+extern IpUsersBucket *add_ipusers_bucket(Client *client);
+extern void decrease_ipusers_bucket(Client *client);
+extern MODVAR struct ThrottlingBucket *ThrottlingHash[THROTTLING_HASH_TABLE_SIZE];
+extern MODVAR IpUsersBucket *IpUsersHash_ipv4[IPUSERS_HASH_TABLE_SIZE];
+extern MODVAR IpUsersBucket *IpUsersHash_ipv6[IPUSERS_HASH_TABLE_SIZE];
 
 
 /* Mode externs
@@ -976,7 +980,6 @@ extern void unrealdns_delreq_bycptr(Client *cptr);
 extern void unrealdns_gethostbyname_link(const char *name, ConfigItem_link *conf, int ipv4_only);
 extern void unrealdns_delasyncconnects(void);
 extern EVENT(unrealdns_timeout);
-extern int is_autojoin_chan(const char *chname);
 extern void unreal_free_hostent(struct hostent *he);
 extern struct hostent *unreal_create_hostent(const char *name, const char *ip);
 extern const char *unreal_time_sync_error(void);
@@ -1066,6 +1069,7 @@ extern const char *pcre2_version(void);
 extern int get_terminal_width(void);
 extern int has_common_channels(Client *c1, Client *c2);
 extern int user_can_see_member(Client *user, Client *target, Channel *channel);
+extern int user_can_see_member_fast(Client *user, Client *target, Channel *channel, Member *target_member, const char *user_member_modes);
 extern int invisible_user_in_channel(Client *target, Channel *channel);
 extern MODVAR int tls_client_index;
 extern TLSOptions *FindTLSOptionsForUser(Client *acptr);
@@ -1251,6 +1255,8 @@ extern int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **b
 extern int test_match_block(ConfigFile *conf, ConfigEntry *ce, int *errors_out);
 extern int conf_match_block(ConfigFile *conf, ConfigEntry *ce, SecurityGroup **block);
 extern int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors);
+extern int test_set_security_group(ConfigFile *conf, ConfigEntry *ce);
+extern int config_set_security_group(ConfigFile *conf, ConfigEntry *ce);
 /* securitygroup.c end */
 /* src/unrealdb.c start */
 extern UnrealDB *unrealdb_open(const char *filename, UnrealDBMode mode, char *secret_block);
@@ -1347,6 +1353,7 @@ extern GeoIPResult *geoip_lookup(const char *ip);
 extern void free_geoip_result(GeoIPResult *r);
 extern const char *get_operlogin(Client *client);
 extern const char *get_operclass(Client *client);
+extern struct sockaddr *raw_client_ip(Client *client);
 /* url stuff */
 extern const char *unreal_mkcache(const char *url);
 extern int has_cached_version(const char *url);
@@ -1388,3 +1395,22 @@ extern const char *StripControlCodes(const char *text);
 extern const char *StripControlCodesEx(const char *text, char *output, size_t outputlen, int strip_flags);
 extern MODVAR Module *Modules;
 extern const char *command_issued_by_rpc(MessageTag *mtags);
+extern MODVAR int quick_close;
+extern MODVAR int connections_past_period;
+extern void deadsocket_exit(Client *client, int special);
+extern void close_listener(ConfigItem_listen *listener);
+extern int str_starts_with_case_sensitive(const char *haystack, const char *needle);
+extern int str_ends_with_case_sensitive(const char *haystack, const char *needle);
+extern int str_starts_with_case_insensitive(const char *haystack, const char *needle);
+extern int str_ends_with_case_insensitive(const char *haystack, const char *needle);
+extern void init_dynamic_set_block(DynamicSetBlock *s);
+extern void free_dynamic_set_block(DynamicSetBlock *s);
+extern int test_dynamic_set_block_item(ConfigFile *conf, const char *security_group, ConfigEntry *cep);
+extern int config_set_dynamic_set_block_item(ConfigFile *conf, DynamicSetBlock *s, ConfigEntry *cep);
+extern DynamicSetOption get_setting_for_user(Client *client, SetOption opt);
+extern long long get_setting_for_user_number(Client *client, SetOption opt);
+extern const char *get_setting_for_user_string(Client *client, SetOption opt);
+extern void dynamic_set_string(DynamicSetBlock *s, int settingname, const char *value);
+extern void dynamic_set_number(DynamicSetBlock *s, int settingname, long long value);
+extern MODVAR DynamicSetBlock unknown_users_set;
+extern MODVAR DynamicSetBlock dynamic_set;

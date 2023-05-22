@@ -238,14 +238,16 @@ EVENT(check_pings)
 EVENT(check_deadsockets)
 {
 	Client *client, *next;
+	time_t deadline = TStime() - 10; // TODO: make TLS handshake timeout configurable, hardcoded to 10s atm
 
 	list_for_each_entry_safe(client, next, &unknown_list, lclient_node)
 	{
 		/* No need to notify opers here. It's already done when dead socket is set */
 		if (IsDeadSocket(client))
 		{
-			ClearDeadSocket(client); /* CPR. So we send the error. */
-			exit_client(client, NULL, client->local->error_str ? client->local->error_str : "Dead socket");
+			if (!quick_close && (client->local->creationtime > deadline) && IsTLSHandshake(client))
+				continue; /* give the client some more time */
+			deadsocket_exit(client, 0);
 			continue;
 		}
 	}
@@ -264,7 +266,7 @@ EVENT(check_deadsockets)
 	/* Next is for clients that are already exited (unlike the above).
 	 * The client is already out of all lists (channels, invites, etc etc)
 	 * and 90% has been freed. Here we actually free the remaining parts.
-	 * We don't have to send anything anymore.
+	 * We don't have to send anything anymore since the socket is already closed.
 	 */
 	list_for_each_entry_safe(client, next, &dead_list, client_node)
 	{
@@ -446,6 +448,45 @@ void detect_timeshift_and_warn(void)
 	oldtimeofday = timeofday;
 }
 
+#define DETECT_HIGH_CONNECTION_RATE_SAMPLE_TIME	5
+
+EVENT(detect_high_connection_rate)
+{
+	static time_t last_detect_high_connection_rate_warning = 0;
+
+	/* 0 is special, means "never" */
+	if (iConf.high_connection_rate == 0)
+	{
+		quick_close = 0;
+		connections_past_period=0; /* reset */
+		return;
+	}
+
+	if (connections_past_period > iConf.high_connection_rate*DETECT_HIGH_CONNECTION_RATE_SAMPLE_TIME)
+	{
+		quick_close = 1;
+	} else {
+		quick_close = 0;
+	}
+
+	/* Send a warning to IRCOps every XYZ time */
+	if (quick_close && (TStime() - last_detect_high_connection_rate_warning > 600) && connections_past_period)
+	{
+		unreal_log(ULOG_WARNING, "htm", "HIGH_CONNECTION_RATE", NULL,
+		           "High rate of connection attempts detected: $connects_per_second/sec exceeds $limit/sec: some minor functionality is now disabled. "
+		           "This could be an attack, or lots of genuine users connecting after a network outage.\n"
+		           "This message will appear every 10 minutes for as long as this is the case. "
+		           "You will NOT get a notification if all is normal again (which is evaluated every $sample_time seconds). "
+		           "See https://www.unrealircd.org/docs/FAQ#hi-conn-rate",
+		           log_data_integer("connects_per_second", connections_past_period/DETECT_HIGH_CONNECTION_RATE_SAMPLE_TIME),
+		           log_data_integer("limit", iConf.high_connection_rate),
+		           log_data_integer("sample_time", DETECT_HIGH_CONNECTION_RATE_SAMPLE_TIME));
+		last_detect_high_connection_rate_warning = TStime();
+	}
+
+	connections_past_period=0; /* reset */
+}
+
 void SetupEvents(void)
 {
 	/* Start events */
@@ -460,6 +501,7 @@ void SetupEvents(void)
 	EventAdd(NULL, "unrealdb_expire_secret_cache", unrealdb_expire_secret_cache, NULL, 61000, 0);
 	EventAdd(NULL, "throttling_check_expire", throttling_check_expire, NULL, 1000, 0);
 	EventAdd(NULL, "memory_log_cleaner", memory_log_cleaner, NULL, 61500, 0);
+	EventAdd(NULL, "detect_high_connection_rate", detect_high_connection_rate, NULL, 1000*DETECT_HIGH_CONNECTION_RATE_SAMPLE_TIME, 0);
 }
 
 /** The main function. This will call SocketLoop() once the server is ready. */
