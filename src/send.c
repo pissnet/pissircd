@@ -61,7 +61,7 @@ static LineCacheLine *linecache_get(LineCache *cache, int line_opts, Client *to)
                              buf[len++] = '\r'; buf[len++] = '\n'; buf[len] = '\0'; } while(0)
 
 /* These are two local (static) buffers used by the various send functions */
-static char sendbuf[2048];
+static char sendbuf[MAXLINELENGTH];
 static char sendbuf2[MAXLINELENGTH];
 
 /** This is used to ensure no duplicate messages are sent
@@ -253,11 +253,33 @@ static int sendbufto_one_prepare_line(Client *to, char *msg)
 	len = strlen(p);
 	if (!len || (p[len - 1] != '\n'))
 	{
-		if (len > 510)
-			len = 510;
-		p[len++] = '\r';
-		p[len++] = '\n';
-		p[len] = '\0';
+		if (!IsServer(to) || !SupportBIGLINES(to->direction))
+		{
+			/* Normal case */
+			if (len > 510)
+				len = 510;
+			p[len++] = '\r';
+			p[len++] = '\n';
+			p[len] = '\0';
+		} else {
+			/* BIGLINES case:
+			 * - first 'if' is about the total line length,
+			 *   this is basically an optimized strlen(msg)
+			 * - the 'else' applies to non-mtags part,
+			 *   like in the 'Normal case' from above.
+			 */
+			if ((p - msg) + len > MAXLINELENGTH-3)
+			{
+				len = MAXLINELENGTH-3;
+				msg[len++] = '\r';
+				msg[len++] = '\n';
+				msg[len] = '\0';
+			} else {
+				p[len++] = '\r';
+				p[len++] = '\n';
+				p[len] = '\0';
+			}
+		}
 	}
 
 	/* Return length, that is:
@@ -352,12 +374,10 @@ void sendbufto_one(Client *to, char *msg, unsigned int quick)
 
 #if defined(RAWCMDLOGGING)
 	{
-		char copy[512], *p;
+		static char copy[16300];
+		char *p;
 		strlcpy(copy, msg, len > sizeof(copy) ? sizeof(copy) : len);
-		p = strchr(copy, '\n');
-		if (p) *p = '\0';
-		p = strchr(copy, '\r');
-		if (p) *p = '\0';
+		stripcrlf(copy);
 		unreal_log(ULOG_INFO, "rawtraffic", "TRAFFIC_OUT", to,
 		           "-> $client: $data",
 		           log_data_string("data", copy));

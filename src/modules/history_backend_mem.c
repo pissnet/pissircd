@@ -1,5 +1,5 @@
 /* src/modules/history_backend_mem.c - History Backend: memory
- * (C) Copyright 2019-2021 Bram Matthys (Syzop) and the UnrealIRCd team
+ * (C) Copyright 2019-2023 Bram Matthys (Syzop) and the UnrealIRCd team
  * License: GPLv2 or later
  */
 #include "unrealircd.h"
@@ -101,6 +101,7 @@ int hbm_history_add(const char *object, MessageTag *mtags, const char *line);
 int hbm_history_cleanup(HistoryLogObject *h);
 HistoryResult *hbm_history_request(const char *object, HistoryFilter *filter);
 int hbm_history_destroy(const char *object);
+int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_deletes);
 int hbm_history_set_limit(const char *object, int max_lines, long max_time);
 EVENT(history_mem_clean);
 EVENT(history_mem_init);
@@ -159,6 +160,7 @@ MOD_INIT()
 	hbi.history_add = hbm_history_add;
 	hbi.history_request = hbm_history_request;
 	hbi.history_destroy = hbm_history_destroy;
+	hbi.history_delete = hbm_history_delete;
 	hbi.history_set_limit = hbm_history_set_limit;
 	if (!HistoryBackendAdd(modinfo->handle, &hbi))
 		return MOD_FAILED;
@@ -648,6 +650,8 @@ static void hbm_result_prepend_line(HistoryResult *r, HistoryLogLine *n)
 
 /** Put lines in HistoryResult that are after a certain msgid or
  *  timestamp (excluding said msgid/timestamp).
+ *  Also stops at the other given msgid/timestamp (if any); so this can also be
+ *  used by hbm_return_between.
  * @param r		The history result set that we will use
  * @param h		The history log object
  * @param filter	The filter that applies
@@ -841,23 +845,96 @@ static int hbm_return_simple(HistoryResult *r, HistoryLogObject *h, HistoryFilte
  */
 static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilter *filter)
 {
-	int n = 0;
-	int orig_limit = filter->limit;
+	HistoryLogLine *l, *n, *started = NULL;
+	int written = 0;
+	MessageTag *m;
 
-	/* First request 50% above the search term */
-	if (filter->limit > 1)
-		filter->limit = filter->limit / 2;
-	n = hbm_return_before(r, h, filter);
-	/* Then the remainder (50% or more) below the search term.
-	 *
-	 * Ok, well, unless the original limit was 1 and we already
-	 * sent 1 line, then we may not send anything anymore..
+	for (l = h->tail; l; l = l->prev)
+	{
+		/* Not started yet? Check if this is the starting point... */
+		if (!started)
+		{
+			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) < 0))
+			{
+				started = l->next;
+			} else
+			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			{
+				started = l;
+				continue;
+			}
+		}
+		if (started)
+		{
+			/* Check if we need to stop */
+			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) < 0))
+			{
+				break;
+			} else
+			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			{
+				break;
+			}
+
+			/* Add line to the return buffer */
+			n = duplicate_log_line(l);
+			hbm_result_prepend_line(r, n);
+			if (started->next)
+			{
+				/* Normal case */
+				if (++written >= filter->limit / 2)
+					break;
+			} else {
+				/* Special case: if started->next is NULL then started is the end
+				 * of the buffer, so fill just /under/ the limit
+				 */
+				if (++written >= filter->limit - 1)
+					break;
+			}
+		}
+	}
+
+	/* Special case:
+	 * The timestamp= was not found in our buffer (or it matched the very top),
+	 * now what to do?
+	 * - If it is only <some time> before/at our oldest message timestamp,
+	 *   then we will just print the oldest X messages.
+	 * - If it's older than <some time> we don't, resulting in an empty batch.
 	 */
-	filter->limit = orig_limit - n;
-	if (filter->limit > 0)
-		n += hbm_return_after(r, h, filter);
+	if ((written == 0) && filter->timestamp_a && (started == NULL) && h->tail)
+	{
+		time_t requested_ts;
+		time_t oldest_we_have_ts;
+		char *tail_timestamp;
+		m = find_mtag(h->tail->mtags, "time");
+		tail_timestamp = m ? m->value : NULL;
+		if (tail_timestamp)
+		{
+			requested_ts = server_time_to_unix_time(filter->timestamp_a);
+			oldest_we_have_ts = server_time_to_unix_time(tail_timestamp);
+			if (oldest_we_have_ts - requested_ts < 3600)
+			{
+				/* Just return the oldest # messages */
+				started = h->head;
+				/* we (mis)use the loop further down to achieve this ;) */
+			}
+		}
+	}
 
-	return n;
+	/* In the code at the beginning of this function we added the messages
+	 * before the mid-point. Below we add the message at the mid-point and
+	 * the messages after the mid-point.
+	 */
+	for (l = started; l; l = l->next)
+	{
+		/* Add line to the return buffer */
+		n = duplicate_log_line(l);
+		hbm_result_append_line(r, n);
+		if (++written >= filter->limit)
+			break;
+	}
+
+	return written;
 }
 
 /** Figure out the direction (forwards or backwards) for CHATHISTORY BETWEEN request
@@ -950,9 +1027,23 @@ static int hbm_return_between(HistoryResult *r, HistoryLogObject *h, HistoryFilt
 	direction = hbm_return_between_figure_out_direction(h, filter);
 
 	if (direction == 1)
+	{
 		return hbm_return_after(r, h, filter);
-	else if (direction == 0)
-		return hbm_return_before(r, h, filter);
+	} else
+	if (direction == 0)
+	{
+		/* Create a temporary filter, swapping directions */
+		char *x, *y;
+		HistoryFilter f;
+		memset(&f, 0, sizeof(f));
+		f.cmd = HFC_BEFORE;
+		f.limit = filter->limit;
+		f.timestamp_a = filter->timestamp_b;
+		f.timestamp_b = filter->timestamp_a;
+		f.msgid_a = filter->msgid_b;
+		f.msgid_b = filter->msgid_a;
+		return hbm_return_after(r, h, &f);
+	}
 	/* else direction is -1 which means not found / invalid */
 
 	return 0;
@@ -1005,6 +1096,82 @@ HistoryResult *hbm_history_request(const char *object, HistoryFilter *filter)
 	}
 
 	return r;
+}
+
+/** Remove lines from the history
+ * @param h		The history log object
+ * @param filter	The filter that applies
+ * @param rejected_deletes    If not NULL, this is set to the number of messages which
+ *                            don't match the 'account' but match other filters.
+ * @returns Number of lines deleted, note that this could be zero,
+ *          which is a perfectly valid result.
+ */
+int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_deletes)
+{
+	HistoryLogLine *l;
+	HistoryLogObject *h = hbm_find_object(object);
+	int deleted = 0;
+	int started = 0;
+	MessageTag *m;
+
+	if (rejected_deletes)
+		*rejected_deletes = 0;
+
+	if (!h)
+		return 0;
+
+	for (l = h->head; l; l = l->next)
+	{
+		/* Not started yet? Check if this is the starting point... */
+		if (!started)
+		{
+			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) > 0))
+			{
+				started = 1;
+			} else
+			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			{
+				started = 1;
+			}
+		}
+		if (started)
+		{
+			/* Check if we need to stop */
+			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) >= 0))
+			{
+				break;
+			} else
+			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			{
+				break;
+			}
+
+			/* Note: account comparison is case-sensitive, just to be safe in case
+			 * services do not casemap the same way we would.
+			 * This means filter->account should probably not be filled directly
+			 * from user input.
+			 */
+			if (filter->account) {
+				// TODO: check account-tag module is loaded?
+				m = find_mtag(l->mtags, "account");
+				if (!m || strcmp(m->value, filter->account)) {
+					if (rejected_deletes)
+						(*rejected_deletes)++;
+					continue;
+				}
+			}
+
+			/* Remove line from the history */
+			hbm_history_del_line(h, l);
+			if (++deleted >= filter->limit)
+				break;
+		}
+
+		if (deleted >= filter->limit)
+			break;
+	}
+
+	return deleted;
 }
 
 /** Clean up expired entries */

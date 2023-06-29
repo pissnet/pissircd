@@ -659,6 +659,7 @@ void close_connection(Client *client)
 	}
 
 	client->direction = NULL;
+	SetDeadSocket(client); /* stop trying to send to this destination */
 }
 
 /** Set IPv6 socket options, if possible. */
@@ -880,6 +881,12 @@ refuse_client:
 	for (h = Hooks[HOOKTYPE_ACCEPT]; h; h = h->next)
 	{
 		int value = (*(h->func.intfunc))(client);
+		if (value == 2) // HOOK_DENY_ALWAYS
+		{
+			deadsocket_exit(client, 1);
+			irccounts.unknown--;
+			goto refuse_client;
+		} else
 		if (value == HOOK_DENY)
 		{
 			if (quick_close || !(listener->options & LISTENER_TLS))
@@ -895,6 +902,7 @@ refuse_client:
 				/* continue, and even do the SSL/TLS handshake */
 			}
 		}
+		/* NOT in else block: */
 		if (value != HOOK_CONTINUE)
 			break;
 	}
@@ -1029,18 +1037,25 @@ void dns_finished(Client *client, DNSFinishedType type)
 	RunHook(HOOKTYPE_DNS_FINISHED, client);
 }
 
-/** Start of normal client handshake - DNS and ident lookups, etc.
- * @param client	The client
- * @note This is called directly after accept() -> add_connection() for plaintext.
- *       For TLS connections this is called after the TLS handshake is completed.
- */
-void start_of_normal_client_handshake(Client *client)
+void start_dns_and_ident_lookup(Client *client)
 {
 	struct hostent *he;
 
-	client->status = CLIENT_STATUS_UNKNOWN; /* reset, to be sure (TLS handshake has ended) */
+	/* First, reset, to be safe. Especially nowadays that we
+	 * are called not only from start_of_normal_client_handshake()
+	 * but also when IP gets updated due to a proxy.
+	 */
+	strlcpy(client->local->sockhost, GetIP(client), sizeof(client->local->sockhost));
+	if (client->local->hostp)
+	{
+		unreal_free_hostent(client->local->hostp);
+		client->local->hostp = NULL;
+	}
 
-	RunHook(HOOKTYPE_HANDSHAKE, client);
+	/* Remove any outstanding DNS requests */
+	unrealdns_delreq_bycptr(client);
+	ClearDNSLookup(client);
+	cancel_ident_lookup(client);
 
 	if (!DONT_RESOLVE && !IsUnixSocket(client))
 	{
@@ -1085,6 +1100,21 @@ void start_of_normal_client_handshake(Client *client)
 
 doauth:
 	consider_ident_lookup(client);
+}
+
+/** Start of normal client handshake - DNS and ident lookups, etc.
+ * @param client	The client
+ * @note This is called directly after accept() -> add_connection() for plaintext.
+ *       For TLS connections this is called after the TLS handshake is completed.
+ */
+void start_of_normal_client_handshake(Client *client)
+{
+	client->status = CLIENT_STATUS_UNKNOWN; /* reset, to be sure (TLS handshake has ended) */
+
+	RunHook(HOOKTYPE_HANDSHAKE, client);
+
+	start_dns_and_ident_lookup(client);
+
 	fd_setselect(client->local->fd, FD_SELECT_READ, read_packet, client);
 }
 

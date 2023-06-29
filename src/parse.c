@@ -251,12 +251,13 @@ void parse(Client *cptr, char *buffer, int length)
  *               	the message has a sender, eg :xyz PRIVMSG ..
  * @param mtags  	Message tags received for this message.
  * @param mtags_bytes	The length of all message tags.
- * @param ch		The incoming line received (buffer), excluding message tags.
+ * @param line		The incoming line received (buffer), excluding message tags.
  */
-static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_bytes, char *ch)
+static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_bytes, char *line)
 {
 	Client *from = cptr;
 	char *s;
+	char *ch = line;
 	int len, i, numeric = 0, paramcount;
 #ifdef DEBUGMODE
 	time_t then, ticks;
@@ -267,14 +268,14 @@ static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_
 
 	*fromptr = cptr; /* The default, unless a source is specified (and permitted) */
 
-	/* The remaining part should never be more than 510 bytes
-	 * (that is 512 minus CR LF, as specified in RFC1459 section 2.3).
+	/* In client-to-server traffic, the remaining part should
+	 * never be more than 510 bytes (that is 512 minus CR LF,
+	 * as specified in RFC1459 section 2.3).
 	 * If it is too long, then we cut it off here.
+	 * Note that there is a second check later for the IsServer() case.
 	 */
-	if (strlen(ch) > 510)
-	{
-		ch[510] = '\0';
-	}
+	if (!IsServer(cptr) && (strlen(line) > 510))
+		line[510] = '\0';
 
 	para[0] = (char *)DEADBEEF_ADDR; /* helps us catch bugs :) */
 
@@ -354,6 +355,20 @@ static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_
 	/* Now let's figure out the command (or numeric)... */
 	s = strchr(ch, ' ');	/* s -> End of the command code */
 	len = (s) ? (s - ch) : 0;
+
+	/* An early "guard": check for oversized command name
+	 * (not parameters, the actual command name being 512+ chars),
+	 * just in case... especially for BIGLINES.
+	 */
+	if (len > 512)
+	{
+		ch[510] = '\0';
+		sendto_one(from, NULL, ":%s %d %s %s :Unknown command",
+				       me.name, ERR_UNKNOWNCOMMAND,
+				       from->name, ch);
+		ircstats.is_unco++;
+		return;
+	}
 
 	if (len == 3 && isdigit(*ch) && isdigit(*(ch + 1)) && isdigit(*(ch + 2)))
 	{
@@ -462,6 +477,10 @@ static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_
 	   ** (about same effect as ":" has...) --msa
 	 */
 
+	/* The high MAXPARA is only for servers, so readjust here for clients... */
+	if (!IsServer(from) && (paramcount > MAXPARA_USER))
+		paramcount = MAXPARA_USER;
+
 	/* Note initially true: s==NULL || *(s-1) == '\0' !! */
 
 	i = 0;
@@ -502,6 +521,23 @@ static void parse2(Client *cptr, Client **fromptr, MessageTag *mtags, int mtags_
 		}
 	}
 	para[++i] = NULL;
+
+	/* Filter for non-CMD_BIGLINES to cut off each para[] at 510 bytes:
+	 * - Only for servers, as we already covered !IsServer() at
+	 *   the beginning of this function and cut off at 510 bytes.
+	 * - Only if more than 510 bytes, otherwise don't bother.
+	 * - If the command has CMD_BIGLINES then skip this as well.
+	 */
+	if (IsServer(cptr) && (bytes > 510) && !(cmptr && (cmptr->flags & CMD_BIGLINES)))
+	{
+		int n, bytes;
+		for (n = 1; n < i; n++)
+		{
+			bytes = strlen(para[n]);
+			if (bytes > 510)
+				para[n][510] = '\0'; /* cut off */
+		}
+	}
 
 	/* Check if one of the message tags are rejected by spamfilter */
 	if (MyConnect(from) && !IsServer(from) && match_spamfilter_mtags(from, mtags, cmptr ? cmptr->cmd : NULL))
