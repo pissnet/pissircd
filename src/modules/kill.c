@@ -134,6 +134,17 @@ CMD_FUNC(cmd_kill)
 			}
 			if ((ret == EX_DENY) || (ret == EX_ALWAYS_DENY))
 				continue; /* reject kill for this particular user */
+		} else if(MyUser(target)) {
+			int ret = EX_ALLOW;
+			for (h = Hooks[HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL]; h; h = h->next)
+			{
+				/* note: parameters are: client, victim, reason. reason can be NULL !! */
+				ret = (*(h->func.intfunc))(client, target, reason);
+				if (ret != EX_ALLOW)
+					break;
+			}
+			if ((ret == EX_DENY) || (ret == EX_ALWAYS_DENY))
+				continue; /* reject kill for this particular user */
 		}
 
 		/* From here on, the kill is probably going to be successful. */

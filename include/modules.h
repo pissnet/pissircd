@@ -1260,6 +1260,9 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 /** See hooktype_reconfigure_web_listener */
 #define HOOKTYPE_CONFIG_LISTENER	120
 
+/** See hooktype_pre_remote_to_local_kill() */
+#define HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL 254
+
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
  * 2) Add a hook prototype (see below)
@@ -1703,6 +1706,18 @@ int hooktype_who_status(Client *client, Client *target, Channel *channel, Member
  * @retval EX_ALLOW		Allow the kick, unless another module blocks it.
  */
 int hooktype_pre_kill(Client *client, Client *victim, const char *reason);
+
+/** Called when a remote IRCOp wants to kill a local user (function prototype for HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL).
+ * Other servers will have already killed the user and removed it from memory. 
+ * If you EX_DENY here you are expected to handle the fallout yourself.
+ * @param client		The client
+ * @param victim		The user who should be killed
+ * @param reason		The kill reason
+ * @retval EX_DENY		Deny the KICK (unless IRCOp with sufficient override rights).
+ * @retval EX_ALWAYS_DENY	Deny the KICK always (even if IRCOp).
+ * @retval EX_ALLOW		Allow the kick, unless another module blocks it.
+ */
+int hooktype_pre_remote_to_local_kill(Client *client, Client *victim, const char *reason);
 
 /** Called when a local user kills another user (function prototype for HOOKTYPE_LOCAL_KILL).
  * Note that kills from remote IRCOps will show up as regular quits, so use hooktype_remote_quit() and hooktype_local_quit().
@@ -2423,6 +2438,7 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_WHO_STATUS) && !ValidateHook(hooktype_who_status, func)) || \
         ((hooktype == HOOKTYPE_MODE_DEOP) && !ValidateHook(hooktype_mode_deop, func)) || \
         ((hooktype == HOOKTYPE_PRE_KILL) && !ValidateHook(hooktype_pre_kill, func)) || \
+        ((hooktype == HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL) && !ValidateHook(hooktype_pre_remote_to_local_kill, func)) || \
         ((hooktype == HOOKTYPE_SEE_CHANNEL_IN_WHOIS) && !ValidateHook(hooktype_see_channel_in_whois, func)) || \
         ((hooktype == HOOKTYPE_DCC_DENIED) && !ValidateHook(hooktype_dcc_denied, func)) || \
         ((hooktype == HOOKTYPE_SERVER_HANDSHAKE_OUT) && !ValidateHook(hooktype_server_handshake_out, func)) || \
