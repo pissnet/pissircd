@@ -572,6 +572,7 @@ struct HistoryFilter {
         char *msgid_a;			/**< First parameter of HFC_* (either this or timestamp_a) */
         char *timestamp_b;		/**< Second parameter of HFC_BETWEEN (either this or msgid_b) */
         char *msgid_b;			/**< Second parameter of HFC_BETWEEN (either this or timestamp_b) */
+        char *account;			/**< (For deletion only) if not NULL, reject deletion of messages not from this account */
         int limit;			/**< Maximum number of lines to return */
 };
 
@@ -599,6 +600,7 @@ struct HistoryBackend {
 	int (*history_set_limit)(const char *object, int max_lines, long max_time); /**< Impose a limit on a history object */
 	int (*history_add)(const char *object, MessageTag *mtags, const char *line); /**< Add to history */
 	HistoryResult *(*history_request)(const char *object, HistoryFilter *filter);  /**< Request history */
+	int (*history_delete)(const char *object, HistoryFilter *filter, int *rejected_deletes);  /**< Delete lines from the history. Returns the number of matching lines and sets rejected_deletes if not NULL */
 	int (*history_destroy)(const char *object);  /**< Destroy history of this object completely */
 	Module *owner;                                /**< Module introducing this */
 	char unloaded;                                /**< Internal flag to indicate module is being unloaded */
@@ -612,6 +614,7 @@ typedef struct {
 	int (*history_set_limit)(const char *object, int max_lines, long max_time);
 	int (*history_add)(const char *object, MessageTag *mtags, const char *line);
 	HistoryResult *(*history_request)(const char *object, HistoryFilter *filter);
+	int (*history_delete)(const char *object, HistoryFilter *filter, int *rejected_deletes);
 	int (*history_destroy)(const char *object);
 } HistoryBackendInfo;
 
@@ -1255,7 +1258,7 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 /** See hooktype_dns_finished */
 #define HOOKTYPE_DNS_FINISHED	119
 /** See hooktype_reconfigure_web_listener */
-#define HOOKTYPE_RECONFIGURE_WEB_LISTENER	120
+#define HOOKTYPE_CONFIG_LISTENER	120
 
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
@@ -2325,12 +2328,12 @@ int hooktype_rehash_log(int failure, json_t *rehash_log);
  */
 int hooktype_dns_finished(Client *client);
 
-/** Called when an listener is removed from the conf but there are still clients - very specific corner case.
- * (function prototype for HOOKTYPE_RECONFIGURE_WEB_LISTENER)
+/** Called after an listener block is processed
+ * (function prototype for HOOKTYPE_CONFIG_LISTENER)
  * @param listener		The listener
  * @return The return value is ignored (use return 0)
  */
-int hooktype_reconfigure_web_listener(ConfigItem_listen *listener);
+int hooktype_config_listener(ConfigItem_listen *listener);
 
 /** @} */
 
@@ -2453,7 +2456,8 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_JSON_EXPAND_CHANNEL) && !ValidateHook(hooktype_json_expand_channel, func)) || \
         ((hooktype == HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT) && !ValidateHook(hooktype_pre_local_handshake_timeout, func)) || \
         ((hooktype == HOOKTYPE_REHASH_LOG) && !ValidateHook(hooktype_rehash_log, func)) || \
-        ((hooktype == HOOKTYPE_DNS_FINISHED) && !ValidateHook(hooktype_dns_finished, func)) ) \
+        ((hooktype == HOOKTYPE_DNS_FINISHED) && !ValidateHook(hooktype_dns_finished, func)) || \
+        ((hooktype == HOOKTYPE_CONFIG_LISTENER) && !ValidateHook(hooktype_config_listener, func))) \
         _hook_error_incompatible();
 #endif /* GCC_TYPECHECKING */
 
@@ -2600,6 +2604,7 @@ enum EfunctionType {
 	EFUNC_WEBSOCKET_CREATE_PACKET_SIMPLE,
 	EFUNC_CHECK_DENY_LINK,
 	EFUNC_MTAG_GENERATE_ISSUED_BY_IRC,
+	EFUNC_CANCEL_IDENT_LOOKUP,
 };
 
 /* Module flags */

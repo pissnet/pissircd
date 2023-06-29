@@ -1,7 +1,33 @@
-UnrealIRCd 6.1.1-git
+UnrealIRCd 6.1.2-git
 =================
-This is the git version (development version) for future 6.1.1. This is work
+This is the git version (development version) for future 6.1.2. This is work
 in progress and may not be a stable version.
+
+UnrealIRCd 6.1.1.1
+-------------------
+This 6.1.1.1 version is an update to 6.1.1: a bug and memory leak was fixed
+related to maxperip handling if a WEBIRC proxy/gateway was used. To trigger
+this bug the WEBIRC proxy would need to use an IPv6 connection to UnrealIRCd
+and serve/spoof an IPv4 client, or vice-versa (be on IPv4 and spoof an IPv6).
+
+The original 6.1.1 announcement is below:
+
+UnrealIRCd 6.1.1
+-----------------
+UnrealIRCd 6.1.1 comes with various bug fixes and performance improvements,
+especially for channels with thousands of users.
+
+It also has more options to override settings per security group,
+for example if you want to give trusted users or bots more rights or
+higher flood rates than regular users. All these options are now
+in a single [Special users](https://www.unrealircd.org/docs/Special_users)
+article on the wiki.
+
+Other notable features are better connection errors to SSL/TLS users
+and a new proxy { } block for websocket reverse proxies.
+
+See the full release notes below. As usual on *NIX you can upgrade easily
+with the command: `./unrealircd upgrade`
 
 ### Enhancements:
 * Two new features that are conditionally on:
@@ -44,6 +70,14 @@ in progress and may not be a stable version.
   * Currently the following settings can be used in a set xxx { } block:
     set::auto-join, set::modes-on-connect, set::restrict-usermodes,
     set::max-channels-per-user, set::static-quit, set::static-part.
+  * See also [Special users](https://www.unrealircd.org/docs/Special_users)
+    in the documentation for applying settings to a security groups.
+* New [`proxy { }` block](https://www.unrealircd.org/docs/Proxy_block)
+  that can be used for spoofing IP addresses when:
+  * Reverse proxying websocket connections (eg. via NGINX, a load
+    balancer or other reverse proxy)
+  * WEBIRC/CGI:IRC gateways. This will replace the old `webirc { }`
+    block in the future, though the old one will still work for now.
 * New setting [set::handshake-boot-delay](https://www.unrealircd.org/docs/Set_block#set%3A%3Ahandshake-boot-delay)
   which allows server linking autoconnects to kick in (and incoming
   servers on serversonly ports), before allowing clients in. This
@@ -58,11 +92,16 @@ in progress and may not be a stable version.
     Then after an IRCd restart, your services link in before your clients
     and your IRC users have SASL available straight from the start.
 * JSON-RPC:
-  * New call `log.list` to fetch past 1000 log entries. This functionality
-    is only loaded if you include `rpc.modules.default.conf`, so not wasting
-    any memory on servers that are not used for JSON-RPC.
+  * New call [`log.list`](https://www.unrealircd.org/docs/JSON-RPC:Log#log.list)
+    to fetch past 1000 log entries. This functionality is only loaded if
+    you include `rpc.modules.default.conf`, so not wasting any memory on
+    servers that are not used for JSON-RPC.
 
 ### Changes:
+* [set::topic-setter](https://www.unrealircd.org/docs/Set_block#set::topic-setter) and
+  [set::ban-setter](https://www.unrealircd.org/docs/Set_block#set::ban-setter)
+  are now by default set to `nick-user-host` instead of `nick`, so you can see
+  the full nick!user@host of who set the topic/ban/exempt/invex.
 * You can no longer (accidentally) load an old `modules.default.conf`.
   People must always use the shipped version of this file as the file VERY
   clearly says in the beginning (see also that file for instructions on
@@ -80,17 +119,51 @@ in progress and may not be a stable version.
     `4.3.2.1.dnsbl.dronebl.org.mydomain.org`.
 * Data buffer chunks bumped from 512 bytes to ~4K. This results in less write
   calls (lower CPU usage) and more data per TCP/IP packet.
+* We now cache sending of lines in `sendto_channel` via a new "LineCache"
+  system. It saves CPU on (very) large channels.
+* Several other performance improvements such as checking maxperip via
+  a hash table and faster invisibility checks for delayjoin.
 * Blacklist hits are now logged globally. This means they show up in
   snomask `B`, are logged, and show up in the webpanel "Logs" view.
 * The event `REMOTE_CLIENT_JOIN` was mass-triggered when servers were
   syncing. They are now hidden, like `REMOTE_CLIENT_CONNECT`.
+* Update shipped libraries: c-ares to 1.19.1
 
 ### Fixes:
 * Crash on FreeBSD/NetBSD when using JSON-RPC, due to clashing rpc_call
   symbol in their libc library.
+* Crash when removing a `listen { }` block for websocket or rpc (or
+  changin the port number)
 * When using the webpanel, if an IRC client tried to connect with the same
   IP as the webpanel server, it would often receive the error "Too many
   unknown connections". This only affected non-localhost connections.
+* The [`require module` block](https://www.unrealircd.org/docs/Require_module_block)
+  was only checked of one side of the link, thus partially not working.
+
+### Removed:
+* [set::maxbanlength](https://www.unrealircd.org/docs/Set_block#set::maxbanlength)
+  has been removed as it was not deemed useful and only confusing
+  to users and admins.
+
+### Developers and protocol:
+* Server to server lines can now be 16384 bytes in size when
+  `PROTOCTL BIGLINES` is set. This will allow us to do things more
+  efficiently and possibly raise some other limits in the future.
+  This 16k is the size of the complete line, including sender,
+  message tags, content and \r\n. Also, in server-to-server traffic
+  we now allow 30 parameters (MAXPARA*2).  
+  The original input size limits for non-servers remain the same: the
+  complete line can be 4k+512, with the non-mtag portion limit set
+  at 512 bytes (including \r\n), and MAXPARA is still 15 as well.
+* In command handlers, individual `parv[]` elements can be 510 bytes
+  max, even if they add up like parv[1] and parv[2] both being 510
+  bytes each. If you need more than that, then you need to set the
+  flag `CMD_BIGLINES` in `CommandAdd()`, then an individual parameter
+  can be near ~16k. This is so, because a lot of the code does not
+  expect parameters bigger than 512 bytes (but can still handle
+  the total of parameters being greater than 512). The new flag allows
+  gradually opting in commands to allow bigger parameters, after
+  such code has been checked and modified to handle it.
 
 UnrealIRCd 6.1.0
 -----------------
@@ -110,9 +183,6 @@ changed a channel mode, ..).
 Other improvements are whowasdb (persistent WHOWAS history) and a new guide
 on running a Tor Onion service. The release also fixes a crash bug related
 to remote includes and fixes multiple memory leaks.
-
-See the full release notes below. As usual on *NIX you can upgrade easily
-with the command: `./unrealircd upgrade`
 
 ### Enhancements:
 * Channel flood protection improvements:

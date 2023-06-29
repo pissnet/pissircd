@@ -30,20 +30,23 @@ ModuleHeader MOD_HEADER
 #define WEB(client)		((WebRequest *)moddata_client(client, webserver_md).ptr)
 #define WEBSERVER(client)	((client->local && client->local->listener) ? client->local->listener->webserver : NULL)
 #define reset_handshake_timeout(client, delta)  do { client->local->creationtime = TStime() - iConf.handshake_timeout + delta; } while(0)
+#define WSU(client)     ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
 
 /* Forward declarations */
 int webserver_packet_out(Client *from, Client *to, Client *intended_to, char **msg, int *length);
 int webserver_packet_in(Client *client, const char *readbuf, int *length);
-void webserver_mdata_free(ModData *m);
+void webserver_webrequest_mdata_free(ModData *m);
 int webserver_handle_packet(Client *client, const char *readbuf, int length);
 int webserver_handle_handshake(Client *client, const char *readbuf, int *length);
 int webserver_handle_request_header(Client *client, const char *readbuf, int *length);
 void _webserver_send_response(Client *client, int status, char *msg);
 void _webserver_close_client(Client *client);
 int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf, int length);
+void parse_proxy_header(Client *client);
 
 /* Global variables */
-ModDataInfo *webserver_md;
+ModDataInfo *webserver_md; /* (by us) */
+ModDataInfo *websocket_md; /* (external module, looked up)*/
 
 MOD_TEST()
 {
@@ -67,7 +70,7 @@ MOD_INIT()
 	mreq.name = "web";
 	mreq.serialize = NULL;
 	mreq.unserialize = NULL;
-	mreq.free = webserver_mdata_free;
+	mreq.free = webserver_webrequest_mdata_free;
 	mreq.sync = 0;
 	mreq.type = MODDATATYPE_CLIENT;
 	webserver_md = ModDataAdd(modinfo->handle, mreq);
@@ -77,6 +80,8 @@ MOD_INIT()
 
 MOD_LOAD()
 {
+	websocket_md = findmoddata_byname("websocket", MODDATATYPE_CLIENT);
+
 	return MOD_SUCCESS;
 }
 
@@ -86,7 +91,7 @@ MOD_UNLOAD()
 }
 
 /** UnrealIRCd internals: free WebRequest object. */
-void webserver_mdata_free(ModData *m)
+void webserver_webrequest_mdata_free(ModData *m)
 {
 	WebRequest *wsu = (WebRequest *)m->ptr;
 	if (wsu)
@@ -95,6 +100,7 @@ void webserver_mdata_free(ModData *m)
 		free_nvplist(wsu->headers);
 		safe_free(wsu->lefttoparse);
 		safe_free(wsu->request_buffer);
+		safe_free(wsu->forwarded);
 		safe_free(m->ptr);
 	}
 }
@@ -117,13 +123,13 @@ int webserver_packet_out(Client *from, Client *to, Client *intended_to, char **m
 
 HttpMethod webserver_get_method(const char *buf)
 {
-	if (!strncmp(buf, "HEAD ", 5))
+	if (str_starts_with_case_sensitive(buf, "HEAD "))
 		return HTTP_METHOD_HEAD;
-	if (!strncmp(buf, "GET ", 4))
+	if (str_starts_with_case_sensitive(buf, "GET "))
 		return HTTP_METHOD_GET;
-	if (!strncmp(buf, "PUT ", 4))
+	if (str_starts_with_case_sensitive(buf, "PUT "))
 		return HTTP_METHOD_PUT;
-	if (!strncmp(buf, "POST ", 5))
+	if (str_starts_with_case_sensitive(buf, "POST "))
 		return HTTP_METHOD_POST;
 	return HTTP_METHOD_NONE; /* invalid */
 }
@@ -426,6 +432,7 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 		}
 
 		WEB(client)->request_header_parsed = 1;
+		parse_proxy_header(client);
 		n = WEBSERVER(client)->handle_request(client, WEB(client));
 		if ((n <= 0) || IsDead(client))
 			return n; /* byebye */
@@ -675,4 +682,103 @@ int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf,
 
 	safe_free(free_this_buffer);
 	return 1;
+}
+
+/** If a valid Forwarded: http header is received from a trusted source (proxy server), this function will
+  * extract remote IP address and secure (https) status from it. If more than one field with same name is received,
+  * we'll accept the last one. This should work correctly with chained proxies. */
+void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded)
+{
+	char buf[512];
+	char *name, *value, *p = NULL;
+
+	memset(forwarded, 0, sizeof(HTTPForwardedHeader));
+	strlcpy(buf, input, sizeof(buf));
+
+	for (name = strtoken(&p, buf, ";"); name; name = strtoken(&p, NULL, ";"))
+	{
+		value = strchr(name, '=');
+		if (value)
+			*value++ = '\0';
+		if (!value)
+			continue; /* we don't use value-less items atm anyway */
+		if (!strcmp(name, "for"))
+		{
+			strlcpy(forwarded->ip, value, sizeof(forwarded->ip));
+		} else
+		if (!strcasecmp(name, "proto"))
+		{
+			if (!strcasecmp(value, "https"))
+			{
+				forwarded->secure = 1;
+			} else if (!strcasecmp(value, "http"))
+			{
+				forwarded->secure = 0;
+			} else
+			{
+				/* ignore unknown value */
+			}
+		}
+	}
+}
+
+void webserver_handle_proxy(Client *client, ConfigItem_proxy *proxy)
+{
+	HTTPForwardedHeader *forwarded;
+	char oldip[64];
+	NameValuePrioList *header;
+
+	/* Set up 'forwarded' variable */
+	if (WEB(client)->forwarded == NULL)
+	{
+		WEB(client)->forwarded = safe_alloc(sizeof(HTTPForwardedHeader));
+	} else {
+		memset(WEB(client)->forwarded, 0, sizeof(HTTPForwardedHeader));
+	}
+	forwarded = WEB(client)->forwarded;
+
+	/* Go through the headers and parse them */
+	for (header = WEB(client)->headers; header; header = header->next)
+	{
+		if (!strcasecmp(header->name, "Forwarded") || !strcasecmp(header->name, "X-Forwarded"))
+			do_parse_forwarded_header(header->value, forwarded);
+	}
+
+	/* check header values */
+	if (!is_valid_ip(forwarded->ip))
+	{
+		unreal_log(ULOG_WARNING, "websocket", "MISSING_PROXY_HEADER", client,
+		           "Client on proxy $client.ip has matching proxy { } block "
+		           "but the proxy did not send a valid forwarded header. "
+		           "The IP of the user is now the proxy IP $client.ip (bad!).");
+		// TODO: or should we reject the user entirely?
+		return;
+	}
+
+	/* store data / set new IP */
+	strlcpy(oldip, client->ip, sizeof(oldip));
+	safe_strdup(client->ip, forwarded->ip);
+	strlcpy(client->local->sockhost, forwarded->ip, sizeof(client->local->sockhost)); /* in case dns lookup fails or is disabled */
+
+	/* restart DNS & ident lookups */
+	start_dns_and_ident_lookup(client);
+	RunHook(HOOKTYPE_IP_CHANGE, client, oldip);
+}
+
+/** Parse proxy headers (if any) and run proxy ip change routines (if needed).
+ * This is called after receiving the HTTP request, right before passing
+ * the request on to next handler (eg. the 'websocket' module).
+ */
+void parse_proxy_header(Client *client)
+{
+	ConfigItem_proxy *proxy;
+
+	for (proxy = conf_proxy; proxy; proxy = proxy->next)
+	{
+		if ((proxy->type == PROXY_WEB) && user_allowed_by_security_group(client, proxy->mask))
+		{
+			webserver_handle_proxy(client, proxy);
+			return;
+		}
+	}
 }

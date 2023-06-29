@@ -63,6 +63,7 @@ static int	_conf_offchans		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_sni		(ConfigFile *conf, ConfigEntry *ce);
 extern int	_conf_security_group	(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_secret		(ConfigFile *conf, ConfigEntry *ce);
+static int	_conf_proxy		(ConfigFile *conf, ConfigEntry *ce);
 
 /*
  * Validation commands
@@ -96,6 +97,7 @@ static int	_test_offchans		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_sni		(ConfigFile *conf, ConfigEntry *ce);
 extern int	_test_security_group	(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_secret		(ConfigFile *conf, ConfigEntry *ce);
+static int	_test_proxy		(ConfigFile *conf, ConfigEntry *ce);
 
 /* This MUST be alphabetized */
 static ConfigCommand _ConfigCommands[] = {
@@ -119,6 +121,7 @@ static ConfigCommand _ConfigCommands[] = {
 	{ "official-channels", 	_conf_offchans,		_test_offchans	},
 	{ "oper", 		_conf_oper,		_test_oper	},
 	{ "operclass",		_conf_operclass,	_test_operclass	},
+	{ "proxy", 		_conf_proxy,		_test_proxy	},
 	{ "require", 		_conf_require,		_test_require	},
 	{ "secret",		_conf_secret,		_test_secret	},
 	{ "security-group",	_conf_security_group,	_test_security_group	},
@@ -127,6 +130,7 @@ static ConfigCommand _ConfigCommands[] = {
 	{ "tld",		_conf_tld,		_test_tld	},
 	{ "ulines",		_conf_ulines,		_test_ulines	},
 	{ "vhost", 		_conf_vhost,		_test_vhost	},
+	{ "webirc", 		_conf_proxy,		_test_proxy	},
 };
 
 /* This MUST be alphabetized */
@@ -233,6 +237,8 @@ ConfigResource	*config_resources = NULL;
 ConfigItem_blacklist_module	*conf_blacklist_module = NULL;
 ConfigItem_help		*conf_help = NULL;
 ConfigItem_offchans	*conf_offchans = NULL;
+ConfigItem_proxy	*conf_proxy = NULL;
+
 Secret			*secrets = NULL;
 
 MODVAR Configuration		iConf;
@@ -1674,7 +1680,6 @@ void config_setdefaultsettings(Configuration *i)
 	safe_strdup(i->channel_command_prefix, "`!.");
 	i->check_target_nick_bans = 1;
 	i->maxbans = 60;
-	i->maxbanlength = 2048;
 	safe_strdup(i->level_on_join, "o");
 	i->watch_away_notification = 1;
 	i->uhnames = 1;
@@ -1759,8 +1764,8 @@ void config_setdefaultsettings(Configuration *i)
 	safe_strdup(i->reject_message_kline, "You are not welcome on this server. $bantype: $banreason. Email $klineaddr for more information.");
 	safe_strdup(i->reject_message_gline, "You are not welcome on this network. $bantype: $banreason. Email $glineaddr for more information.");
 
-	i->topic_setter = SETTER_NICK;
-	i->ban_setter = SETTER_NICK;
+	i->topic_setter = SETTER_NICK_USER_HOST;
+	i->ban_setter = SETTER_NICK_USER_HOST;
 	i->ban_setter_sync = 1;
 	i->allowed_channelchars = ALLOWED_CHANNELCHARS_UTF8;
 	i->automatic_ban_target = BAN_TARGET_IP;
@@ -1843,20 +1848,6 @@ void postconf_defaults(void)
 	postconf_defaults_log_block();
 }
 
-void postconf_fixes(void)
-{
-	/* If set::topic-setter is set to "nick-user-host" then the
-	 * maximum topic length becomes shorter.
-	 */
-	if ((iConf.topic_setter == SETTER_NICK_USER_HOST) &&
-	    (iConf.topic_length > 340))
-	{
-		config_warn("set::topic-length adjusted from %d to 340, which is the maximum because "
-		            "set::topic-setter is set to 'nick-user-host'.", iConf.topic_length);
-		iConf.topic_length = 340;
-	}
-}
-
 /* Needed for set::options::allow-part-if-shunned,
  * we can't just make it CMD_SHUN and do a ALLOW_PART_IF_SHUNNED in
  * cmd_part itself because that will also block internal calls (like sapart). -- Syzop
@@ -1883,7 +1874,6 @@ RealCommand *cmptr;
 void postconf(void)
 {
 	postconf_defaults();
-	postconf_fixes();
 	do_weird_shun_stuff();
 	isupport_init(); /* for all the 005 values that changed.. */
 	tls_check_expiry(NULL);
@@ -2339,6 +2329,28 @@ void remove_config_tkls(void)
 	}
 }
 
+void free_proxy_block(ConfigItem_proxy *e)
+{
+	free_security_group(e->mask);
+	if (e->auth)
+		Auth_FreeAuthConfig(e->auth);
+	DelListItem(e, conf_proxy);
+	safe_free(e->name);
+	safe_free(e);
+}
+
+void free_all_proxy_blocks(void)
+{
+	ConfigItem_proxy *proxy_ptr, *next;
+
+	for (proxy_ptr = conf_proxy; proxy_ptr; proxy_ptr = next)
+	{
+		next = proxy_ptr->next;
+		free_proxy_block(proxy_ptr);
+	}
+	conf_proxy = NULL;
+}
+
 void config_rehash()
 {
 	ConfigItem_oper			*oper_ptr;
@@ -2601,6 +2613,8 @@ void config_rehash()
 	conf_sni = NULL;
 
 	free_conf_channelmodes(&iConf.modes_on_join);
+
+	free_all_proxy_blocks();
 
 	/*
 	  reset conf_files -- should this be in its own function? no, because
@@ -4351,6 +4365,165 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 
 }
 
+ProxyType proxy_type_string_to_value(const char *s)
+{
+	if (!strcmp(s, "webirc"))
+		return PROXY_WEBIRC;
+	else if (!strcmp(s, "old"))
+		return PROXY_WEBIRC_PASS;
+	else if (!strcmp(s, "web"))
+		return PROXY_WEB;
+	return 0;
+}
+
+int _test_proxy(ConfigFile *conf, ConfigEntry *ce)
+{
+	ConfigEntry *cep;
+	int errors = 0;
+	char has_mask = 0; /* mandatory */
+	char has_password = 0; /* mandatory */
+	char has_type = 0;
+	ProxyType proxy_type = 0;
+
+	if (!strcmp(ce->name, "webirc"))
+	{
+		proxy_type = PROXY_WEBIRC;
+	} else {
+		if (!ce->value)
+		{
+			config_error("%s:%i: proxy { } blocks need to have a name, like proxy myproxy { }",
+				     ce->file->filename, ce->line_number);
+			errors++;
+		} else
+		if (!security_group_valid_name(ce->value))
+		{
+			config_error("%s:%i: the name of the proxy block may only contain a-z, A-Z, 0-9, _ and -. "
+			             "Your block name is invalid: '%s'",
+			             ce->file->filename, ce->line_number, ce->value);
+			errors++;
+		}
+	}
+
+	for (cep = ce->items; cep; cep = cep->next)
+	{
+		/* This one can have no value so needs to be at the top */
+		if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "match"))
+		{
+			if (cep->value || cep->items)
+			{
+				has_mask = 1;
+				test_match_block(conf, cep, &errors);
+			}
+		} else
+		if (!cep->value)
+		{
+			config_error_empty(cep->file->filename, cep->line_number,
+				"proxy", cep->name);
+			errors++;
+		} else
+		if (!strcmp(cep->name, "password"))
+		{
+			if (has_password)
+			{
+				config_warn_duplicate(cep->file->filename, 
+					cep->line_number, "proxy::password");
+				continue;
+			}
+			has_password = 1;
+			if (Auth_CheckError(cep) < 0)
+				errors++;
+		}
+		else if (!strcmp(cep->name, "type"))
+		{
+			if (has_type)
+			{
+				config_warn_duplicate(cep->file->filename,
+					cep->line_number, "proxy::type");
+			}
+			has_type = 1;
+			proxy_type = proxy_type_string_to_value(cep->value);
+			if (proxy_type == 0)
+			{
+				config_error("%s:%i: unknown proxy::type '%s'. "
+				             "Only the following types are supported: 'webirc', 'old' or 'web'.",
+				             cep->file->filename, cep->line_number, cep->value);
+				errors++;
+			}
+		}
+		else
+		{
+			config_error_unknown(cep->file->filename, cep->line_number,
+				"webirc", cep->name);
+			errors++;
+		}
+	}
+	if (!has_mask)
+	{
+		config_error_missing(ce->file->filename, ce->line_number,
+			"webirc::mask");
+		errors++;
+	}
+
+	if (!has_password && (proxy_type == PROXY_WEBIRC))
+	{
+		config_error_missing(ce->file->filename, ce->line_number,
+			"webirc::password");
+		errors++;
+	}
+	
+	if (has_password && (proxy_type == PROXY_WEBIRC_PASS))
+	{
+		config_error("%s:%i: webirc block has type set to 'old' but has a password set. "
+		             "Passwords are not used with type 'old'. Either remove the password or "
+		             "use the 'webirc' method instead.",
+		             ce->file->filename, ce->line_number);
+		errors++;
+	}
+
+	if (!has_type && !proxy_type)
+	{
+		config_error_missing(ce->file->filename, ce->line_number, "proxy::type");
+		errors++;
+	}
+
+	return errors;
+}
+
+int _conf_proxy(ConfigFile *conf, ConfigEntry *ce)
+{
+	ConfigEntry *cep;
+	ConfigItem_proxy *proxy = NULL;
+
+	proxy = safe_alloc(sizeof(ConfigItem_proxy));
+	proxy->type = PROXY_WEBIRC; /* default */
+
+	safe_strdup(proxy->name, ce->value); // could be NULL if webirc
+
+	for (cep = ce->items; cep; cep = cep->next)
+	{
+		if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "match"))
+			conf_match_block(conf, cep, &proxy->mask);
+		else if (!strcmp(cep->name, "password"))
+			proxy->auth = AuthBlockToAuthConfig(cep);
+		else if (!strcmp(cep->name, "type"))
+			proxy->type = proxy_type_string_to_value(cep->value);
+	}
+
+	AddListItem(proxy, conf_proxy);
+
+	/* For proxy type web, we automatically add the host to except ban { }
+	 * for blacklist, connect-flood, handshake-data-flood
+	 */
+	if (proxy->type == PROXY_WEB)
+	{
+		SecurityGroup *sg = duplicate_security_group(proxy->mask);
+		tkl_add_banexception(TKL_EXCEPTION, "-", "-", sg, "proxy { } block",
+				     "-config-", 0, TStime(), 0, "bcd", TKL_FLAG_CONFIG);
+	}
+
+	return 1;
+}
+
 /*
  * The class {} block parser
 */
@@ -4968,7 +5141,6 @@ void conf_listen_configure(const char *ip, int port, SocketType socket_type, int
 		free_tls_options(listen->tls_options);
 		listen->tls_options = NULL;
 	}
-	safe_free(listen->websocket_forward);
 	safe_free(listen->webserver);
 
 	/* Now set the new settings: */
@@ -5025,6 +5197,8 @@ void conf_listen_configure(const char *ip, int port, SocketType socket_type, int
 			}
 		}
 	}
+
+	RunHook(HOOKTYPE_CONFIG_LISTENER, listen);
 }
 
 int	_conf_listen(ConfigFile *conf, ConfigEntry *ce)
@@ -7427,9 +7601,6 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "maxbans")) {
 			tempiConf.maxbans = atol(cep->value);
 		}
-		else if (!strcmp(cep->name, "maxbanlength")) {
-			tempiConf.maxbanlength = atol(cep->value);
-		}
 		else if (!strcmp(cep->name, "silence-limit")) {
 			tempiConf.silence_limit = atol(cep->value);
 		}
@@ -8102,8 +8273,8 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 			CheckDuplicate(cep, maxbans, "maxbans");
 		}
 		else if (!strcmp(cep->name, "maxbanlength")) {
-			CheckNull(cep);
-			CheckDuplicate(cep, maxbanlength, "maxbanlength");
+			config_warn("%s:%d: set::maxbanlength no longer exists as it was not deemed useful, this setting is now ignored.",
+			            cep->file->filename, cep->line_number);
 		}
 		else if (!strcmp(cep->name, "silence-limit")) {
 			CheckNull(cep);
@@ -10669,6 +10840,11 @@ void delete_classblock(ConfigItem_class *class_ptr)
 	safe_free(class_ptr);
 }
 
+void free_webserver(WebServer *webserver)
+{
+	safe_free(webserver);
+}
+
 void listen_cleanup()
 {
 	ConfigItem_listen *listener, *listener_next;
@@ -10690,8 +10866,7 @@ void listen_cleanup()
 				safe_free(listener->spoof_ip);
 				free_tls_options(listener->tls_options);
 				/* listener->ssl_ctx is already freed by close_listener() */
-				safe_free(listener->webserver);
-				safe_free(listener->websocket_forward);
+				safe_free_webserver(listener->webserver);
 				safe_free(listener);
 			} else {
 				/* Still has clients */
@@ -10701,7 +10876,7 @@ void listen_cleanup()
 					listener->webserver->handle_request = NULL;
 					listener->webserver->handle_body = NULL;
 					/* Ask modules if they can figure out the handler */
-					RunHook(HOOKTYPE_RECONFIGURE_WEB_LISTENER, listener);
+					RunHook(HOOKTYPE_CONFIG_LISTENER, listener);
 					/* If not... free the webserver listener.
 					 * TODO: it would be even better if we kill all clients,
 					 * it would be more explicit and clear.
@@ -10709,7 +10884,7 @@ void listen_cleanup()
 					if ((listener->webserver->handle_request == NULL) ||
 					    (listener->webserver->handle_body == NULL))
 					{
-						safe_free(listener->webserver);
+						safe_free_webserver(listener->webserver);
 					}
 				}
 			}
@@ -11199,7 +11374,7 @@ int config_set_security_group(ConfigFile *conf, ConfigEntry *ce)
  * @param opt		The flood option we are interested in
  * @returns The FloodSettings for this user, never returns NULL.
  */
-DynamicSetOption get_setting_for_user(Client *client, SetOption opt)
+DynamicSetOption *get_setting_for_user(Client *client, SetOption opt)
 {
 	SecurityGroup *sg;
 	int in_known_users = 0;
@@ -11222,13 +11397,13 @@ DynamicSetOption get_setting_for_user(Client *client, SetOption opt)
 			if (in_known_users)
 			{
 				if (sg->settings.isset[opt])
-					return sg->settings.settings[opt];
+					return &sg->settings.settings[opt];
 			}
 		} else
 		if (user_allowed_by_security_group(client, sg) &&
 		    sg->settings.isset[opt])
 		{
-			return sg->settings.settings[opt];
+			return &sg->settings.settings[opt];
 		}
 	}
 
@@ -11236,22 +11411,22 @@ DynamicSetOption get_setting_for_user(Client *client, SetOption opt)
 	 * Use the caching info from above.
 	 */
 	if (!in_known_users && unknown_users_set.isset[opt])
-		return unknown_users_set.settings[opt];
+		return &unknown_users_set.settings[opt];
 
 	/* If we are still here, then fallback to the generic set:: setting */
-	return dynamic_set.settings[opt];
+	return &dynamic_set.settings[opt];
 }
 
 /** Get configuration that applies to the user - a number value */
 long long get_setting_for_user_number(Client *client, SetOption opt)
 {
-	return get_setting_for_user(client, opt).number;
+	return get_setting_for_user(client, opt)->number;
 }
 
 /** Get configuration that applies to the user - a string config value */
 const char *get_setting_for_user_string(Client *client, SetOption opt)
 {
-	return get_setting_for_user(client, opt).string;
+	return get_setting_for_user(client, opt)->string;
 }
 
 /*** END OF DYNAMIC SET CONFIG STUFF (that can be overridden by security group) ***/

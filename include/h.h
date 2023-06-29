@@ -110,6 +110,7 @@ extern MODVAR ConfigItem_deny_version	*conf_deny_version;
 extern MODVAR ConfigItem_alias		*conf_alias;
 extern MODVAR ConfigItem_help		*conf_help;
 extern MODVAR ConfigItem_offchans	*conf_offchans;
+extern MODVAR ConfigItem_proxy		*conf_proxy;
 extern void		completed_connection(int, int, void *);
 extern void clear_unknown();
 extern EVENT(e_unload_module_delayed);
@@ -906,6 +907,7 @@ extern MODVAR int (*websocket_create_packet_ex)(int opcode, char **buf, int *len
 extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 extern MODVAR const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 extern MODVAR void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
+extern MODVAR void (*cancel_ident_lookup)(Client *client);
 /* /Efuncs */
 
 /* TLS functions */
@@ -957,6 +959,7 @@ extern int websocket_create_packet_default_handler(int opcode, char **buf, int *
 extern int websocket_create_packet_ex_default_handler(int opcode, char **buf, int *len, char *sendbuf, size_t sendbufsize);
 extern int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len);
 extern void mtag_add_issued_by_default_handler(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
+extern void cancel_ident_lookup_default_handler(Client *client);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1127,6 +1130,7 @@ extern void free_message_tags(MessageTag *m);
 extern int history_set_limit(const char *object, int max_lines, long max_t);
 extern int history_add(const char *object, MessageTag *mtags, const char *line);
 extern HistoryResult *history_request(const char *object, HistoryFilter *filter);
+extern int history_delete(const char *object, HistoryFilter *filter, int *rejected_deletes);
 extern int history_destroy(const char *object);
 extern int can_receive_history(Client *client);
 extern void history_send_result(Client *client, HistoryResult *r);
@@ -1144,6 +1148,7 @@ extern int read_str(FILE *fd, char **x);
 extern void _free_entire_name_list(NameList *n);
 extern void _add_name_list(NameList **list, const char *name);
 extern void _del_name_list(NameList **list, const char *name);
+extern NameList *duplicate_name_list(NameList *e);
 extern NameList *find_name_list(NameList *list, const char *name);
 extern NameList *find_name_list_match(NameList *list, const char *name);
 extern int minimum_msec_since_last_run(struct timeval *tv_old, long minimum);
@@ -1202,6 +1207,7 @@ extern void add_nvplist_numeric_fmt(NameValuePrioList **lst, int priority, const
 extern NameValuePrioList *find_nvplist(NameValuePrioList *list, const char *name);
 extern const char *get_nvplist(NameValuePrioList *list, const char *name);
 extern void free_nvplist(NameValuePrioList *lst);
+extern NameValuePrioList *duplicate_nvplist(NameValuePrioList *e);
 extern void unreal_add_name_values(NameValuePrioList **n, const char *name, ConfigEntry *ce);
 extern const char *namevalue(NameValuePrioList *n);
 extern const char *namevalue_nospaces(NameValuePrioList *n);
@@ -1236,6 +1242,7 @@ extern void json_expand_tkl(json_t *j, const char *key, TKL *tkl, int detail);
 extern MODVAR SecurityGroup *securitygroups;
 extern void unreal_delete_masks(ConfigItem_mask *m);
 extern void unreal_add_masks(ConfigItem_mask **head, ConfigEntry *ce);
+extern ConfigItem_mask *unreal_duplicate_masks(ConfigItem_mask *existing);
 extern int unreal_mask_match(Client *acptr, ConfigItem_mask *m);
 extern int unreal_mask_match_string(const char *name, ConfigItem_mask *m);
 extern int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors);
@@ -1246,6 +1253,7 @@ extern int security_group_exists(const char *name);
 extern SecurityGroup *add_security_group(const char *name, int order);
 extern SecurityGroup *find_security_group(const char *name);
 extern void free_security_group(SecurityGroup *s);
+extern SecurityGroup *duplicate_security_group(SecurityGroup *s);
 extern void set_security_group_defaults(void);
 extern int user_allowed_by_security_group(Client *client, SecurityGroup *s);
 extern int user_allowed_by_security_group_name(Client *client, const char *secgroupname);
@@ -1407,10 +1415,13 @@ extern void init_dynamic_set_block(DynamicSetBlock *s);
 extern void free_dynamic_set_block(DynamicSetBlock *s);
 extern int test_dynamic_set_block_item(ConfigFile *conf, const char *security_group, ConfigEntry *cep);
 extern int config_set_dynamic_set_block_item(ConfigFile *conf, DynamicSetBlock *s, ConfigEntry *cep);
-extern DynamicSetOption get_setting_for_user(Client *client, SetOption opt);
+extern DynamicSetOption *get_setting_for_user(Client *client, SetOption opt);
 extern long long get_setting_for_user_number(Client *client, SetOption opt);
 extern const char *get_setting_for_user_string(Client *client, SetOption opt);
 extern void dynamic_set_string(DynamicSetBlock *s, int settingname, const char *value);
 extern void dynamic_set_number(DynamicSetBlock *s, int settingname, long long value);
 extern MODVAR DynamicSetBlock unknown_users_set;
 extern MODVAR DynamicSetBlock dynamic_set;
+extern void start_dns_and_ident_lookup(Client *client);
+extern void free_webserver(WebServer *webserver);
+#define safe_free_webserver(x)	do { if (x) { free_webserver(x); x = NULL; } } while(0)
