@@ -192,6 +192,7 @@ void free_client(Client *client)
 			safe_free(client->local->error_str);
 			if (client->local->hostp)
 				unreal_free_hostent(client->local->hostp);
+			free_all_tags(client);
 			
 			mp_pool_release(client->local);
 		}
@@ -616,7 +617,7 @@ NameList *find_name_list_match(NameList *list, const char *name)
 	return NULL;
 }
 
-void add_nvplist(NameValuePrioList **lst, int priority, const char *name, const char *value)
+NameValuePrioList *add_nvplist(NameValuePrioList **lst, int priority, const char *name, const char *value)
 {
 	va_list vl;
 	NameValuePrioList *e = safe_alloc(sizeof(NameValuePrioList));
@@ -624,6 +625,7 @@ void add_nvplist(NameValuePrioList **lst, int priority, const char *name, const 
 	if (value && *value)
 		safe_strdup(e->value, value);
 	AddListItemPrio(e, *lst, priority);
+	return e;
 }
 
 NameValuePrioList *find_nvplist(NameValuePrioList *list, const char *name)
@@ -672,6 +674,15 @@ void free_nvplist(NameValuePrioList *lst)
 	}
 }
 
+void del_nvplist_entry(NameValuePrioList *e, NameValuePrioList **lst)
+{
+	if (lst)
+		del_ListItem((ListStruct *)e, (ListStruct **)lst);
+	safe_free(e->name);
+	safe_free(e->value);
+	safe_free(e);
+}
+
 NameValuePrioList *duplicate_nvplist(NameValuePrioList *e)
 {
 	NameValuePrioList *n = NULL;
@@ -680,6 +691,14 @@ NameValuePrioList *duplicate_nvplist(NameValuePrioList *e)
 		add_nvplist(&n, e->priority, e->name, e->value);
 
 	return n;
+}
+
+NameValuePrioList *duplicate_nvplist_append(NameValuePrioList *e, NameValuePrioList **list)
+{
+	for (; e; e = e->next)
+		add_nvplist(list, e->priority, e->name, e->value);
+
+	return *list;
 }
 
 #define nv_find_by_name(stru, name)	do_nv_find_by_name(stru, name, ARRAY_SIZEOF((stru)))

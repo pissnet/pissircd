@@ -104,7 +104,7 @@ struct Configuration {
 	char *channel_command_prefix;
 	long handshake_data_flood_amount;
 	long handshake_data_flood_ban_time;
-	int handshake_data_flood_ban_action;
+	BanAction *handshake_data_flood_ban_action;
 	struct ChMode modes_on_join;
 	int modes_on_join_set;
 	char *level_on_join;
@@ -125,6 +125,10 @@ struct Configuration {
 	long spamfilter_detectslow_fatal;
 	int spamfilter_stop_on_first_match;
 	int spamfilter_utf8;
+	char *central_spamfilter_url;
+	long central_spamfilter_refresh_time;
+	int central_spamfilter_verbose;
+	int central_spamfilter_enabled;
 	int maxbans;
 	int watch_away_notification;
 	int uhnames;

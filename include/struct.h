@@ -194,6 +194,7 @@ typedef OperPermission (*OperClassEntryEvalCallback)(OperClassACLEntryVar* varia
 #define UMODETABLESZ (sizeof(long) * 8)
 #define MAXCCUSERS		20 /* Maximum for set::anti-flood::max-concurrent-conversations */
 #define BATCHLEN	22
+#define MAXSPAMFILTERIDLEN	24
 
 /*
  * Watch it - Don't change this unless you also change the ERR_TOOMANYWATCH
@@ -798,6 +799,13 @@ struct NameList {
 extern void unreal_add_names(NameList **n, ConfigEntry *ce);
 
 /** @} */
+typedef struct Tag Tag;
+struct Tag {
+	Tag *prev, *next;
+	int value;
+	char name[1];
+};
+/** @} */
 
 typedef struct MultiLine MultiLine;
 /** Multi-line list.
@@ -855,6 +863,7 @@ struct LoopStruct {
 typedef enum {
 	MATCH_SIMPLE=1, /**< Simple pattern with * and ? */
 	MATCH_PCRE_REGEX=2, /**< PCRE2 Perl-like regex (new) */
+	MATCH_NONE=3, /**< No matching at all (rule-based) */
 } MatchType;
 
 /** Match struct, which allows various matching styles, see MATCH_* */
@@ -1063,6 +1072,37 @@ struct Secret {
 	SecretCache *cache;
 };
 
+/* CRULE stuff */
+
+#define CRULE_ALL		0
+#define CRULE_AUTO		1
+
+/* some constants and shared data types */
+#define CR_MAXARGLEN 80         /**< Maximum arg length (must be > HOSTLEN) */
+#define CR_MAXARGS 3            /**< Maximum number of args for a rule */
+
+/* context when running a crule */
+typedef struct crule_context crule_context;
+struct crule_context
+{
+  Client *client;
+};
+
+/** Evaluation function for a connection rule. */
+typedef int (*crule_funcptr) (crule_context *context, int, void **);
+
+/** CRULE - Node in a connection rule tree. */
+struct CRuleNode {
+  crule_funcptr funcptr; /**< Evaluation function for this node. */
+  int numargs;           /**< Number of arguments. */
+  void *arg[CR_MAXARGS]; /**< Array of arguments.  For operators, each arg
+                            is a tree element; for functions, each arg is
+                            a string. */
+  int func_test_type;    /* for >, < and == */
+  int func_test_value;   /* integer value to compare against */
+};
+typedef struct CRuleNode CRuleNode;
+typedef struct CRuleNode* CRuleNodePtr;
 
 /* tkl:
  *   TKL_KILL|TKL_GLOBAL 	= Global K-Line (GLINE)
@@ -1111,7 +1151,7 @@ struct Secret {
 #define SPAMFLAG_NOWARN		0x0001
 
 /* Ban actions. These must be ordered by severity (!) */
-typedef enum BanAction {
+typedef enum BanActionValue {
 	BAN_ACT_GZLINE		=1100,
 	BAN_ACT_GLINE		=1000,
 	BAN_ACT_SOFT_GLINE	= 950,
@@ -1131,8 +1171,26 @@ typedef enum BanAction {
 	BAN_ACT_BLOCK		= 200,
 	BAN_ACT_SOFT_BLOCK	= 150,
 	BAN_ACT_WARN		= 100,
+	// do not use 99, it is special in tkl take_action
 	BAN_ACT_SOFT_WARN	=  50,
-} BanAction;
+	BAN_ACT_REPORT		=  40,
+	BAN_ACT_SET		=  30,
+} BanActionValue;
+
+typedef enum VarActionValue {
+	VAR_ACT_SET		= 1,
+	VAR_ACT_INCREASE	= 2,
+	VAR_ACT_DECREASE	= 3,
+} VarActionValue;
+
+typedef struct BanAction BanAction;
+struct BanAction {
+	BanAction *prev, *next;
+	BanActionValue action;
+	char *var;
+	int value;
+	VarActionValue var_action;
+};
 
 #define IsSoftBanAction(x)   ((x == BAN_ACT_SOFT_GLINE) || (x == BAN_ACT_SOFT_KLINE) || \
                               (x == BAN_ACT_SOFT_SHUN) || (x == BAN_ACT_SOFT_KILL) || \
@@ -1159,10 +1217,13 @@ struct NameBan {
 /** Spamfilter sub-struct of TKL entry (Spamfilter) */
 struct Spamfilter {
 	unsigned short target;
-	BanAction action; /**< Ban action, see BAN_ACT* */
+	BanAction *action; /**< Ban action */
 	Match *match; /**< Spamfilter matcher */
+	CRuleNode *rule; /**< parsed crule */
+	char *prettyrule; /**< human printable version */
 	char *tkl_reason; /**< Reason to use for bans placed by this spamfilter, escaped by unreal_encodespace(). */
 	time_t tkl_duration; /**< Duration of bans placed by this spamfilter */
+	char *id; /**< ID */
 };
 
 /** Ban exception sub-struct of TKL entry (ELINE) */
@@ -1179,7 +1240,8 @@ struct BanException {
 #define TKL_SUBTYPE_NONE	0x0000
 #define TKL_SUBTYPE_SOFT	0x0001 /* (require SASL) */
 
-#define TKL_FLAG_CONFIG		0x0001 /* Entry from configuration file. Cannot be removed by using commands. */
+#define TKL_FLAG_CONFIG			0x0001 /* Entry from configuration file. Cannot be removed by using commands. */
+#define TKL_FLAG_CENTRAL_SPAMFILTER	0x0002 /* Entry from central spamfilter. */
 
 /** A TKL entry, such as a KLINE, GLINE, Spamfilter, QLINE, Exception, .. */
 struct TKL {
@@ -1416,6 +1478,8 @@ struct LocalClient {
 	u_short port;			/**< Remote TCP port of client */
 	FloodCounter flood[MAXFLOODOPTIONS];
 	RPCClient *rpc;			/**< RPC Client, or NULL */
+	Tag *tags;			/**< Tags from spamfilter */
+	int tags_serial;		/**< To keep track of 'tags' changes */
 };
 
 /** User information (persons, not servers), you use client->user to access these (see also @link Client @endlink).
@@ -1513,30 +1577,6 @@ struct AuthConfig {
 #ifndef HAVE_CRYPT
 #define crypt DES_crypt
 #endif
-
-/* CRULE stuff */
-
-#define CRULE_ALL		0
-#define CRULE_AUTO		1
-
-/* some constants and shared data types */
-#define CR_MAXARGLEN 80         /**< Maximum arg length (must be > HOSTLEN) */
-#define CR_MAXARGS 3            /**< Maximum number of args for a rule */
-
-/** Evaluation function for a connection rule. */
-typedef int (*crule_funcptr) (int, void **);
-
-/** CRULE - Node in a connection rule tree. */
-struct CRuleNode {
-  crule_funcptr funcptr; /**< Evaluation function for this node. */
-  int numargs;           /**< Number of arguments. */
-  void *arg[CR_MAXARGS]; /**< Array of arguments.  For operators, each arg
-                            is a tree element; for functions, each arg is
-                            a string. */
-};
-typedef struct CRuleNode CRuleNode;
-typedef struct CRuleNode* CRuleNodePtr;
-
 
 /*
  * conf2 stuff -stskeeps
@@ -1940,8 +1980,8 @@ struct ConfigItem_link {
 struct ConfigItem_ban {
 	ConfigItem_ban	*prev, *next;
 	ConfigFlag_ban	flag;
-	char			*mask, *reason;
-	unsigned short action;
+	char		*mask, *reason;
+	BanAction	*action;
 };
 
 struct ConfigItem_deny_dcc {
@@ -2016,7 +2056,15 @@ struct ConfigResource {
 	char *file; /**< File to read: can be a conf/something file or a downloaded file */
 	char *url; /**< URL, if it is an URL */
 	char *cache_file; /**< Set to filename of local cached copy, if it is available */
+	NameList *restrict_config; /**< If non-NULL: list of permitted config items */
 };
+
+/* When doing a HTTP request and it is requested to store the
+ * response to memory (rather than file), we enlarge the buffer
+ * in this chunk size.
+ * XXX: 128 bytes for testing chunks, should be 8k or so in production.
+ */
+#define URL_MEMORY_BACKED_CHUNK_SIZE	128
 
 struct ConfigItem_blacklist_module {
 	ConfigItem_blacklist_module *prev, *next;
@@ -2550,6 +2598,13 @@ typedef enum JsonRpcError {
 #define OPTIONAL_PARAM_STRING(name, varname)         varname = json_object_get_string(params, name)
 #define OPTIONAL_PARAM_INTEGER(name, varname, def)   varname = json_object_get_integer(params, name, def)
 #define OPTIONAL_PARAM_BOOLEAN(name, varname, def)   varname = json_object_get_boolean(params, name, def)
+
+/** Valid character for variable names in logging engine buildlogstring and also in buildvarstring* */
+#define validvarcharacter(x)    (isalnum((x)) || ((x) == '_'))
+
+#define BUILDVARSTRING_URLENCODE		0x1
+#define BUILDVARSTRING_XML			0x2
+#define BUILDVARSTRING_UNKNOWN_VAR_IS_EMPTY	0x4
 
 #endif /* __struct_include__ */
 

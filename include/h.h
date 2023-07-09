@@ -534,7 +534,7 @@ extern void init_CommandHash(void);
 /* CRULE */
 extern struct CRuleNode* crule_parse(const char*);
 extern void crule_free(struct CRuleNode**);
-extern int crule_eval(struct CRuleNode* rule);
+extern int crule_eval(crule_context *context, CRuleNode *rule);
 extern int crule_test(const char *rule);
 extern const char *crule_errstring(int errcode);
 
@@ -732,10 +732,22 @@ extern void ExtbanDel(Extban *);
 extern void extban_init(void);
 extern char *trim_str(char *str, int len);
 extern MODVAR char *ban_realhost, *ban_virthost, *ban_ip;
-extern BanAction banact_stringtoval(const char *s);
-extern const char *banact_valtostring(BanAction val);
-extern BanAction banact_chartoval(char c);
-extern char banact_valtochar(BanAction val);
+extern BanAction *parse_ban_action_config(ConfigEntry *ce);
+extern int test_ban_action_config(ConfigEntry *ce);
+extern void free_single_ban_action(BanAction *action);
+extern void free_all_ban_actions(BanAction *actions);
+#define safe_free_all_ban_actions(x) do { free_all_ban_actions(x); x = NULL; } while(0)
+#define safe_free_single_ban_action(x) do { free_single_ban_action(x); x = NULL; } while(0)
+BanAction *duplicate_ban_actions(BanAction *actions);
+extern BanActionValue banact_stringtoval(const char *s);
+extern const char *banact_valtostring(BanActionValue val);
+extern BanActionValue banact_chartoval(char c);
+extern char banact_valtochar(BanActionValue val);
+extern BanAction *banact_value_to_struct(BanActionValue val);
+extern int only_actions_of_type(BanAction *actions, BanActionValue what);
+extern int has_actions_of_type(BanAction *actions, BanActionValue what);
+extern int only_soft_actions(BanAction *actions);
+extern const char *ban_actions_to_string(BanAction *actions);
 extern int spamfilter_gettargets(const char *s, Client *client);
 extern char *spamfilter_target_inttostring(int v);
 extern char *our_strcasestr(const char *haystack, const char *needle);
@@ -806,10 +818,11 @@ extern MODVAR TKL *(*tkl_add_banexception)(int type, const char *usermask, const
                                            time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
 extern MODVAR TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                                           time_t expire_at, time_t set_at, int flags);
-extern MODVAR TKL *(*tkl_add_spamfilter)(int type, unsigned short target, unsigned short action, Match *match, const char *setby,
-                                             time_t expire_at, time_t set_at,
-                                             time_t spamf_tkl_duration, const char *spamf_tkl_reason,
-                                             int flags);
+extern MODVAR TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanAction *action,
+                                         Match *match, const char *rule, const char *setby,
+                                         time_t expire_at, time_t set_at,
+                                         time_t spamf_tkl_duration, const char *spamf_tkl_reason,
+                                         int flags);
 extern MODVAR TKL *(*find_tkl_serverban)(int type, const char *usermask, const char *hostmask, int softban);
 extern MODVAR TKL *(*find_tkl_banexception)(int type, const char *usermask, const char *hostmask, int softban);
 extern MODVAR TKL *(*find_tkl_nameban)(int type, const char *name, int hold);
@@ -827,7 +840,7 @@ extern MODVAR TKL *(*find_tkline_match_zap)(Client *cptr);
 extern MODVAR void (*tkl_stats)(Client *cptr, int type, const char *para, int *cnt);
 extern MODVAR void (*tkl_sync)(Client *client);
 extern MODVAR void (*cmd_tkl)(Client *client, MessageTag *recv_mtags, int parc, const char *parv[]);
-extern MODVAR int (*place_host_ban)(Client *client, BanAction action, const char *reason, long duration);
+extern MODVAR int (*take_action)(Client *client, BanAction *actions, const char *reason, long duration, int skip_set);
 extern MODVAR int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 extern MODVAR int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 extern MODVAR int (*join_viruschan)(Client *client, TKL *tk, int type);
@@ -908,6 +921,7 @@ extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf
 extern MODVAR const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 extern MODVAR void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 extern MODVAR void (*cancel_ident_lookup)(Client *client);
+extern MODVAR int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
 /* /Efuncs */
 
 /* TLS functions */
@@ -960,6 +974,7 @@ extern int websocket_create_packet_ex_default_handler(int opcode, char **buf, in
 extern int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len);
 extern void mtag_add_issued_by_default_handler(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 extern void cancel_ident_lookup_default_handler(Client *client);
+extern int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1053,6 +1068,7 @@ extern Cmode_t get_extmode_bitbychar(char m);
 extern long find_user_mode(char mode);
 extern void start_listeners(void);
 extern void buildvarstring(const char *inbuf, char *outbuf, size_t len, const char *name[], const char *value[]);
+extern void buildvarstring_nvp(const char *inbuf, char *outbuf, size_t len, NameValuePrioList *list, int flags);
 extern int reinit_tls(void);
 extern CMD_FUNC(cmd_error);
 extern CMD_FUNC(cmd_dns);
@@ -1191,7 +1207,7 @@ extern MODVAR RPCHandler *rpchandlers;
 extern long do_nv_find_by_name(NameValue *table, const char *cmd, int numelements);
 #define nv_find_by_value(stru, value)       do_nv_find_by_value(stru, value, ARRAY_SIZEOF((stru)))
 extern const char *do_nv_find_by_value(NameValue *table, long value, int numelements);
-extern void add_nvplist(NameValuePrioList **lst, int priority, const char *name, const char *value);
+extern NameValuePrioList *add_nvplist(NameValuePrioList **lst, int priority, const char *name, const char *value);
 extern void add_fmt_nvplist(NameValuePrioList **lst, int priority, const char *name, FORMAT_STRING(const char *format), ...) __attribute__((format(printf,4,5)));
 /** Combination of add_nvplist() and buildnumeric() for convenience - only used in WHOIS response functions.
  * @param lst		The NameValuePrioList &head
@@ -1207,7 +1223,10 @@ extern void add_nvplist_numeric_fmt(NameValuePrioList **lst, int priority, const
 extern NameValuePrioList *find_nvplist(NameValuePrioList *list, const char *name);
 extern const char *get_nvplist(NameValuePrioList *list, const char *name);
 extern void free_nvplist(NameValuePrioList *lst);
+#define safe_free_nvplist(x)	do { free_nvplist(x); x = NULL; } while(0)
+extern void del_nvplist_entry(NameValuePrioList *nvp, NameValuePrioList **lst);
 extern NameValuePrioList *duplicate_nvplist(NameValuePrioList *e);
+extern NameValuePrioList *duplicate_nvplist_append(NameValuePrioList *e, NameValuePrioList **list);
 extern void unreal_add_name_values(NameValuePrioList **n, const char *name, ConfigEntry *ce);
 extern const char *namevalue(NameValuePrioList *n);
 extern const char *namevalue_nospaces(NameValuePrioList *n);
@@ -1369,9 +1388,11 @@ extern int url_is_valid(const char *);
 extern const char *displayurl(const char *url);
 extern char *url_getfilename(const char *url);
 extern void download_file_async(const char *url, time_t cachetime, vFP callback, void *callback_data, char *original_url, int maxredirects);
+extern void url_start_async(const char *url, HttpMethod http_method, const char *body, NameValuePrioList *request_headers, int store_in_file, time_t cachetime, vFP callback, void *callback_data, char *original_url, int maxredirects);
 extern void url_init(void);
 extern void url_cancel_handle_by_callback_data(void *ptr);
 extern EVENT(url_socket_timeout);
+extern int downloads_in_progress(void);
 /* end of url stuff */
 extern char *collapse(char *pattern);
 extern void clear_scache_hash_table(void);
@@ -1386,6 +1407,7 @@ extern EVENT(try_connections);
 extern const char *my_itoa(int i);
 extern void load_tunefile(void);
 extern EVENT(save_tunefile);
+extern EVENT(central_spamfilter_download_evt);
 extern void read_motd(const char *filename, MOTDFile *motd);
 extern int target_limit_exceeded(Client *client, void *target, const char *name);
 extern void make_umodestr(void);
@@ -1425,3 +1447,11 @@ extern MODVAR DynamicSetBlock dynamic_set;
 extern void start_dns_and_ident_lookup(Client *client);
 extern void free_webserver(WebServer *webserver);
 #define safe_free_webserver(x)	do { if (x) { free_webserver(x); x = NULL; } } while(0)
+extern Tag *find_tag(Client *client, const char *name);
+extern Tag *add_tag(Client *client, const char *name, int value);
+extern void free_all_tags(Client *client);
+extern void del_tag(Client *client, const char *name);
+extern void bump_tag_serial(Client *client);
+extern int valid_spamfilter_id(const char *s);
+extern void download_complete_dontcare(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *ptr);
+extern char *urlencode(const char *s, char *wbuf, int wlen);

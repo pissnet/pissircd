@@ -55,10 +55,12 @@ TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, 
                               time_t expire_at, time_t set_at, int soft, int flags);
 TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                             time_t expire_at, time_t set_at, int flags);
-TKL *(*tkl_add_spamfilter)(int type, unsigned short target, unsigned short action, Match *match, const char *setby,
-                               time_t expire_at, time_t set_at,
-                               time_t spamf_tkl_duration, const char *spamf_tkl_reason,
-                               int flags);
+TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanAction *action,
+                           Match *match, const char *rule,
+                           const char *setby,
+                           time_t expire_at, time_t set_at,
+                           time_t spamf_tkl_duration, const char *spamf_tkl_reason,
+                           int flags);
 TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
                              const char *reason, const char *set_by,
                              time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
@@ -72,7 +74,7 @@ TKL *(*find_tkline_match_zap)(Client *client);
 void (*tkl_stats)(Client *client, int type, const char *para, int *cnt);
 void (*tkl_sync)(Client *client);
 void (*cmd_tkl)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
-int (*place_host_ban)(Client *client, BanAction action, const char *reason, long duration);
+int (*take_action)(Client *client, BanAction *action, const char *reason, long duration, int skip_set);
 int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 int (*join_viruschan)(Client *client, TKL *tk, int type);
@@ -159,6 +161,7 @@ int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 void (*cancel_ident_lookup)(Client *client);
+int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -359,7 +362,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_TKL_STATS, tkl_stats, NULL);
 	efunc_init_function(EFUNC_TKL_SYNCH, tkl_sync, NULL);
 	efunc_init_function(EFUNC_CMD_TKL, cmd_tkl, NULL);
-	efunc_init_function(EFUNC_PLACE_HOST_BAN, place_host_ban, NULL);
+	efunc_init_function(EFUNC_TAKE_ACTION, take_action, NULL);
 	efunc_init_function(EFUNC_MATCH_SPAMFILTER, match_spamfilter, NULL);
 	efunc_init_function(EFUNC_MATCH_SPAMFILTER_MTAGS, match_spamfilter_mtags, NULL);
 	efunc_init_function(EFUNC_JOIN_VIRUSCHAN, join_viruschan, NULL);
@@ -453,4 +456,5 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_CHECK_DENY_LINK, check_deny_link, NULL);
 	efunc_init_function(EFUNC_MTAG_GENERATE_ISSUED_BY_IRC, mtag_add_issued_by, mtag_add_issued_by_default_handler);
 	efunc_init_function(EFUNC_CANCEL_IDENT_LOOKUP, cancel_ident_lookup, cancel_ident_lookup_default_handler);
+	efunc_init_function(EFUNC_SPAMREPORT, spamreport, spamreport_default_handler);
 }
