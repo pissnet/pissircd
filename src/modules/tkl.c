@@ -69,7 +69,7 @@ TKL *_tkl_add_banexception(int type, char *usermask, char *hostmask, SecurityGro
 TKL *_tkl_add_nameban(int type, char *name, int hold, char *reason, char *set_by,
                           time_t expire_at, time_t set_at, int flags);
 TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAction *action,
-                         Match *match, const char *rule,
+                         Match *match, const char *rule, SecurityGroup *except,
                          const char *set_by,
                          time_t expire_at, time_t set_at,
                          time_t spamf_tkl_duration, const char *spamf_tkl_reason,
@@ -90,7 +90,7 @@ TKL *_find_tkline_match_zap(Client *client);
 void _tkl_stats(Client *client, int type, const char *para, int *cnt);
 void _tkl_sync(Client *client);
 CMD_FUNC(_cmd_tkl);
-int _take_action(Client *client, BanAction *action, char *reason, long duration, int skip_set);
+int _take_action(Client *client, BanAction *action, char *reason, long duration, int take_action_flags);
 int _match_spamfilter(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 int _match_spamfilter_mtags(Client *client, MessageTag *mtags, char *cmd);
 int check_mtag_spamfilters_present(void);
@@ -435,6 +435,10 @@ int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *e
 			}
 			has_match_type = 1;
 		}
+		else if (!strcmp(cep->name, "except"))
+		{
+			test_match_block(cf, cep, &errors);
+		}
 		else
 		{
 			config_error_unknown(cep->file->filename, cep->line_number,
@@ -528,6 +532,7 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	int match_type = 0;
 	Match *m = NULL;
 	int flag = TKL_FLAG_CONFIG;
+	SecurityGroup *except;
 
 	/* We are only interested in spamfilter { } blocks */
 	if ((type != CONFIG_MAIN) || strcmp(ce->name, "spamfilter"))
@@ -577,6 +582,10 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 		{
 			match_type = unreal_match_method_strtoval(cep->value);
 		}
+		else if (!strcmp(cep->name, "except"))
+		{
+			conf_match_block(cf, cep, &except);
+		}
 	}
 
 	if (!match && rule)
@@ -590,6 +599,7 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	                   action,
 	                   m,
 	                   rule,
+	                   except,
 	                   "-config-",
 	                   0,
 	                   TStime(),
@@ -2642,6 +2652,8 @@ TKL *tkl_find_head(char type, char *hostmask, TKL *def)
  * @param target              The spamfilter target (SPAMF_*)
  * @param action              The spamfilter action (BAN_ACT_*)
  * @param match               The match (this struct may contain a regex for example)
+ * @param rule                Rule, if present, then only run spamfilter if true
+ * @param except              When not to run the spamfilter
  * @param set_by              Who (or what) set the ban
  * @param expire_at           When will the ban expire (0 for permanent)
  * @param set_at              When was the ban set
@@ -2652,7 +2664,7 @@ TKL *tkl_find_head(char type, char *hostmask, TKL *def)
  *                            such as a regex failing to compile, memory problem, ..
  */
 TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAction *action,
-                         Match *match, const char *rule,
+                         Match *match, const char *rule, SecurityGroup *except,
                          const char *set_by,
                          time_t expire_at, time_t set_at,
                          time_t tkl_duration, const char *tkl_reason,
@@ -2689,6 +2701,7 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
 	tkl->ptr.spamfilter->action = action;
 	tkl->ptr.spamfilter->match = match;
 	safe_strdup(tkl->ptr.spamfilter->tkl_reason, tkl_reason);
+	tkl->ptr.spamfilter->except = except;
 	tkl->ptr.spamfilter->tkl_duration = tkl_duration;
 
 	if (tkl->ptr.spamfilter->target & SPAMF_USER)
@@ -3756,12 +3769,14 @@ int tkl_stats_matcher(Client *client, int type, const char *para, TKLFlag *tklfl
 			(tkl->type & TKL_GLOBAL) ? 'F' : 'f',
 			unreal_match_method_valtostr(tkl->ptr.spamfilter->match->type),
 			spamfilter_target_inttostring(tkl->ptr.spamfilter->target),
-			banact_valtostring(tkl->ptr.spamfilter->action->action),
+			ban_actions_to_string(tkl->ptr.spamfilter->action),
 			(tkl->expire_at != 0) ? (long long)(tkl->expire_at - TStime()) : 0,
 			(long long)(TStime() - tkl->set_at),
 			(long long)tkl->ptr.spamfilter->tkl_duration,
 			tkl->ptr.spamfilter->tkl_reason,
 			tkl->set_by,
+			tkl->ptr.spamfilter->hits,
+			tkl->ptr.spamfilter->hits_except,
 			tkl->ptr.spamfilter->match->str);
 		if (para && !strcasecmp(para, "del"))
 		{
@@ -4183,8 +4198,12 @@ void _tkl_added(Client *client, TKL *tkl)
 	sendnotice_tkl_add(tkl);
 
 	/* spamfilter 'warn' action is special */
-	if ((tkl->type & TKL_SPAMF) && (tkl->ptr.spamfilter->action->action == BAN_ACT_WARN) && (tkl->ptr.spamfilter->target & SPAMF_USER))
+	if ((tkl->type & TKL_SPAMF) &&
+	    has_actions_of_type(tkl->ptr.spamfilter->action, BAN_ACT_WARN) &&
+	    (tkl->ptr.spamfilter->target & SPAMF_USER))
+	{
 		spamfilter_check_users(tkl);
+	}
 
 	/* Ban checking executes during run loop for efficiency */
 	loop.do_bancheck = 1;
@@ -4429,7 +4448,8 @@ CMD_FUNC(cmd_tkl_add)
 					log_data_string("spamfilter_regex_error", err));
 				return;
 			}
-			tkl = tkl_add_spamfilter(type, NULL, target, banact_value_to_struct(action), m, NULL, set_by, expire_at, set_at,
+			tkl = tkl_add_spamfilter(type, NULL, target, banact_value_to_struct(action), m, NULL, NULL,
+			                         set_by, expire_at, set_at,
 			                         tkl_duration, tkl_reason, 0);
 		}
 	} else
@@ -4761,19 +4781,17 @@ void ban_act_set(Client *client, BanAction *action)
 void ban_action_run_all_sets(Client *client, BanAction *action)
 {
 	for (; action; action = action->next)
-	{
 		if (action->action == BAN_ACT_SET)
 			ban_act_set(client, action);
-	}
 }
 
 /** Take an action on the user, such as banning or killing.
  * @author Bram Matthys (Syzop), 2003-present
- * @param client     The client which is affected.
- * @param action     The type of ban (one of BAN_ACT_*).
- * @param reason     The ban reason.
- * @param duration   The ban duration in seconds.
- * @param skip_set   Skip BAN_ACT_SET (eg because you already processed them earlier, like in match_spamfilter)
+ * @param client             The client which is affected.
+ * @param action             The type of ban (one of BAN_ACT_*).
+ * @param reason             The ban reason.
+ * @param duration           The ban duration in seconds.
+ * @param take_action_flags  One of TAKE_ACTION_*
  * @note This function assumes that client is a locally connected user.
  * @retval 0	user is exempt or no action needs to be taken for other reasons (eg only var setting)
  * @retval BAN_ACT_*	the highest BAN_ACT_xxx value, eg BAN_ACT_BLOCK or BAN_ACT_GLINE, etc...
@@ -4781,7 +4799,7 @@ void ban_action_run_all_sets(Client *client, BanAction *action)
  * @note Be sure to check IsDead(client) if return value is 1 and you are
  *       considering to continue processing.
  */
-int _take_action(Client *client, BanAction *actions, char *reason, long duration, int skip_set)
+int _take_action(Client *client, BanAction *actions, char *reason, long duration, int take_action_flags)
 {
 	BanAction *action;
 	int previous_highest = 0;
@@ -4821,6 +4839,8 @@ int _take_action(Client *client, BanAction *actions, char *reason, long duration
 					NULL		/*8  reason */
 				};
 
+				if (take_action_flags & TAKE_ACTION_SIMULATE_USER_ACTION)
+					break;
 				ban_target_to_tkl_layer(iConf.automatic_ban_target, action->action, client, &tkllayer[3], &tkllayer[4]);
 
 				/* For soft bans we need to prefix the % in the username */
@@ -4867,11 +4887,15 @@ int _take_action(Client *client, BanAction *actions, char *reason, long duration
 			}
 			case BAN_ACT_SOFT_KILL:
 			case BAN_ACT_KILL:
+				if (take_action_flags & TAKE_ACTION_SIMULATE_USER_ACTION)
+					break;
 				RunHookReturnInt(HOOKTYPE_TAKE_ACTION, !=99, client, action->action, reason, duration);
 				exit_client(client, NULL, reason);
 				break;
 			case BAN_ACT_SOFT_TEMPSHUN:
 			case BAN_ACT_TEMPSHUN:
+				if (take_action_flags & TAKE_ACTION_SIMULATE_USER_ACTION)
+					break;
 				/* We simply mark this connection as shunned and do not add a ban record */
 				unreal_log(ULOG_INFO, "tkl", "TKL_ADD_TEMPSHUN", &me,
 					   "Temporary shun added on user $target.details [reason: $shun_reason] [by: $client]",
@@ -4880,10 +4904,12 @@ int _take_action(Client *client, BanAction *actions, char *reason, long duration
 				SetShunned(client);
 				break;
 			case BAN_ACT_REPORT:
+				if (take_action_flags & TAKE_ACTION_SIMULATE_USER_ACTION)
+					break;
 				spamreport(client, client->ip, NULL, action->var);
 				break;
 			case BAN_ACT_SET:
-				if (!skip_set)
+				if (!(take_action_flags & TAKE_ACTION_SKIP_SET))
 					ban_act_set(client, action);
 				break;
 			default:
@@ -4895,18 +4921,6 @@ int _take_action(Client *client, BanAction *actions, char *reason, long duration
 		if (IsDead(client))
 			break; /* stop processing actions */
 	}
-
-	return highest;
-}
-
-/* Find the highest value in a BanAction linked list (the strongest action, eg gline>block) */
-int highest_spamfilter_action(BanAction *action)
-{
-	int highest = 0;
-
-	for (; action; action = action->next)
-		if (action->action > highest)
-			highest = action->action;
 
 	return highest;
 }
@@ -5017,6 +5031,15 @@ int _join_viruschan(Client *client, TKL *tkl, int type)
 	return 1;
 }
 
+int match_spamfilter_exempt(TKL *tkl, char user_is_exempt_general, char user_is_exempt_central)
+{
+	if (user_is_exempt_general)
+		return 1;
+	if ((tkl->flags & TKL_FLAG_CENTRAL_SPAMFILTER) && user_is_exempt_central)
+		return 1;
+	return 0;
+}
+
 /** match_spamfilter: executes the spamfilter on the input string.
  * @param str		The text (eg msg text, notice text, part text, quit text, etc
  * @param target	The spamfilter target (SPAMF_*)
@@ -5040,6 +5063,8 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 	long ms_past;
 #endif
 	int tags_serial = client->local ? client->local->tags_serial : 0;
+	char user_is_exempt_general = 0;
+	char user_is_exempt_central = 0;
 
 	if (rettkl)
 		*rettkl = NULL; /* initialize to NULL */
@@ -5062,7 +5087,10 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 	 * Let's check that early: going through elines is likely faster than running the regex(es).
 	 */
 	if (find_tkl_exception(TKL_SPAMF, client))
-		return 0;
+		user_is_exempt_general = 1;
+
+	if (user_allowed_by_security_group(client, iConf.central_spamfilter_except))
+		user_is_exempt_central = 1;
 
 	for (tkl = tklines[tkl_hash('F')]; tkl; tkl = tkl->next)
 	{
@@ -5078,7 +5106,7 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 		if (IsLoggedIn(client) && only_soft_actions(tkl->ptr.spamfilter->action))
 			continue;
 
-		/* Run any pre 'rule' if there is any */
+		/* Run any pre 'rule' if there is any (false means 'no hit') */
 		if (tkl->ptr.spamfilter->rule)
 		{
 			crule_context context;
@@ -5087,6 +5115,10 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			if (!crule_eval(&context, tkl->ptr.spamfilter->rule))
 				continue;
 		}
+
+		/* Check any 'except' rule if there is any (true means 'no hit') */
+		if (tkl->ptr.spamfilter->except && user_allowed_by_security_group(client, tkl->ptr.spamfilter->except))
+			continue;
 
 		if (tkl->ptr.spamfilter->match && (tkl->ptr.spamfilter->match->type != MATCH_NONE))
 		{
@@ -5137,17 +5169,25 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			if (!winner_tkl && destination && target_is_spamexcept(destination))
 				return 0; /* No problem! */
 
-			// TODO: if (only_actions_of_type(tkl->ptr.spamfilter->action, BAN_ACT_SET)) then don't show the warning unless debugging or something :)
-			
-			unreal_log(ULOG_INFO, "tkl", "SPAMFILTER_MATCH", client,
-			           "[Spamfilter] $client.details matches filter '$tkl': [cmd: $command$_space$destination: '$str'] [reason: $tkl.reason] [action: $tkl.ban_action]",
-				   log_data_tkl("tkl", tkl),
-				   log_data_string("command", cmd),
-				   log_data_string("_space", destination ? " " : ""),
-				   log_data_string("destination", destination ? destination : ""),
-				   log_data_string("str", str));
+			if (match_spamfilter_exempt(tkl, user_is_exempt_general, user_is_exempt_central))
+			{
+				tkl->ptr.spamfilter->hits_except++;
+			} else
+			{
+				tkl->ptr.spamfilter->hits++;
+				if (highest_spamfilter_action(tkl->ptr.spamfilter->action) > BAN_ACT_SET)
+				{
+					unreal_log(ULOG_INFO, "tkl", "SPAMFILTER_MATCH", client,
+						   "[Spamfilter] $client.details matches filter '$tkl': [cmd: $command$_space$destination: '$str'] [reason: $tkl.reason] [action: $tkl.ban_action]",
+						   log_data_tkl("tkl", tkl),
+						   log_data_string("command", cmd),
+						   log_data_string("_space", destination ? " " : ""),
+						   log_data_string("destination", destination ? destination : ""),
+						   log_data_string("str", str));
 
-			RunHook(HOOKTYPE_LOCAL_SPAMFILTER, client, str, str_in, target, destination, tkl);
+					RunHook(HOOKTYPE_LOCAL_SPAMFILTER, client, str, str_in, target, destination, tkl);
+				}
+			}
 
 			/* Run any SET actions */
 			ban_action_run_all_sets(client, tkl->ptr.spamfilter->action);
@@ -5205,17 +5245,25 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			if (!winner_tkl && destination && target_is_spamexcept(destination))
 				return 0; /* No problem! */
 
-			// TODO: if (only_actions_of_type(tkl->ptr.spamfilter->action, BAN_ACT_SET)) then don't show the warning unless debugging or something :)
-			
-			unreal_log(ULOG_INFO, "tkl", "SPAMFILTER_MATCH", client,
-			           "[Spamfilter] $client.details matches filter '$tkl': [cmd: $command$_space$destination: '$str'] [reason: $tkl.reason] [action: $tkl.ban_action]",
-				   log_data_tkl("tkl", tkl),
-				   log_data_string("command", cmd),
-				   log_data_string("_space", destination ? " " : ""),
-				   log_data_string("destination", destination ? destination : ""),
-				   log_data_string("str", str));
+			if (match_spamfilter_exempt(tkl, user_is_exempt_general, user_is_exempt_central))
+			{
+				tkl->ptr.spamfilter->hits_except++;
+			} else
+			{
+				tkl->ptr.spamfilter->hits++;
+				if (highest_spamfilter_action(tkl->ptr.spamfilter->action) > BAN_ACT_SET)
+				{
+					unreal_log(ULOG_INFO, "tkl", "SPAMFILTER_MATCH", client,
+						   "[Spamfilter] $client.details matches filter '$tkl': [cmd: $command$_space$destination: '$str'] [reason: $tkl.reason] [action: $tkl.ban_action]",
+						   log_data_tkl("tkl", tkl),
+						   log_data_string("command", cmd),
+						   log_data_string("_space", destination ? " " : ""),
+						   log_data_string("destination", destination ? destination : ""),
+						   log_data_string("str", str));
 
-			RunHook(HOOKTYPE_LOCAL_SPAMFILTER, client, str, str_in, target, destination, tkl);
+					RunHook(HOOKTYPE_LOCAL_SPAMFILTER, client, str, str_in, target, destination, tkl);
+				}
+			}
 
 			/* Run any SET actions */
 			ban_action_run_all_sets(client, tkl->ptr.spamfilter->action);
@@ -5235,10 +5283,12 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 	if (!tkl)
 		return 0; /* NOMATCH, we are done */
 
-	/* Spamfilter matched, take action: */
+	if (match_spamfilter_exempt(tkl, user_is_exempt_general, user_is_exempt_central))
+		return 0;
 
+	/* Spamfilter matched */
 	reason = unreal_decodespace(tkl->ptr.spamfilter->tkl_reason);
-	ret = take_action(client, tkl->ptr.spamfilter->action, reason, tkl->ptr.spamfilter->tkl_duration, 1);
+	ret = take_action(client, tkl->ptr.spamfilter->action, reason, tkl->ptr.spamfilter->tkl_duration, TAKE_ACTION_SKIP_SET);
 	if (!IsDead(client))
 	{
 		if ((ret == BAN_ACT_BLOCK) || (ret == BAN_ACT_SOFT_BLOCK))

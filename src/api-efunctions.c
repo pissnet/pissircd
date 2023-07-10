@@ -56,7 +56,7 @@ TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, 
 TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                             time_t expire_at, time_t set_at, int flags);
 TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanAction *action,
-                           Match *match, const char *rule,
+                           Match *match, const char *rule, SecurityGroup *except,
                            const char *setby,
                            time_t expire_at, time_t set_at,
                            time_t spamf_tkl_duration, const char *spamf_tkl_reason,
@@ -74,7 +74,7 @@ TKL *(*find_tkline_match_zap)(Client *client);
 void (*tkl_stats)(Client *client, int type, const char *para, int *cnt);
 void (*tkl_sync)(Client *client);
 void (*cmd_tkl)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
-int (*take_action)(Client *client, BanAction *action, const char *reason, long duration, int skip_set);
+int (*take_action)(Client *client, BanAction *action, const char *reason, long duration, int take_action_flags);
 int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 int (*join_viruschan)(Client *client, TKL *tk, int type);

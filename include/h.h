@@ -739,6 +739,7 @@ extern void free_all_ban_actions(BanAction *actions);
 #define safe_free_all_ban_actions(x) do { free_all_ban_actions(x); x = NULL; } while(0)
 #define safe_free_single_ban_action(x) do { free_single_ban_action(x); x = NULL; } while(0)
 BanAction *duplicate_ban_actions(BanAction *actions);
+extern int highest_spamfilter_action(BanAction *action);
 extern BanActionValue banact_stringtoval(const char *s);
 extern const char *banact_valtostring(BanActionValue val);
 extern BanActionValue banact_chartoval(char c);
@@ -819,7 +820,8 @@ extern MODVAR TKL *(*tkl_add_banexception)(int type, const char *usermask, const
 extern MODVAR TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                                           time_t expire_at, time_t set_at, int flags);
 extern MODVAR TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanAction *action,
-                                         Match *match, const char *rule, const char *setby,
+                                         Match *match, const char *rule, SecurityGroup *except,
+                                         const char *setby,
                                          time_t expire_at, time_t set_at,
                                          time_t spamf_tkl_duration, const char *spamf_tkl_reason,
                                          int flags);
@@ -840,7 +842,7 @@ extern MODVAR TKL *(*find_tkline_match_zap)(Client *cptr);
 extern MODVAR void (*tkl_stats)(Client *cptr, int type, const char *para, int *cnt);
 extern MODVAR void (*tkl_sync)(Client *client);
 extern MODVAR void (*cmd_tkl)(Client *client, MessageTag *recv_mtags, int parc, const char *parv[]);
-extern MODVAR int (*take_action)(Client *client, BanAction *actions, const char *reason, long duration, int skip_set);
+extern MODVAR int (*take_action)(Client *client, BanAction *actions, const char *reason, long duration, int take_action_flags);
 extern MODVAR int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 extern MODVAR int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 extern MODVAR int (*join_viruschan)(Client *client, TKL *tk, int type);
