@@ -19,16 +19,23 @@ in progress and may not be a stable version.
       works like a regular [except item](https://www.unrealircd.org/docs/Mask_item).
       If this matches, then the spamfilter will not run at all (no hit).
   * The `action` item now supports multiple actions:
+    * A new action `stop` to stop other spamfilters from processing
     * A new action `set` to set a TAG on a user, or increasing the value of one
     * A new action `report` to call a spamreport block, see next.
 * A new [spamreport { } block](https://www.unrealircd.org/docs/Spamreport_block):
   * This can do a HTTP(S) call to services like DroneBL to report spam hits,
     so they can blacklist the IP address and other users on IRC can benefit.
 * Optional [Central Spamfilter](https://www.unrealircd.org/docs/Central_spamfilter):
-  This will fetch and refresh spamfilter rules every 30 minutes from unrealircd.org. 
-  This feature is not enabled default. Use `set { central-spamfilter { enabled yes; } }`
-  to enable. At the moment this does not contain rules yet, but it will be
-  at a later point.
+  This will fetch and refresh spamfilter rules every hour from unrealircd.org.
+  * This feature is not enabled default. Use `set { central-spamfilter { enabled yes; } }`
+    to enable.
+  * set::central-spamfilter::except defines who will never be affected by
+    central spamfilters. By default it is: users with a reputation score of
+    more than 2016 (7 days online unregged, or 3.5 days as identified user)
+    or having a host of *.irccloud.com. Spam matches for users that fall
+    in this ::except group are counted as false positives and no action is
+    taken or logged.
+  * At the moment central spamfilter has no rules yet, but it will be at a later point.
 * [set::spamfilter::utf8](https://www.unrealircd.org/docs/Set_block#set::spamfilter::utf8)
   is now on by default:
   * This means you can safely use UTF8 characters in like `[]` in regex.
@@ -40,6 +47,11 @@ in progress and may not be a stable version.
     Please use this new tool with care. Blocking an entire language or script
     is quite a drastic measure.
   * You can turn it off via: `set { spamfilter { utf8 no; } }`
+* Via [set::spamfilter::show-message-content-on-hit](https://www.unrealircd.org/docs/Set_block#set::spamfilter::show-message-content-on-hit)
+  you can now configure to hide the message content in spamfilter hit
+  messages. Generally it is very useful to see if a spamfilter hit is
+  correct or not, so the default is 'always', but it also has privacy
+  implications so there is now this option to disable it.
 * The module [antimixedutf8](https://www.unrealircd.org/docs/Set_block#set::antimixedutf8)
   now recognizes more code block transitions and should do a better job at
   catching mixed UTF8 spam. It may also have more false positives.

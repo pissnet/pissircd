@@ -1135,6 +1135,9 @@ typedef struct CRuleNode* CRuleNodePtr;
 #define TKLIsBanException(tkl)		((tkl)->type & TKL_EXCEPTION)
 #define TKLIsBanExceptionType(tpe)	((tpe) & TKL_EXCEPTION)
 
+#define IsCentralSpamfilter(tkl)	((tkl)->flags & TKL_FLAG_CENTRAL_SPAMFILTER)
+#define IsCentralSpamfilterType(tpe)	((tpe) & TKL_FLAG_CENTRAL_SPAMFILTER)
+
 #define SPAMF_CHANMSG		0x0001 /* c */
 #define SPAMF_USERMSG		0x0002 /* p */
 #define SPAMF_USERNOTICE	0x0004 /* n */
@@ -1176,6 +1179,7 @@ typedef enum BanActionValue {
 	BAN_ACT_REPORT		=  40,
 	// anything above BAN_ACT_SET will will cause a log message to be emitted
 	BAN_ACT_SET		=  30,
+	BAN_ACT_STOP		=   5,
 } BanActionValue;
 
 typedef enum VarActionValue {
@@ -1272,6 +1276,12 @@ struct SpamExcept {
 	SpamExcept *prev, *next;
 	char name[1];
 };
+
+typedef enum SpamfilterShowMessageContentOnHit {
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS = 1,
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY = 2,
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_NEVER = 3,
+} SpamfilterShowMessageContentOnHit;
 
 /** IRC Counts, used for /LUSERS */
 typedef struct IRCCounts IRCCounts;
@@ -1625,6 +1635,7 @@ struct ConfigEntry
 	ConfigEntry *parent;		/**< Parent item, can be NULL */
 	ConditionalConfig *conditional_config;	/**< Used for conditional config by the main parser */
 	unsigned escaped:1;
+	unsigned bad:1;
 };
 
 struct ConfigFlag 

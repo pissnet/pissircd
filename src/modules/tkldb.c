@@ -340,6 +340,8 @@ int write_tkldb(void)
 			{
 				if (tkl->flags & TKL_FLAG_CONFIG)
 					continue; /* config entry */
+				if (IsCentralSpamfilter(tkl))
+					continue;
 				if (!write_tkline(db, tmpfname, tkl)) // write_tkline() closes the db on errors itself
 					return 0;
 			}
@@ -729,10 +731,16 @@ int read_tkldb(void)
 				                   tkl->ptr.spamfilter->tkl_duration,
 				                   tkl->ptr.spamfilter->tkl_reason,
 				                   0);
-				/* tkl_add_spamfilter() does not copy the match but assign it.
-				 * so set to NULL here to avoid a read-after-free later on.
+				/* Further down in the code we free fields of the TKL entry,
+				 * this is generally fine since almost all fields are copied
+				 * by tkl_add_spamfilter(), however some are not.
+				 * For the following types tkl_add_spamfilter() actually
+				 * steals the reference, instead of duplicating,
+				 * so we have to set them to NULL here:
 				 */
 				tkl->ptr.spamfilter->match = NULL;
+				tkl->ptr.spamfilter->except = NULL;
+				tkl->ptr.spamfilter->action = NULL;
 			}
 		} else
 		{

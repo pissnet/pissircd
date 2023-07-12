@@ -811,6 +811,18 @@ BanTarget ban_target_strtoval(const char *str)
 	return 0; /* invalid */
 }
 
+/** Convert a set::spamfilter::show-message-content-on-hit value */
+SpamfilterShowMessageContentOnHit spamfilter_show_message_content_on_hit_strtoval(const char *s)
+{
+	if (!strcmp(s, "always"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS;
+	if (!strcmp(s, "channel-only"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY;
+	if (!strcmp(s, "never"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_NEVER;
+	return 0;
+}
+
 /* Used for set::automatic-ban-target and set::manual-ban-target */
 const char *ban_target_valtostr(BanTarget v)
 {
@@ -1683,6 +1695,7 @@ void config_setdefaultsettings(Configuration *i)
 	i->spamfilter_detectslow_warn = 250;
 	i->spamfilter_detectslow_fatal = 500;
 	i->spamfilter_stop_on_first_match = 0;
+	i->spamfilter_show_message_content_on_hit = SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS;
 	i->maxdccallow = 10;
 	safe_strdup(i->channel_command_prefix, "`!.");
 	i->check_target_nick_bans = 1;
@@ -1783,8 +1796,11 @@ void config_setdefaultsettings(Configuration *i)
 	i->named_extended_bans = 1;
 	i->high_connection_rate = 1000;
 	safe_strdup(i->central_spamfilter_url, "https://spamfilter.unrealircd.org/spamfilter/central_spamfilter.conf");
-	i->central_spamfilter_refresh_time = 1800;
+	i->central_spamfilter_refresh_time = 3600;
 	i->central_spamfilter_enabled = 0;
+	i->central_spamfilter_except = safe_alloc(sizeof(SecurityGroup));
+	i->central_spamfilter_except->reputation_score = 2016; /* 7 days unregged, or 3.5 days identified */
+	unreal_add_mask_string(&i->central_spamfilter_except->mask, "*.irccloud.com");
 }
 
 /* Some settings have been moved to here - we (re)set some defaults */
@@ -8044,6 +8060,10 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 				{
 					tempiConf.spamfilter_utf8 = config_checkval(cepp->value, CFG_YESNO);
 				}
+				else if (!strcmp(cepp->name, "show-message-content-on-hit"))
+				{
+					tempiConf.spamfilter_show_message_content_on_hit = spamfilter_show_message_content_on_hit_strtoval(cepp->value);
+				}
 			}
 		}
 		else if (!strcmp(cep->name, "central-spamfilter"))
@@ -8060,6 +8080,10 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 					tempiConf.central_spamfilter_enabled = config_checkval(cepp->value, CFG_YESNO);
 				else if (!strcmp(cepp->name, "except"))
 					conf_match_block(conf, cepp, &tempiConf.central_spamfilter_except);
+				else if (!strcmp(cepp->name, "limit-ban-action"))
+					tempiConf.central_spamfilter_limit_ban_action = banact_stringtoval(cepp->value);
+				else if (!strcmp(cepp->name, "limit-ban-time"))
+					tempiConf.central_spamfilter_limit_ban_time = config_checkval(cepp->value, CFG_TIME);
 			}
 		}
 		else if (!strcmp(cep->name, "default-bantime"))
@@ -9169,6 +9193,16 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 				if (!strcmp(cepp->name, "utf8"))
 				{
 				} else
+				if (!strcmp(cepp->name, "show-message-content-on-hit"))
+				{
+					if (!spamfilter_show_message_content_on_hit_strtoval(cepp->value))
+					{
+						config_error("%s:%d: set::spamfilter::show-message-content-on-hit: unknown value '%s', "
+						             "must be one of: always, never, channel-only.",
+						             cepp->file->filename, cepp->line_number, cepp->value);
+						errors++;
+					}
+				} else
 				{
 					config_error_unknown(cepp->file->filename,
 						cepp->line_number, "set::spamfilter",
@@ -9210,6 +9244,31 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 				} else
 				if (!strcmp(cepp->name, "enabled"))
 				{
+				} else
+				if (!strcmp(cepp->name, "limit-ban-action"))
+				{
+					int n = banact_stringtoval(cepp->value);
+					if (n == 0)
+					{
+						config_error("%s:%i: set::central-spamfilter::limit-ban-action: unknown ban action '%s'",
+							cepp->file->filename, cepp->line_number, cepp->value);
+						errors++;
+					} else
+					if ((n == BAN_ACT_SET) || (n == BAN_ACT_REPORT))
+					{
+						config_error("%s:%i: set::central-spamfilter::limit-ban-action: you cannot use 'set' or 'report' here",
+							cepp->file->filename, cepp->line_number);
+						errors++;
+					}
+				} else
+				if (!strcmp(cepp->name, "limit-ban-time"))
+				{
+					if (config_checkval(cepp->value, CFG_TIME) < 1)
+					{
+						config_error("%s:%i: set::central-spamfilter::limit-ban-time is zero or less (invalid)",
+							cepp->file->filename, cepp->line_number);
+						errors++;
+					}
 				} else
 				{
 					config_error_unknown(cepp->file->filename,
@@ -11614,11 +11673,23 @@ int central_spamfilter_downloading = 0;
 
 #define DFILTER_CACHE_TIME 0
 
+int count_central_spamfilter_rules(void)
+{
+	int count = 0;
+	TKL *tkl;
+
+	for (tkl = tklines[tkl_hash('F')]; tkl; tkl = tkl->next)
+		if (IsCentralSpamfilter(tkl))
+			count++;
+
+	return count;
+}
+
 void central_spamfilter_download_complete(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *rs_key)
 {
 	ConfigFile *cfptr;
 	int errors;
-	int numrules;
+	int num_rules, active_rules;
 
 	central_spamfilter_downloading = 0;
 
@@ -11652,6 +11723,7 @@ void central_spamfilter_download_complete(const char *url, const char *file, con
 	{
 		unreal_log(ULOG_ERROR, "central-spamfilter", "CENTRAL_SPAMFILTER_LOAD_FAILED", NULL,
 			"[Central spamfilter] Errors in the central central_spamfilter.conf -- not loaded.");
+		config_free(cfptr);
 		return;
 	}
 
@@ -11659,14 +11731,17 @@ void central_spamfilter_download_complete(const char *url, const char *file, con
 	remove_config_tkls(TKL_FLAG_CENTRAL_SPAMFILTER);
 
 	/* And load the new ones... */
-	numrules = config_run_blocks_generic(cfptr, 0);
+	num_rules = config_run_blocks_generic(cfptr, 0);
+	active_rules = count_central_spamfilter_rules();
 
 	if (iConf.central_spamfilter_verbose > 2)
 	{
 		unreal_log(ULOG_INFO, "central-spamfilter", "CENTRAL_SPAMFILTER_STATUS", NULL,
-		           "Central spamfilter loaded (rules: $num_rules)",
-		           log_data_integer("num_rules", numrules));
+		           "Central spamfilter loaded (active rules: $active_rules, skipped: $skipped_rules)",
+		           log_data_integer("active_rules", active_rules),
+		           log_data_integer("skipped_rules", num_rules - active_rules));
 	}
+	config_free(cfptr);
 }
 
 void central_spamfilter_start_download(void)
@@ -11688,7 +11763,10 @@ EVENT(central_spamfilter_download_evt)
 	if (iConf.central_spamfilter_enabled == 0)
 		return;
 	if ((last_download == 0) || (TStime() - last_download > iConf.central_spamfilter_refresh_time))
+	{
+		last_download = TStime();
 		central_spamfilter_start_download();
+	}
 }
 
 /*** End of central spamfilter ***/
