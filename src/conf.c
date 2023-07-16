@@ -1954,7 +1954,7 @@ void applymeblock(void)
 /** Run config test and all post config tests. */
 int config_test_all(void)
 {
-	if ((config_test_blocks() < 0) || (callbacks_check() < 0) || (efunctions_check() < 0) ||
+	if ((efunctions_check() < 0) || (config_test_blocks() < 0) || (callbacks_check() < 0) || 
 	    reloadable_perm_module_unloaded() || !tls_tests() || !log_tests())
 	{
 		return 0;
@@ -11641,10 +11641,16 @@ int test_set_security_group(ConfigFile *conf, ConfigEntry *ce)
 
 int config_set_security_group(ConfigFile *conf, ConfigEntry *ce)
 {
-	SecurityGroup *s = find_security_group(ce->value);
 	ConfigEntry *cep;
+	DynamicSetBlock *block = NULL;
+	SecurityGroup *s;
 
-	if (!s)
+	if (!strcmp(ce->value, "unknown-users"))
+		block = &unknown_users_set;
+	else if ((s = find_security_group(ce->value)))
+		block = &s->settings;
+
+	if (!block)
 	{
 		config_warn("set %s { } block encountered but security-group %s does not exist. Settings ignored",
 		            ce->value, ce->value);
@@ -11653,7 +11659,7 @@ int config_set_security_group(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		config_set_dynamic_set_block_item(conf, &s->settings, cep);
+		config_set_dynamic_set_block_item(conf, block, cep);
 	}
 	return 0;
 }

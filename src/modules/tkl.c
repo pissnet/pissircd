@@ -2945,8 +2945,7 @@ void _free_tkl(TKL *tkl)
 		safe_free(tkl->ptr.spamfilter->tkl_reason);
 		if (tkl->ptr.spamfilter->match)
 			unreal_delete_match(tkl->ptr.spamfilter->match);
-		if (tkl->ptr.spamfilter->rule)
-			crule_free(&tkl->ptr.spamfilter->rule);
+		safe_crule_free(tkl->ptr.spamfilter->rule);
 		safe_free_all_ban_actions(tkl->ptr.spamfilter->action);
 		safe_free(tkl->ptr.spamfilter->prettyrule);
 		safe_free(tkl->ptr.spamfilter->id);
@@ -5266,6 +5265,8 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			crule_context context;
 			memset(&context, 0, sizeof(context));
 			context.client = client;
+			context.text = str_in;
+			context.destination = destination;
 			if (!crule_eval(&context, tkl->ptr.spamfilter->rule))
 				continue;
 		}
@@ -5372,6 +5373,8 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 
 			memset(&context, 0, sizeof(context));
 			context.client = client;
+			context.text = str_in;
+			context.destination = destination;
 			if (!crule_eval(&context, tkl->ptr.spamfilter->rule))
 				continue;
 

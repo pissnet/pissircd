@@ -1078,14 +1078,16 @@ struct Secret {
 #define CRULE_AUTO		1
 
 /* some constants and shared data types */
-#define CR_MAXARGLEN 80         /**< Maximum arg length (must be > HOSTLEN) */
-#define CR_MAXARGS 3            /**< Maximum number of args for a rule */
+#define CR_MAXARGLEN 160         /**< Maximum arg length (must be > HOSTLEN) */
+#define CR_MAXARGS 5             /**< Maximum number of args for a rule */
 
 /* context when running a crule */
 typedef struct crule_context crule_context;
 struct crule_context
 {
-  Client *client;
+	Client *client;			/**< Client that is being processed (can be NULL) */
+	const char *text;		/**< The input string, if any (can be NULL) */
+	const char *destination;	/**< Destination of the message, like '#xyz' for spamfilter (can be NULL, eg for 'u') */
 };
 
 /** Evaluation function for a connection rule. */
@@ -1102,7 +1104,6 @@ struct CRuleNode {
   int func_test_value;   /* integer value to compare against */
 };
 typedef struct CRuleNode CRuleNode;
-typedef struct CRuleNode* CRuleNodePtr;
 
 /* tkl:
  *   TKL_KILL|TKL_GLOBAL 	= Global K-Line (GLINE)
@@ -2156,6 +2157,8 @@ struct SecurityGroup {
 	NameList *ip;
 	ConfigItem_mask *mask;
 	NameList *security_group;
+	char *prettyrule; /* ::rule as a string */
+	CRuleNode *rule; /**< parsed crule */
 	NameValuePrioList *extended;
 	/* Exclude */
 	int exclude_identified;
@@ -2167,6 +2170,8 @@ struct SecurityGroup {
 	NameList *exclude_ip;
 	ConfigItem_mask *exclude_mask;
 	NameList *exclude_security_group;
+	char *exclude_prettyrule; /* ::exclude-rule as a string */
+	CRuleNode *exclude_rule; /**< parsed crule */
 	NameValuePrioList *exclude_extended;
 	/* Settings */
 	DynamicSetBlock settings;
