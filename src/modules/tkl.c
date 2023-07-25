@@ -93,7 +93,7 @@ CMD_FUNC(_cmd_tkl);
 int _take_action(Client *client, BanAction *action, char *reason, long duration, int take_action_flags, int *stopped);
 int _match_spamfilter(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
 int _match_spamfilter_mtags(Client *client, MessageTag *mtags, char *cmd);
-int check_mtag_spamfilters_present(void);
+int check_special_spamfilters_present(void);
 int _join_viruschan(Client *client, TKL *tk, int type);
 void _spamfilter_build_user_string(char *buf, char *nick, Client *client);
 int _match_user(const char *rmask, Client *client, int options);
@@ -112,6 +112,7 @@ int _server_ban_exception_parse_mask(Client *client, int add, const char *bantyp
 static void add_default_exempts(void);
 int parse_extended_server_ban(const char *mask_in, Client *client, char **error, int skip_checking, char *buf1, size_t buf1len, char *buf2, size_t buf2len);
 void _tkl_added(Client *client, TKL *tkl);
+int spamfilter_pre_command(Client *from, MessageTag *mtags, const char *buf);
 
 /* Externals (only for us :D) */
 extern int MODVAR spamf_ugly_vchanoverride;
@@ -165,6 +166,7 @@ TKLTypeTable tkl_types[] = {
 
 int max_stats_matches = 1000;
 int mtag_spamfilters_present = 0; /**< Are any spamfilters with type SPAMF_MTAG present? */
+int raw_spamfilters_present = 0; /**< Are any spamfilters with type SPAMF_RAW present? */
 long previous_spamfilter_utf8 = 0;
 static int firstboot = 0;
 
@@ -238,6 +240,7 @@ MOD_INIT()
 	HookAdd(modinfo->handle, HOOKTYPE_CONFIGRUN, 0, tkl_config_run_set);
 	HookAdd(modinfo->handle, HOOKTYPE_IP_CHANGE, 2000000000, tkl_ip_change);
 	HookAdd(modinfo->handle, HOOKTYPE_ACCEPT, -1000, tkl_accept);
+	HookAdd(modinfo->handle, HOOKTYPE_PRE_COMMAND, -1000, spamfilter_pre_command);
 	CommandAdd(modinfo->handle, "GLINE", cmd_gline, 3, CMD_OPER);
 	CommandAdd(modinfo->handle, "SHUN", cmd_shun, 3, CMD_OPER);
 	CommandAdd(modinfo->handle, "TEMPSHUN", cmd_tempshun, 2, CMD_OPER);
@@ -253,7 +256,7 @@ MOD_INIT()
 
 MOD_LOAD()
 {
-	check_mtag_spamfilters_present();
+	check_special_spamfilters_present();
 	check_set_spamfilter_utf8_setting_changed();
 	EventAdd(modinfo->handle, "tklexpire", tkl_check_expire, NULL, 5000, 0);
 	return MOD_SUCCESS;
@@ -518,6 +521,13 @@ int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *e
 		config_warn("*****************");
 	}
 
+	if (central_spamfilter && !has_id)
+	{
+		config_error("%s:%i: central spamfilter encountered without 'id', rejected.",
+		             ce->file->filename, ce->line_number);
+		errors++;
+	}
+
 	if (central_spamfilter && errors)
 	{
 		ce->bad = 1;
@@ -614,6 +624,8 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 			lower_ban_action_to_maximum(action, iConf.central_spamfilter_limit_ban_action);
 		if (iConf.central_spamfilter_limit_ban_time && (bantime > iConf.central_spamfilter_limit_ban_time))
 			bantime = iConf.central_spamfilter_limit_ban_time;
+	} else {
+		id = NULL;
 	}
 
 	if (match)
@@ -2729,6 +2741,7 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
 	safe_strdup(tkl->ptr.spamfilter->tkl_reason, tkl_reason);
 	tkl->ptr.spamfilter->except = except;
 	tkl->ptr.spamfilter->tkl_duration = tkl_duration;
+	safe_strdup(tkl->ptr.spamfilter->id, id);
 
 	if (tkl->ptr.spamfilter->target & SPAMF_USER)
 		loop.do_bancheck_spamf_user = 1;
@@ -2741,6 +2754,8 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
 
 	if (target & SPAMF_MTAG)
 		mtag_spamfilters_present = 1;
+	if (target & SPAMF_RAW)
+		raw_spamfilters_present = 1;
 
 	return tkl;
 }
@@ -3014,7 +3029,7 @@ void _tkl_del_line(TKL *tkl)
 
 	/* Finally, free the entry */
 	free_tkl(tkl);
-	check_mtag_spamfilters_present();
+	check_special_spamfilters_present();
 }
 
 /** Add some default ban exceptions - for localhost */
@@ -4444,7 +4459,7 @@ CMD_FUNC(cmd_tkl_add)
 			return;
 		}
 
-		if (!(action = banact_chartoval(*parv[4])))
+		if (!(action = banact_chartoval(*parv[4])) || banact_config_only(action))
 		{
 			unreal_log(ULOG_WARNING, "tkl", "TKL_ADD_INVALID", client,
 				"Invalid TKL entry from $client: "
@@ -5128,7 +5143,7 @@ static void match_spamfilter_hit(Client *client, const char *str_in, const char 
 		highest_action = highest_ban_action(tkl->ptr.spamfilter->action);
 		if (highest_action > BAN_ACT_SET)
 		{
-			if (hide_content)
+			if (hide_content || (target == SPAMF_RAW))
 			{
 				unreal_log(ULOG_INFO, "tkl", "SPAMFILTER_MATCH", client,
 					   "[Spamfilter] $client.details matches filter '$tkl': [cmd: $command$_space$destination] [reason: $tkl.reason] [action: $tkl.ban_action]",
@@ -5530,23 +5545,24 @@ int _match_spamfilter_mtags(Client *client, MessageTag *mtags, char *cmd)
 	return 0;
 }
 
-/** Updates 'mtag_spamfilters_present' based on if any spamfilters
- * are present with the SPAMF_MTAG target.
+/** Updates 'mtag_spamfilters_present' and 'raw_spamfilters_present'
+ * based on if any spamfilters are present with the SPAMF_MTAG / SPAMF_RAW.
  */
-int check_mtag_spamfilters_present(void)
+int check_special_spamfilters_present(void)
 {
 	TKL *tkl;
+
+	mtag_spamfilters_present = 0;
+	raw_spamfilters_present = 0;
 
 	for (tkl = tklines[tkl_hash('F')]; tkl; tkl = tkl->next)
 	{
 		if (tkl->ptr.spamfilter->target & SPAMF_MTAG)
-		{
 			mtag_spamfilters_present = 1;
-			return 1;
-		}
+		if (tkl->ptr.spamfilter->target & SPAMF_RAW)
+			raw_spamfilters_present = 1;
 	}
 
-	mtag_spamfilters_present = 0;
 	return 0;
 }
 
@@ -5851,4 +5867,41 @@ int _match_user_extended_server_ban(const char *banstr, Client *client)
 	ret = extban->is_banned(b);
 	safe_free(b);
 	return ret;
+}
+
+const char *getcmd(const char *i, char *obuf, int obuflen)
+{
+	char *o = obuf;
+
+	for (; *i; i++)
+	{
+		if ((*i == ' ') || (*i == '\t'))
+			break;
+		obuflen--;
+		if (obuflen == 0)
+			break;
+		*o++ = *i;
+	}
+	*o = '\0';
+	return obuf;
+}
+
+int spamfilter_pre_command(Client *from, MessageTag *mtags, const char *buf)
+{
+	int ret;
+	const char *cmd;
+	char cmdbuf[32];
+
+	/* This is a shortcut: if there are no spamfilters present
+	 * on raw commands then we can return immediately.
+	 */
+	if ((raw_spamfilters_present == 0) || IsServer(from) || IsRPC(from) || !MyConnect(from))
+		return 0;
+
+	cmd = getcmd(buf, cmdbuf, sizeof(cmdbuf));
+	ret = match_spamfilter(from, buf, SPAMF_RAW, cmd, NULL, 0, NULL);
+	if (ret > 0)
+		return HOOK_DENY;
+
+	return 0;
 }

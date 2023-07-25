@@ -29,6 +29,10 @@ in progress and may not be a stable version.
     * spamfilter::except: this is meant as an alternative to 'rule' and
       works like a regular [except item](https://www.unrealircd.org/docs/Mask_item).
       If this matches, then the spamfilter will not run at all (no hit).
+  * New target type `raw` (or `R` on IRC) to match a raw command / IRC
+    protocol line (except message tags), such as `LIST*`. Naturally one
+    needs to be very careful with these since a wrong filter could cause
+    all/essential traffic to be rejected.
   * The `action` item now supports multiple actions:
     * A new action `stop` to stop other spamfilters from processing.
     * A new action `set` to
@@ -42,12 +46,17 @@ in progress and may not be a stable version.
   This will fetch and refresh spamfilter rules every hour from unrealircd.org.
   * This feature is not enabled default. Use `set { central-spamfilter { enabled yes; } }`
     to enable.
+  * set::central-spamfilter::feed decides which feed to use: `fast` for
+    early access to spamfilter rules that are new, and `standard` (the
+    default) for rules that have been in fast for a while.
   * set::central-spamfilter::except defines who will never be affected by
     central spamfilters. By default it is: users with a reputation score of
     more than 2016 (7 days online unregged, or 3.5 days as identified user)
     or having a host of *.irccloud.com. Spam matches for users that fall
     in this ::except group are counted as false positives and no action is
     taken or logged.
+  * See the [Central Spamfilter](https://www.unrealircd.org/docs/Central_spamfilter)
+    article for the disclaimer and all other options you can set.
 * [set::spamfilter::utf8](https://www.unrealircd.org/docs/Set_block#set::spamfilter::utf8)
   is now on by default:
   * This means you can safely use UTF8 characters in like `[]` in regex.
@@ -64,10 +73,6 @@ in progress and may not be a stable version.
   messages. Generally it is very useful to see if a spamfilter hit is
   correct or not, so the default is 'always', but it also has privacy
   implications so there is now this option to disable it.
-* The module [antimixedutf8](https://www.unrealircd.org/docs/Set_block#set::antimixedutf8)
-  now recognizes more code block transitions and should do a better job at
-  catching mixed UTF8 spam. It may also have more false positives.
-  This module is (still) not loaded by default.
 * You can restrict includes to only contain certain blocks, the style is:
   ```
   include "some-file-or-url" { restrict-config { name-of-block; name-of-block2; } }
@@ -94,7 +99,8 @@ in progress and may not be a stable version.
 
 ### Developers and protocol:
 * Changes in numeric 229 (RPL_STATSSPAMF): Now includes hits and hits for
-  users that are exempt, two counters right inserted right before the last one.
+  users that are exempt, two counters inserted right before the last
+  argument (the regex).
 * Several API changes, like `place_host_ban` to `take_action`
 
 UnrealIRCd 6.1.1.1
