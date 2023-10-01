@@ -1,7 +1,8 @@
-UnrealIRCd 6.1.2-git
-=================
-This is the git version (development version) for future 6.1.2. This is work
-in progress and may not be a stable version.
+UnrealIRCd 6.1.2-rc2
+=====================
+This is the second release candidate for future version 6.1.2.
+
+You can help us by testing this release and reporting any issues at https://bugs.unrealircd.org/.
 
 ### Enhancements:
 * We now give tips on (security) best practices depending on settings in your
@@ -14,13 +15,33 @@ in progress and may not be a stable version.
   * Add support for `channel "#xyz";` and `channel "@#need_ops_here";`
   * Add support for [Crule](https://www.unrealircd.org/docs/Crule) to allow
     things like `rule "inchannel('@#main')||reputation()>1000";`
+* DNS Blacklists are now checked again some time after the user is connected.
+  This will kill/ban users who are already online and got blacklisted later
+  by for example DroneBL.
+  * This is controlled via
+    [set::blacklist::recheck-time](https://www.unrealircd.org/docs/Set_block#set::blacklist::recheck-time)
+    and can also be set to `never` if you don't want rechecking.
+  * To skip checking for specific blacklists, you can set
+    [blacklist::recheck](https://www.unrealircd.org/docs/Blacklist_block)
+    to `no`.
+* The [reputation score](https://www.unrealircd.org/docs/Reputation_score)
+  of connected users (actually IP's) is increased every 5 minutes. We still
+  do this, but only for users who are at least in one channel that has 3
+  or more members. This setting is tweakable via
+  [set::reputation::score-bump-timer-minimum-channel-members](https://www.unrealircd.org/docs/Set_block#set::reputation).
+  Setting this to 0 means to bump scores also for people who are in no
+  channels at all, which was the behavior in previous UnrealIRCd versions.  
+  Note: this new feature won't work properly when you have any older UnrealIRCd
+  servers on the network (older than 6.1.2), as the older servers will still
+  bump scores for everyone, including users in no channels, and this higher
+  score will get synced back eventually to all other servers.
 * [spamfilter { } block](https://www.unrealircd.org/docs/Spamfilter_block) improvements:
   * Spamfilters now always run, even for users that are exempt via a
     [except ban block](https://www.unrealircd.org/docs/Except_ban_block)
     with `type spamfilter`. However, for exempt users no action is taken
-    or logged. This allows us to count hits and hits for except users.
+    or logged. This allows us to count normal hits and count hits for except users.
     The idea is that the hits for except users can be a useful measurement
-    to detect false positives. These hitcounts are exposed in `SPAMFILTER`
+    to detect false positives. These hit counts are exposed in `SPAMFILTER`
     and `STATS spamfilter`.
   * Optional items allowing more complex rules:
     * [spamfilter::rule](https://www.unrealircd.org/docs/Spamfilter_block#Spamfilter_rule):
@@ -37,15 +58,16 @@ in progress and may not be a stable version.
     * A new action `stop` to stop other spamfilters from processing.
     * A new action `set` to
       [set a TAG](https://www.unrealircd.org/docs/Spamfilter_block#Setting_tags)
-      on a user, or increasing the value of one.
+      on a user, or change the value of one. It also supports changing
+      the [reputation score](https://www.unrealircd.org/docs/Reputation_score).
     * A new action `report` to call a spamreport block, see next.
 * A new [spamreport { } block](https://www.unrealircd.org/docs/Spamreport_block):
   * This can do a HTTP(S) call to services like DroneBL to report spam hits,
     so they can blacklist the IP address and other users on IRC can benefit.
 * Optional [Central Spamfilter](https://www.unrealircd.org/docs/Central_spamfilter):
   This will fetch and refresh spamfilter rules every hour from unrealircd.org.
-  * This feature is not enabled default. Use `set { central-spamfilter { enabled yes; } }`
-    to enable.
+  * This feature is not enabled by default.
+    Use `set { central-spamfilter { enabled yes; } }` to enable.
   * set::central-spamfilter::feed decides which feed to use: `fast` for
     early access to spamfilter rules that are new, and `standard` (the
     default) for rules that have been in fast for a while.
@@ -77,6 +99,13 @@ in progress and may not be a stable version.
   ```
   include "some-file-or-url" { restrict-config { name-of-block; name-of-block2; } }
   ```
+* A new `~flood` [extended ban](https://www.unrealircd.org/docs/Extended_bans).
+  This mode allows you to exempt users from channel mode `+f` and `+F`.
+  It was actually added in a previous version (6.1.0) but never made
+  it to the release notes. The syntax is: ~flood:types:mask, where
+  *types* are the same letters as used in
+  [channel mode +f](https://www.unrealircd.org/docs/Channel_anti-flood_settings#Channel_mode_f).
+  Example: `+e ~flood:t:*!*@*.textflood.example.org`
 
 ### Changes:
 * We now compile the argon2 library shipped with UnrealIRCd by default,
@@ -96,6 +125,9 @@ in progress and may not be a stable version.
 * On 32 bit architectures you can now use more than 32 channel modes.
 * [Set block for a security group](https://www.unrealircd.org/docs/Set_block#Set_block_for_a_security_group):
   was not working for the `unknown-users` group.
+* A leading slash was silently stripped in config file items, when not in quotes.
+* `./unrealircd module upgrade` only showed output for one module upgrade,
+  even when multiple modules were upgraded.
 
 ### Developers and protocol:
 * Changes in numeric 229 (RPL_STATSSPAMF): Now includes hits and hits for
@@ -842,6 +874,9 @@ about UnrealIRCd 6.
 * Several log messages were missing some information.
 * Reputation syncing across servers had a small glitch. Fix is mostly
   useful for servers that were not linked to the network for days or weeks.
+* In the config file, when not using quotes, a slash at the beginning of a
+  variable name or value was silently discarded (eg `file /tmp/xyz;` resulted
+  in a file `tmp/xyz`).
 
 ### Changes:
 * Clarified that UnrealIRCd is licensed as "GPLv2 or later"
