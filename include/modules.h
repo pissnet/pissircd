@@ -1261,7 +1261,7 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 #define HOOKTYPE_CONFIG_LISTENER	120
 
 /** See hooktype_pre_remote_to_local_kill() */
-#define HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL 254
+#define HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL 199
 
 /* Adding a new hook here?
  * 1) Add the #define HOOKTYPE_.... with a new number
