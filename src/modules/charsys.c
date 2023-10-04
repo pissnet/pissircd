@@ -21,6 +21,7 @@
  */
 
 #include "unrealircd.h"
+#include <uchar.h>
 
 #ifndef ARRAY_SIZEOF
  #define ARRAY_SIZEOF(x) (sizeof((x))/sizeof((x)[0]))
@@ -55,7 +56,7 @@ typedef struct UList UList;
 struct UList
 {
 	UList *next;
-	wchar_t start, end;
+	char32_t start, end;
 };
 UList *ulist = NULL, *ulist_tail = NULL;
 
@@ -478,7 +479,7 @@ MBList *m = safe_alloc(sizeof(MBList));
 	mblist_tail = m;
 }
 
-void charsys_addunicoderange(wchar_t start, wchar_t end)
+void charsys_addunicoderange(char32_t start, char32_t end)
 {
 	UList *u = safe_alloc(sizeof(UList));
 
@@ -553,7 +554,7 @@ static int isvalidmbyte(unsigned char c1, unsigned char c2)
 	return 0;
 }
 
-static int isvalidunicodechar(wchar_t uch)
+static int isvalidunicodechar(char32_t uch)
 {
 	UList *u;
 
@@ -566,9 +567,9 @@ static int isvalidunicodechar(wchar_t uch)
 	return 0;
 }
 
-static int isvalidunicodenick(wchar_t *unick)
+static int isvalidunicodenick(char32_t *unick)
 {
-	wchar_t *uch, *puch = 0;
+	char32_t *uch, *puch = 0;
 	/* Consecutive number of U+1F3F4 (waving black flag) and U+E0030..U+E0039 (tag digit one..nine)
 	 * plus U+E0061..U+E007A (tag latin small letter a..z) code points */
 	int black_flag_or_tag_count = 0;
@@ -631,7 +632,7 @@ static int do_nick_name_multibyte(char *nick)
 {
 	int len;
 	char *ch;
-	wchar_t uch, unick[NICKLEN+1], *uchp;
+	char32_t uch, unick[NICKLEN+1], *uchp;
 	int firstmbchar = 0, utf8seq = 0, utf8width = 0;
 
 	if ((*nick == '-') || isdigit(*nick))
@@ -658,13 +659,13 @@ static int do_nick_name_multibyte(char *nick)
 			{
 				/* mbtowc is locale dependent so let's YOLO this ourselves */
 				if (utf8width == 4)
-					uch = (wchar_t)(((ch[-3] & 0x7) << 18) + ((ch[-2] & 0x3f) << 12) + ((ch[-1] & 0x3f) << 6) + (*ch & 0x3f));
+					uch = (char32_t)(((ch[-3] & 0x7) << 18) + ((ch[-2] & 0x3f) << 12) + ((ch[-1] & 0x3f) << 6) + (*ch & 0x3f));
 				else if (utf8width == 3)
-					uch = (wchar_t)(((ch[-2] & 0xf) << 12) + ((ch[-1] & 0x3f) << 6) + (*ch & 0x3f));
+					uch = (char32_t)(((ch[-2] & 0xf) << 12) + ((ch[-1] & 0x3f) << 6) + (*ch & 0x3f));
 				/* Disabled to prevent conflicts with existing multi-byte support. */
 				/*
 				else if (utf8width == 2)
-					uch = (wchar_t)(((ch[-1] & 0x1f) << 6) + (*ch & 0x3f));
+					uch = (char32_t)(((ch[-1] & 0x1f) << 6) + (*ch & 0x3f));
 				*/
 				else
 					/* How did we get here? */
