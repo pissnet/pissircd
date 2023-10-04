@@ -1,8 +1,9 @@
-UnrealIRCd 6.1.2-rc2
-=====================
-This is the second release candidate for future version 6.1.2.
+UnrealIRCd 6.1.2.1
+===================
+This release focuses on adding spamfilter features but also contains various
+other new features and some fixes.
 
-You can help us by testing this release and reporting any issues at https://bugs.unrealircd.org/.
+This .1 release (dot release) fixes a spamfilter::rule crash in 6.1.2.
 
 ### Enhancements:
 * We now give tips on (security) best practices depending on settings in your
@@ -117,6 +118,7 @@ You can help us by testing this release and reporting any issues at https://bugs
   speed is acceptable for our purposes.
 
 ### Fixes:
+* Temporary high CPU usage (99%) under some conditions
 * UnrealIRCd has watch away notification since 2008, this is indicated in
   RPL_ISUPPORT via `WATCHOPTS=A` and then the syntax to actually use this
   is `WATCH A +Nick1 +Nick2 etc.`. In UnrealIRCd 6 there was a bug where
