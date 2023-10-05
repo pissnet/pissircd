@@ -5,15 +5,15 @@
 #define USE_CURL
 
 [Setup]
-AppName=UnrealIRCd 6
-AppVerName=UnrealIRCd 6.1.2.1
-AppPublisher=UnrealIRCd Team
-AppPublisherURL=https://www.unrealircd.org
-AppSupportURL=https://www.unrealircd.org
-AppUpdatesURL=https://www.unrealircd.org
+AppName=PissIRCd 6
+AppVerName=PissIRCd 6.1.2.1
+AppPublisher=PissIRCd Team
+AppPublisherURL=https://piss.network
+AppSupportURL=https://wiki.letspiss.net
+AppUpdatesURL=https://wiki.letspiss.net
 AppMutex=UnrealMutex,Global\UnrealMutex
-DefaultDirName={pf}\UnrealIRCd 6
-DefaultGroupName=UnrealIRCd 6
+DefaultDirName={pf}\PissIRCd 6
+DefaultGroupName=PissIRCd 6
 AllowNoIcons=yes
 LicenseFile=src\windows\gplplusssl.rtf
 Compression=lzma
@@ -35,11 +35,11 @@ ArchitecturesAllowed=x64
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"
 Name: "quicklaunchicon"; Description: "Create a &Quick Launch icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 Name: "installservice"; Description: "Install as a &service (not for beginners)"; GroupDescription: "Service support:"; Flags: unchecked; MinVersion: 0,4.0
-Name: "installservice/startboot"; Description: "S&tart UnrealIRCd when Windows starts"; GroupDescription: "Service support:"; MinVersion: 0,4.0; Flags: exclusive unchecked
-Name: "installservice/startdemand"; Description: "Start UnrealIRCd on &request"; GroupDescription: "Service support:"; MinVersion: 0,4.0; Flags: exclusive unchecked
-Name: "installservice/crashrestart"; Description: "Restart UnrealIRCd if it &crashes"; GroupDescription: "Service support:"; Flags: unchecked; MinVersion: 0,5.0;
+Name: "installservice/startboot"; Description: "S&tart PissIRCd when Windows starts"; GroupDescription: "Service support:"; MinVersion: 0,4.0; Flags: exclusive unchecked
+Name: "installservice/startdemand"; Description: "Start PissIRCd on &request"; GroupDescription: "Service support:"; MinVersion: 0,4.0; Flags: exclusive unchecked
+Name: "installservice/crashrestart"; Description: "Restart PissIRCd if it &crashes"; GroupDescription: "Service support:"; Flags: unchecked; MinVersion: 0,5.0;
 Name: "makecert"; Description: "&Create certificate"; GroupDescription: "TLS options:";
-Name: "fixperm"; Description: "Make UnrealIRCd folder writable by current user";
+Name: "fixperm"; Description: "Make PissIRCd folder writable by current user";
 
 [Files]
 ; UnrealIRCd binaries
@@ -78,6 +78,7 @@ Source: "doc\conf\tls\curl-ca-bundle.crt"; DestDir: "{app}\conf\tls"; Flags: ign
 ; Config files
 Source: "doc\conf\*.default.conf"; DestDir: "{app}\conf"; Flags: ignoreversion
 Source: "doc\conf\*.optional.conf"; DestDir: "{app}\conf"; Flags: ignoreversion
+Source: "doc\conf\*.piss.conf"; DestDir: "{app}\conf"; Flags: ignoreversion
 Source: "doc\conf\spamfilter.conf"; DestDir: "{app}\conf"; Flags: onlyifdoesntexist
 Source: "doc\conf\badwords.conf"; DestDir: "{app}\conf"; Flags: onlyifdoesntexist
 Source: "doc\conf\dccallow.conf"; DestDir: "{app}\conf"; Flags: onlyifdoesntexist
@@ -183,12 +184,12 @@ begin
 end;
 
 [Icons]
-Name: "{group}\UnrealIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"
-Name: "{group}\Uninstall UnrealIRCd"; Filename: "{uninstallexe}"; WorkingDir: "{app}\bin"
+Name: "{group}\PissIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"
+Name: "{group}\Uninstall PissIRCd"; Filename: "{uninstallexe}"; WorkingDir: "{app}\bin"
 Name: "{group}\Make Certificate"; Filename: "{app}\bin\makecert.bat"; WorkingDir: "{app}\bin"
 Name: "{group}\Documentation"; Filename: "https://www.unrealircd.org/docs/"; WorkingDir: "{app}\bin"
-Name: "{userdesktop}\UnrealIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: desktopicon
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\UnrealIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: quicklaunchicon
+Name: "{userdesktop}\PissRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: desktopicon
+Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\PissIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: quicklaunchicon
 
 [Run]
 Filename: "https://www.unrealircd.org/docs/"; Description: "View documentation"; Parameters: ""; Flags: postinstall skipifsilent shellexec runmaximized
