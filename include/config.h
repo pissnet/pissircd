@@ -123,7 +123,9 @@
  * Common usage for this are: a trusted bot ran by an IRCOp, that you only
  * want to give "flood access" and nothing else, and other such things.
  */
-#define FAKELAG_CONFIGURABLE
+#ifndef FAKELAG_CONFIGURABLE
+#define FAKELAG_CONFIGURABLE 1
+#endif
 
 /* The default value for class::sendq */
 #define DEFAULT_SENDQ	3000000
