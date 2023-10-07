@@ -315,6 +315,8 @@ int write_tkldb(void)
 			{
 				if (tkl->flags & TKL_FLAG_CONFIG)
 					continue; /* config entry */
+				if (IsCentralSpamfilter(tkl))
+					continue;
 				tklcount++;
 			}
 		}
@@ -326,6 +328,8 @@ int write_tkldb(void)
 		{
 			if (tkl->flags & TKL_FLAG_CONFIG)
 				continue; /* config entry */
+			if (IsCentralSpamfilter(tkl))
+				continue;
 			tklcount++;
 		}
 	}
@@ -354,6 +358,8 @@ int write_tkldb(void)
 		{
 			if (tkl->flags & TKL_FLAG_CONFIG)
 				continue; /* config entry */
+			if (IsCentralSpamfilter(tkl))
+				continue;
 			if (!write_tkline(db, tmpfname, tkl))
 				return 0;
 		}
@@ -584,6 +590,13 @@ int read_tkldb(void)
 				do_not_add = 1;
 			}
 
+			/* Let's special-case this, or at least for now,
+			 * so we don't restore config or central spamfilters,
+			 * which was a bug in 6.1.2.{12}
+			 */
+			if (!strcmp(tkl->set_by, "-config-"))
+				do_not_add = 1;
+
 			if (!do_not_add)
 			{
 				tkl_add_serverban(tkl->type, tkl->ptr.serverban->usermask,
@@ -713,12 +726,20 @@ int read_tkldb(void)
 			R_SAFE(unrealdb_read_int64(db, &v));
 			tkl->ptr.spamfilter->tkl_duration = v;
 
-			if (find_tkl_spamfilter(tkl->type, tkl->ptr.spamfilter->match->str,
+			if (!do_not_add &&
+			    find_tkl_spamfilter(tkl->type, tkl->ptr.spamfilter->match->str,
 			                        tkl->ptr.spamfilter->action->action,
 			                        tkl->ptr.spamfilter->target))
 			{
 				do_not_add = 1;
 			}
+
+			/* Let's special-case this, or at least for now,
+			 * so we don't restore config or central spamfilters,
+			 * which was a bug in 6.1.2.{12}
+			 */
+			if (!strcmp(tkl->set_by, "-config-"))
+				do_not_add = 1;
 
 			if (!do_not_add)
 			{

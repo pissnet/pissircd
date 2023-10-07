@@ -528,6 +528,13 @@ int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *e
 		errors++;
 	}
 
+	if (central_spamfilter && !has_reason)
+	{
+		config_error("%s:%i: central spamfilter encountered without 'reason', rejected.",
+		             ce->file->filename, ce->line_number);
+		errors++;
+	}
+
 	if (central_spamfilter && errors)
 	{
 		ce->bad = 1;
@@ -631,6 +638,7 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	if (match)
 		m = unreal_create_match(match_type, match, NULL);
 
+	banreason = unreal_encodespace(banreason);
 	tkl_add_spamfilter(TKL_SPAMF,
 	                   id,
 	                   target,
@@ -638,7 +646,7 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	                   m,
 	                   rule,
 	                   except,
-	                   "-config-",
+	                   (flag & TKL_FLAG_CENTRAL_SPAMFILTER ? "-centralspamfilter-" : "-config-"),
 	                   0,
 	                   TStime(),
 	                   bantime,
