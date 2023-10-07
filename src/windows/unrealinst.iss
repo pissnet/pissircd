@@ -188,7 +188,7 @@ Name: "{group}\PissIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{ap
 Name: "{group}\Uninstall PissIRCd"; Filename: "{uninstallexe}"; WorkingDir: "{app}\bin"
 Name: "{group}\Make Certificate"; Filename: "{app}\bin\makecert.bat"; WorkingDir: "{app}\bin"
 Name: "{group}\Documentation"; Filename: "https://www.unrealircd.org/docs/"; WorkingDir: "{app}\bin"
-Name: "{userdesktop}\PissRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: desktopicon
+Name: "{userdesktop}\PissIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\PissIRCd"; Filename: "{app}\bin\UnrealIRCd.exe"; WorkingDir: "{app}\bin"; Tasks: quicklaunchicon
 
 [Run]
