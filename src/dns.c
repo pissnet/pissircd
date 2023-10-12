@@ -51,7 +51,11 @@ extern void proceed_normal_client_handshake(Client *client, struct hostent *he);
 
 /* Global variables */
 
-ares_channel resolver_channel; /**< The resolver channel. */
+ares_channel resolver_channel_client; /**< The resolver channel for clients */
+ares_channel resolver_channel_dnsbl; /**< The resolver channel for DNSBLs. */
+
+#define RESOLVER_CHANNEL_CLIENT (void *)0x1
+#define RESOLVER_CHANNEL_DNSBL (void *)0x2
 
 DNSStats dnsstats;
 
@@ -78,7 +82,14 @@ static void unrealdns_io_cb(int fd, int revents, void *data)
 	if (revents & FD_SELECT_WRITE)
 		write_fd = fde->fd;
 
-	ares_process_fd(resolver_channel, read_fd, write_fd);
+	if (data == RESOLVER_CHANNEL_CLIENT)
+		ares_process_fd(resolver_channel_client, read_fd, write_fd);
+	else if (data == RESOLVER_CHANNEL_DNSBL)
+		ares_process_fd(resolver_channel_dnsbl, read_fd, write_fd);
+	else
+		unreal_log(ULOG_ERROR, "dns", "DNS_IO_CALLBACK_BUG", NULL,
+		           "unrealdns_io_cb() called with invalid data ($data)",
+		           log_data_integer("data", (long long)data));
 }
 
 static void unrealdns_sock_state_cb(void *data, ares_socket_t fd, int read, int write)
@@ -109,13 +120,21 @@ static int unrealdns_sock_create_cb(ares_socket_t fd, int type, void *data)
 	 * will take care of the closing. So *WE* must
 	 * never close the socket.
 	 */
-	fd_open(fd, "DNS Resolver Socket", FDCLOSE_NONE);
+	if (data == RESOLVER_CHANNEL_CLIENT)
+		fd_open(fd, "DNS Resolver Socket for clients", FDCLOSE_NONE);
+	else if (data == RESOLVER_CHANNEL_DNSBL)
+		fd_open(fd, "DNS Resolver Socket for DNSBLs", FDCLOSE_NONE);
+	else
+		unreal_log(ULOG_ERROR, "dns", "DNS_SOCK_CREATE_CB_BUG", NULL,
+		           "unrealdns_io_cb() called with invalid data ($data)",
+		           log_data_integer("data", (long long)data));
 	return ARES_SUCCESS;
 }
 
 EVENT(unrealdns_timeout)
 {
-	ares_process_fd(resolver_channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
+	ares_process_fd(resolver_channel_client, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
+	ares_process_fd(resolver_channel_dnsbl, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
 }
 
 static Event *unrealdns_timeout_hdl = NULL;
@@ -138,14 +157,6 @@ void init_resolver(int firsttime)
 	}
 
 	memset(&options, 0, sizeof(options));
-	options.timeout = 1500; /* 1.5 seconds */
-	options.tries = 2;
-	/* Note that the effective DNS timeout is NOT simply 1500*2=3000.
-	 * This is because c-ares does some incremental timeout stuff itself
-	 * that may add up to twice the timeout in the second round,
-	 * so effective max is 1500ms first and then up to 3000s, so 4500ms in total
-	 * (until they change the algorithm again, that is...).
-	 */
 	options.flags |= ARES_FLAG_NOALIASES|ARES_FLAG_IGNTC;
 	options.sock_state_cb = unrealdns_sock_state_cb;
 	/* Don't search domains or you'll get lookups for like
@@ -161,7 +172,12 @@ void init_resolver(int firsttime)
 	options.lookups = "b";
 	optmask |= ARES_OPT_LOOKUPS;
 #endif
-	n = ares_init_options(&resolver_channel, &options, optmask);
+
+	/*** First the client channel ***/
+	options.sock_state_cb_data = RESOLVER_CHANNEL_CLIENT;
+	options.timeout = iConf.dns_client_timeout ? iConf.dns_client_timeout : DNS_DEFAULT_CLIENT_TIMEOUT;
+	options.tries = iConf.dns_client_retry ? iConf.dns_client_retry : DNS_DEFAULT_CLIENT_RETRIES;
+	n = ares_init_options(&resolver_channel_client, &options, optmask);
 	if (n != ARES_SUCCESS)
 	{
 		/* FATAL */
@@ -171,9 +187,26 @@ void init_resolver(int firsttime)
 #endif
 		exit(-7);
 	}
+	ares_set_socket_callback(resolver_channel_client, unrealdns_sock_create_cb, RESOLVER_CHANNEL_CLIENT);
 
-	ares_set_socket_callback(resolver_channel, unrealdns_sock_create_cb, NULL);
-	unrealdns_timeout_hdl = EventAdd(NULL, "unrealdns_timeout", unrealdns_timeout, NULL, 500, 0);
+	/* And then the DNSBL channel */
+	options.sock_state_cb_data = RESOLVER_CHANNEL_DNSBL;
+	options.timeout = iConf.dns_dnsbl_timeout ? iConf.dns_dnsbl_timeout : DNS_DEFAULT_DNSBL_TIMEOUT;
+	options.tries = iConf.dns_dnsbl_retry ? iConf.dns_dnsbl_retry : DNS_DEFAULT_DNSBL_RETRIES;
+	n = ares_init_options(&resolver_channel_dnsbl, &options, optmask);
+	if (n != ARES_SUCCESS)
+	{
+		/* FATAL */
+		config_error("resolver: ares_init_options() failed with error code %d [%s]", n, ares_strerror(n));
+#ifdef _WIN32
+		win_error();
+#endif
+		exit(-7);
+	}
+	ares_set_socket_callback(resolver_channel_dnsbl, unrealdns_sock_create_cb, RESOLVER_CHANNEL_DNSBL);
+
+	if (!unrealdns_timeout_hdl)
+		unrealdns_timeout_hdl = EventAdd(NULL, "unrealdns_timeout", unrealdns_timeout, NULL, 500, 0);
 }
 
 void reinit_resolver(Client *client)
@@ -182,7 +215,8 @@ void reinit_resolver(Client *client)
 
 	unreal_log(ULOG_INFO, "dns", "REINIT_RESOLVER", client,
 	           "$client requested reinitalization of the DNS resolver");
-	ares_destroy(resolver_channel);
+	ares_destroy(resolver_channel_client);
+	ares_destroy(resolver_channel_dnsbl);
 	init_resolver(0);
 }
 
@@ -233,12 +267,12 @@ struct hostent *unrealdns_doclient(Client *client)
 		struct in6_addr addr;
 		memset(&addr, 0, sizeof(addr));
 		inet_pton(AF_INET6, client->ip, &addr);
-		ares_gethostbyaddr(resolver_channel, &addr, 16, AF_INET6, unrealdns_cb_iptoname, r);
+		ares_gethostbyaddr(resolver_channel_client, &addr, 16, AF_INET6, unrealdns_cb_iptoname, r);
 	} else {
 		struct in_addr addr;
 		memset(&addr, 0, sizeof(addr));
 		inet_pton(AF_INET, client->ip, &addr);
-		ares_gethostbyaddr(resolver_channel, &addr, 4, AF_INET, unrealdns_cb_iptoname, r);
+		ares_gethostbyaddr(resolver_channel_client, &addr, 4, AF_INET, unrealdns_cb_iptoname, r);
 	}
 
 	return NULL;
@@ -263,7 +297,7 @@ void unrealdns_gethostbyname_link(const char *name, ConfigItem_link *conf, int i
 	unrealdns_addreqtolist(r);
 
 	/* Execute it */
-	ares_gethostbyname(resolver_channel, r->name, r->ipv6 ? AF_INET6 : AF_INET, unrealdns_cb_nametoip_link, r);
+	ares_gethostbyname(resolver_channel_client, r->name, r->ipv6 ? AF_INET6 : AF_INET, unrealdns_cb_nametoip_link, r);
 }
 
 void unrealdns_cb_iptoname(void *arg, int status, int timeouts, struct hostent *he)
@@ -294,7 +328,7 @@ void unrealdns_cb_iptoname(void *arg, int status, int timeouts, struct hostent *
 	safe_strdup(newr->name, he->h_name);
 	unrealdns_addreqtolist(newr);
 
-	ares_gethostbyname(resolver_channel, he->h_name, ipv6 ? AF_INET6 : AF_INET, unrealdns_cb_nametoip_verify, newr);
+	ares_gethostbyname(resolver_channel_client, he->h_name, ipv6 ? AF_INET6 : AF_INET, unrealdns_cb_nametoip_verify, newr);
 }
 
 void unrealdns_cb_nametoip_verify(void *arg, int status, int timeouts, struct hostent *he)
@@ -384,7 +418,7 @@ void unrealdns_cb_nametoip_link(void *arg, int status, int timeouts, struct host
 		{
 			/* Retry for IPv4... */
 			r->ipv6 = 0;
-			ares_gethostbyname(resolver_channel, r->name, AF_INET, unrealdns_cb_nametoip_link, r);
+			ares_gethostbyname(resolver_channel_client, r->name, AF_INET, unrealdns_cb_nametoip_link, r);
 
 			return;
 		}
@@ -629,6 +663,34 @@ void unrealdns_delasyncconnects(void)
 	
 }
 
+void dns_check_for_changes(void)
+{
+	struct ares_options inf;
+	int changed = 0;
+	int optmask;
+
+	memset(&inf, 0, sizeof(inf));
+	ares_save_options(resolver_channel_client, &inf, &optmask);
+	if ((inf.timeout != iConf.dns_client_timeout) || (inf.tries != iConf.dns_client_retry))
+		changed = 1;
+	ares_destroy_options(&inf);
+
+	memset(&inf, 0, sizeof(inf));
+	ares_save_options(resolver_channel_dnsbl, &inf, &optmask);
+	if ((inf.timeout != iConf.dns_dnsbl_timeout) || (inf.tries != iConf.dns_dnsbl_retry))
+		changed = 1;
+	ares_destroy_options(&inf);
+
+	if (changed)
+	{
+		if (loop.booted)
+			config_status("DNS Configuration changed, reinitializing DNS...");
+		ares_destroy(resolver_channel_client);
+		ares_destroy(resolver_channel_dnsbl);
+		init_resolver(0);
+	}
+}
+
 CMD_FUNC(cmd_dns)
 {
 	DNSCache *c;
@@ -690,34 +752,51 @@ CMD_FUNC(cmd_dns)
 
 		sendtxtnumeric(client, "****** DNS Configuration Information ******");
 		sendtxtnumeric(client, " c-ares version: %s",ares_version(NULL));
-		
+
+		// Duplicate code follows, because.. yeah.. we use a struct? :D
+
+		sendtxtnumeric(client, "=== Client resolver channel ===");
 		i = 0;
-		ares_get_servers(resolver_channel, &serverlist);
+		ares_get_servers(resolver_channel_client, &serverlist);
 		for (ns = serverlist; ns; ns = ns->next)
 		{
 			char ipbuf[128];
 			const char *ip;
 			i++;
-			
+
 			ip = inetntop(ns->family, &ns->addr, ipbuf, sizeof(ipbuf));
 			sendtxtnumeric(client, "      server #%d: %s", i, ip ? ip : "<error>");
 		}
 		ares_free_data(serverlist);
-
-		ares_save_options(resolver_channel, &inf, &optmask);
+		ares_save_options(resolver_channel_client, &inf, &optmask);
 		if (optmask & ARES_OPT_TIMEOUTMS)
 			sendtxtnumeric(client, "        timeout: %d", inf.timeout);
 		if (optmask & ARES_OPT_TRIES)
 			sendtxtnumeric(client, "          tries: %d", inf.tries);
-		if (optmask & ARES_OPT_DOMAINS)
-		{
-			sendtxtnumeric(client, "   # of search domains: %d", inf.ndomains);
-			for (i = 0; i < inf.ndomains; i++)
-				sendtxtnumeric(client, "      domain #%d: %s", i+1, inf.domains[i]);
-		}
-		sendtxtnumeric(client, "****** End of DNS Configuration Info ******");
-		
 		ares_destroy_options(&inf);
+
+		sendtxtnumeric(client, "=== DNSBL resolver channel ===");
+		i = 0;
+		ares_get_servers(resolver_channel_dnsbl, &serverlist);
+		for (ns = serverlist; ns; ns = ns->next)
+		{
+			char ipbuf[128];
+			const char *ip;
+			i++;
+
+			ip = inetntop(ns->family, &ns->addr, ipbuf, sizeof(ipbuf));
+			sendtxtnumeric(client, "      server #%d: %s", i, ip ? ip : "<error>");
+		}
+		ares_free_data(serverlist);
+		ares_save_options(resolver_channel_dnsbl, &inf, &optmask);
+		if (optmask & ARES_OPT_TIMEOUTMS)
+			sendtxtnumeric(client, "        timeout: %d", inf.timeout);
+		if (optmask & ARES_OPT_TRIES)
+			sendtxtnumeric(client, "          tries: %d", inf.tries);
+		ares_destroy_options(&inf);
+
+		sendtxtnumeric(client, "****** End of DNS Configuration Info ******");
+
 	} else /* STATISTICS */
 	{
 		sendtxtnumeric(client, "DNS CACHE Stats:");
@@ -730,7 +809,7 @@ CMD_FUNC(cmd_dns)
 /* Little helper function for dnsbl module.
  * No we will NOT copy the entire c-ares api, just this one.
  */
-void unreal_gethostbyname(const char *name, int family, ares_host_callback callback, void *arg)
+void unreal_gethostbyname_dnsbl(const char *name, int family, ares_host_callback callback, void *arg)
 {
-	ares_gethostbyname(resolver_channel, name, family, callback, arg);
+	ares_gethostbyname(resolver_channel_dnsbl, name, family, callback, arg);
 }
