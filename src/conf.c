@@ -3334,7 +3334,7 @@ ConfigItem_deny_channel *find_channel_allowed(Client *client, const char *name)
 
 	for (dchannel = conf_deny_channel; dchannel; dchannel = dchannel->next)
 	{
-		if (match_simple(dchannel->channel, name))
+		if (match_esc(dchannel->channel, name))
 		{
 			if (dchannel->class && strcmp(client->local->class->name, dchannel->class))
 				continue;
@@ -3349,7 +3349,7 @@ ConfigItem_deny_channel *find_channel_allowed(Client *client, const char *name)
 		/* Check exceptions... ('allow channel') */
 		for (achannel = conf_allow_channel; achannel; achannel = achannel->next)
 		{
-			if (match_simple(achannel->channel, name))
+			if (match_esc(achannel->channel, name))
 			{
 				if (achannel->class && strcmp(client->local->class->name, achannel->class))
 					continue;
@@ -4085,7 +4085,15 @@ int 	_test_operclass(ConfigFile *conf, ConfigEntry *ce)
 	{
 		config_error_noname(ce->file->filename, ce->line_number, "operclass");
 		errors++;
+	} else
+	if (!valid_operclass_name(ce->value))
+	{
+		config_error("%s:%d: operclass name may only contain alphanumerical characters and "
+		             "characters _-",
+		             ce->file->filename, ce->line_number);
+		errors++;
 	}
+
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (!strcmp(cep->name, "parent"))
