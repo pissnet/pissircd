@@ -1260,6 +1260,9 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 /** See hooktype_reconfigure_web_listener */
 #define HOOKTYPE_CONFIG_LISTENER	120
 
+/** Used by third/centralblocklist; defined to avoid conflicts with pissnet-specific hook */
+#define HOOKTYPE_GET_CENTRAL_API_KEY 198
+
 /** See hooktype_pre_remote_to_local_kill() */
 #define HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL 199
 
