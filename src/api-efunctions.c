@@ -141,7 +141,7 @@ int (*watch_add)(const char *nick, Client *client, int flags);
 int (*watch_del)(const char *nick, Client *client, int flags);
 int (*watch_del_list)(Client *client, int flags);
 Watch *(*watch_get)(const char *nick);
-int (*watch_check)(Client *client, int reply, int (*watch_notify)(Client *client, Watch *watch, Link *lp, int event));
+int (*watch_check)(Client *client, int reply, void *data, int (*watch_notify)(Client *client, Watch *watch, Link *lp, int event, void *data));
 void (*do_unreal_log_remote_deliver)(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, const char *json_serialized);
 char *(*get_chmodes_for_user)(Client *client, const char *flags);
 WhoisConfigDetails (*whois_get_policy)(Client *client, Client *target, const char *name);
@@ -164,13 +164,16 @@ int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 void (*cancel_ident_lookup)(Client *client);
-int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
+int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
 int (*crule_test)(const char *rule);
 CRuleNode *(*crule_parse)(const char *rule);
 int (*crule_eval)(crule_context *context, CRuleNode *rule);
 void (*crule_free)(CRuleNode **);
 const char *(*crule_errstring)(int errcode);
 void (*ban_act_set_reputation)(Client *client, BanAction *action);
+const char *(*get_central_api_key)(void);
+int (*central_spamreport)(Client *target, Client *by);
+int (*central_spamreport_enabled)(void);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -487,4 +490,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_CRULE_FREE, crule_free, NULL, EFUNC_FLAG_EARLY);
 	efunc_init_function(EFUNC_CRULE_ERRSTRING, crule_errstring, NULL, EFUNC_FLAG_EARLY);
 	efunc_init_function(EFUNC_BAN_ACT_SET_REPUTATION, ban_act_set_reputation, ban_act_set_reputation_default_handler, 0);
+	efunc_init_function(EFUNC_GET_CENTRAL_API_KEY, get_central_api_key, get_central_api_key_default_handler, 0);
+	efunc_init_function(EFUNC_CENTRAL_SPAMREPORT, central_spamreport, central_spamreport_default_handler, 0);
+	efunc_init_function(EFUNC_CENTRAL_SPAMREPORT_ENABLED, central_spamreport_enabled, central_spamreport_enabled_default_handler, 0);
 }

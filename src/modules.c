@@ -275,6 +275,26 @@ int module_already_in_testing(const char *relpath)
 	return 0;
 }
 
+/** Return an error string if module with 'name' should no longer be used. */
+const char *is_module_deprecated(const char *name)
+{
+	if (!strcmp(name, "third/central-api"))
+	{
+		unreal_log(ULOG_ERROR, "config", "CONFIG_LOAD_DEPRECATED_MODULE", NULL,
+		           "The central-api module has been moved from third party modules to the core.\n"
+		           "Please replace your loadmodule \"third/central-api\"; line with: loadmodule \"central-api\";");
+		return "Don't load this third party module, see error above";
+	}
+	if (!strcmp(name, "third/centralblocklist"))
+	{
+		unreal_log(ULOG_ERROR, "config", "CONFIG_LOAD_DEPRECATED_MODULE", NULL,
+		           "The centralblocklist module has been moved from third party modules to the core with a slightly changed name.\n"
+		           "Please replace your loadmodule \"third/centralblocklist\"; line with: loadmodule \"central-blocklist\";");
+		return "Don't load this third party module, see error above";
+	}
+	return NULL;
+}
+
 /*
  * Returns an error if insucessful .. yes NULL is OK! 
 */
@@ -290,7 +310,6 @@ const char *Module_Create(const char *path_)
 	int             (*Mod_Load)();
 	int             (*Mod_Unload)();
 	char    *Mod_Version;
-	unsigned int *compiler_version;
 	static char 	errorbuf[1024];
 	const char	*path, *relpath, *tmppath;
 	ModuleHeader    *mod_header = NULL;
@@ -298,12 +317,15 @@ const char *Module_Create(const char *path_)
 	const char	*reterr;
 	Module          *mod = NULL, **Mod_Handle = NULL;
 	char *expectedmodversion = our_mod_version;
-	unsigned int expectedcompilerversion = our_compiler_version;
 	long modsys_ver = 0;
 
 	path = Module_TransformPath(path_);
 
 	relpath = Module_GetRelPath(path);
+
+	if ((reterr = is_module_deprecated(relpath)))
+		return reterr;
+
 	if (module_already_in_testing(relpath))
 		return 0;
 
@@ -356,19 +378,6 @@ const char *Module_Create(const char *path_)
 			deletetmp(tmppath);
 			return errorbuf;
 		}
-		irc_dlsym(Mod, "compiler_version", compiler_version);
-		if (compiler_version && ( ((*compiler_version) & 0xffff00) != (expectedcompilerversion & 0xffff00) ) )
-		{
-			char theyhad[64], wehave[64];
-			make_compiler_string(theyhad, sizeof(theyhad), *compiler_version);
-			make_compiler_string(wehave, sizeof(wehave), expectedcompilerversion);
-			snprintf(errorbuf, sizeof(errorbuf),
-			         "Module was compiled with GCC %s, core was compiled with GCC %s. SOLUTION: Recompile your UnrealIRCd and all its modules by doing a 'make clean; ./Config -quick && make'.",
-			         theyhad, wehave);
-			irc_dlclose(Mod);
-			deletetmp(tmppath);
-			return errorbuf;
-		}
 		irc_dlsym(Mod, "Mod_Header", mod_header);
 		if (!mod_header)
 		{
@@ -405,7 +414,6 @@ const char *Module_Create(const char *path_)
 		mod = (Module *)Module_make(mod_header, Mod);
 		safe_strdup(mod->tmp_file, tmppath);
 		mod->mod_sys_version = modsys_ver;
-		mod->compiler_version = compiler_version ? *compiler_version : 0;
 		safe_strdup(mod->relpath, relpath);
 
 		irc_dlsym(Mod, "Mod_Init", Mod_Init);
@@ -563,6 +571,9 @@ void FreeModObj(ModuleObject *obj, Module *m)
 	}
 	else if (obj->type == MOBJ_RPC) {
 		RPCHandlerDel(obj->object.rpc);
+	}
+	else if (obj->type == MOBJ_API_CALLBACK) {
+		APICallbackDel(obj->object.apicallback);
 	}
 	else
 	{
@@ -1191,7 +1202,7 @@ EVENT(e_unload_module_delayed)
 	if (i == 1)
 	{
 		unreal_log(ULOG_INFO, "module", "MODULE_UNLOADING_DELAYED", NULL,
-		           "Unloading module $module_name (was delayed earlier)",
+		           "Unloaded module $module_name (was delayed earlier)",
 		           log_data_string("module_name", name));
 	}
 	safe_free(name);
@@ -1364,7 +1375,7 @@ static const char *mod_var_name(ModuleInfo *modinfo, const char *varshortname)
 	return fullname;
 }
 
-int LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void **var, void (*free_variable)(ModData *m))
+ModDataInfo *persistent_var_generic(ModuleInfo *modinfo, const char *varshortname, void (*free_variable)(ModData *m))
 {
 	ModDataInfo *m;
 	const char *fullname = mod_var_name(modinfo, varshortname);
@@ -1372,8 +1383,13 @@ int LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void *
 	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
 	if (m)
 	{
-		*var = moddata_local_variable(m).ptr;
-		return 1;
+		if (loop.config_status != CONFIG_STATUS_TEST)
+		{
+			/* Claim ownership */
+			m->owner = modinfo->handle;
+			m->unloaded = 0;
+		}
+		return m;
 	} else {
 		ModDataInfo mreq;
 		memset(&mreq, 0, sizeof(mreq));
@@ -1381,114 +1397,57 @@ int LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void *
 		mreq.name = strdup(fullname);
 		mreq.free = free_variable;
 		m = ModDataAdd(modinfo->handle, mreq);
-		moddata_local_variable(m).ptr = NULL;
 		safe_free(mreq.name);
-		return 0;
+		memset(&moddata_local_variable(m), 0, sizeof(ModData));
+		return m;
 	}
+}
+
+void LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void **var, void (*free_variable)(ModData *m))
+{
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, free_variable);
+	*var = moddata_local_variable(m).ptr;
+}
+
+void LoadPersistentIntX(ModuleInfo *modinfo, const char *varshortname, int *var)
+{
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
+	*var = moddata_local_variable(m).i;
+}
+
+void LoadPersistentLongX(ModuleInfo *modinfo, const char *varshortname, long *var)
+{
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
+	*var = moddata_local_variable(m).l;
+}
+
+void LoadPersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long *var)
+{
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
+	*var = moddata_local_variable(m).ll;
 }
 
 void SavePersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void *var)
 {
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
 	moddata_local_variable(m).ptr = var;
-}
-
-int LoadPersistentIntX(ModuleInfo *modinfo, const char *varshortname, int *var)
-{
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
-	if (m)
-	{
-		*var = moddata_local_variable(m).i;
-		return 1;
-	} else {
-		ModDataInfo mreq;
-		memset(&mreq, 0, sizeof(mreq));
-		mreq.type = MODDATATYPE_LOCAL_VARIABLE;
-		mreq.name = strdup(fullname);
-		mreq.free = NULL;
-		m = ModDataAdd(modinfo->handle, mreq);
-		moddata_local_variable(m).i = 0;
-		safe_free(mreq.name);
-		return 0;
-	}
 }
 
 void SavePersistentIntX(ModuleInfo *modinfo, const char *varshortname, int var)
 {
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
 	moddata_local_variable(m).i = var;
-}
-
-int LoadPersistentLongX(ModuleInfo *modinfo, const char *varshortname, long *var)
-{
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
-	if (m)
-	{
-		*var = moddata_local_variable(m).l;
-		return 1;
-	} else {
-		ModDataInfo mreq;
-		memset(&mreq, 0, sizeof(mreq));
-		mreq.type = MODDATATYPE_LOCAL_VARIABLE;
-		mreq.name = strdup(fullname);
-		mreq.free = NULL;
-		m = ModDataAdd(modinfo->handle, mreq);
-		moddata_local_variable(m).l = 0;
-		safe_free(mreq.name);
-		return 0;
-	}
 }
 
 void SavePersistentLongX(ModuleInfo *modinfo, const char *varshortname, long var)
 {
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
 	moddata_local_variable(m).l = var;
-}
-
-int LoadPersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long *var)
-{
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
-	if (m)
-	{
-		*var = moddata_local_variable(m).ll;
-		return 1;
-	} else {
-		ModDataInfo mreq;
-		memset(&mreq, 0, sizeof(mreq));
-		mreq.type = MODDATATYPE_LOCAL_VARIABLE;
-		mreq.name = strdup(fullname);
-		mreq.free = NULL;
-		m = ModDataAdd(modinfo->handle, mreq);
-		moddata_local_variable(m).ll = 0;
-		safe_free(mreq.name);
-		return 0;
-	}
 }
 
 void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long var)
 {
-	ModDataInfo *m;
-	const char *fullname = mod_var_name(modinfo, varshortname);
-
-	m = findmoddata_byname(fullname, MODDATATYPE_LOCAL_VARIABLE);
+	ModDataInfo *m = persistent_var_generic(modinfo, varshortname, NULL);
 	moddata_local_variable(m).ll = var;
 }
 

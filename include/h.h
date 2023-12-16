@@ -894,7 +894,7 @@ extern MODVAR int (*watch_add)(const char *nick, Client *client, int flags);
 extern MODVAR int (*watch_del)(const char *nick, Client *client, int flags);
 extern MODVAR int (*watch_del_list)(Client *client, int flags);
 extern MODVAR Watch *(*watch_get)(const char *nick);
-extern MODVAR int (*watch_check)(Client *client, int reply, int (*watch_notify)(Client *client, Watch *watch, Link *lp, int event));
+extern MODVAR int (*watch_check)(Client *client, int reply, void *data, int (*watch_notify)(Client *client, Watch *watch, Link *lp, int event, void *data));
 extern MODVAR char *(*tkl_uhost)(TKL *tkl, char *buf, size_t buflen, int options);
 extern MODVAR void (*do_unreal_log_remote_deliver)(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, const char *json_serialized);
 extern MODVAR char *(*get_chmodes_for_user)(Client *client, const char *flags);
@@ -918,7 +918,7 @@ extern MODVAR int (*websocket_create_packet_simple)(int opcode, const char **buf
 extern MODVAR const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 extern MODVAR void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 extern MODVAR void (*cancel_ident_lookup)(Client *client);
-extern MODVAR int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
+extern MODVAR int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
 extern MODVAR int (*crule_test)(const char *rule);
 extern MODVAR CRuleNode *(*crule_parse)(const char *rule);
 extern int (*crule_eval)(crule_context *context, CRuleNode *rule);
@@ -926,6 +926,9 @@ extern int (*crule_eval)(crule_context *context, CRuleNode *rule);
 extern void (*crule_free)(CRuleNode **);
 extern const char *(*crule_errstring)(int errcode);
 extern void (*ban_act_set_reputation)(Client *client, BanAction *action);
+extern const char *(*get_central_api_key)(void);
+extern int (*central_spamreport)(Client *target, Client *by);
+extern int (*central_spamreport_enabled)(void);
 /* /Efuncs */
 
 /* TLS functions */
@@ -978,8 +981,11 @@ extern int websocket_create_packet_ex_default_handler(int opcode, char **buf, in
 extern int websocket_create_packet_simple_default_handler(int opcode, const char **buf, int *len);
 extern void mtag_add_issued_by_default_handler(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 extern void cancel_ident_lookup_default_handler(Client *client);
-extern int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block);
+extern int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
 extern void ban_act_set_reputation_default_handler(Client *client, BanAction *action);
+extern const char *get_central_api_key_default_handler(void);
+extern int central_spamreport_default_handler(Client *target, Client *by);
+extern int central_spamreport_enabled_default_handler(void);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1054,6 +1060,7 @@ extern void report_crash(void);
 extern void modulemanager(int argc, char *argv[]);
 extern int inet_pton4(const char *src, unsigned char *dst);
 extern int inet_pton6(const char *src, unsigned char *dst);
+extern const char *compressed_ip(const char *ip);
 extern int unreal_bind(int fd, const char *ip, int port, SocketType socket_type);
 extern int unreal_connect(int fd, const char *ip, int port, SocketType socket_type);
 extern int is_valid_ip(const char *str);
@@ -1394,8 +1401,8 @@ extern int has_cached_version(const char *url);
 extern int url_is_valid(const char *);
 extern const char *displayurl(const char *url);
 extern char *url_getfilename(const char *url);
-extern void download_file_async(const char *url, time_t cachetime, vFP callback, void *callback_data, char *original_url, int maxredirects);
-extern void url_start_async(const char *url, HttpMethod http_method, const char *body, NameValuePrioList *request_headers, int store_in_file, time_t cachetime, vFP callback, void *callback_data, char *original_url, int maxredirects);
+extern void download_file_async(const char *url, time_t cachetime, void (*callback)(OutgoingWebRequest *request, OutgoingWebResponse *response), void *callback_data, int maxredirects);
+extern void url_start_async(OutgoingWebRequest *request);
 extern void url_init(void);
 extern void url_cancel_handle_by_callback_data(void *ptr);
 extern EVENT(url_socket_timeout);
@@ -1460,7 +1467,7 @@ extern void free_all_tags(Client *client);
 extern void del_tag(Client *client, const char *name);
 extern void bump_tag_serial(Client *client);
 extern int valid_spamfilter_id(const char *s);
-extern void download_complete_dontcare(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *ptr);
+extern void download_complete_dontcare(OutgoingWebRequest *request, OutgoingWebResponse *response);
 extern char *urlencode(const char *s, char *wbuf, int wlen);
 extern const char *config_item_name(ConfigEntry *ce);
 extern int inchannel_compareflags(char symbol, const char *member_modes);
@@ -1468,3 +1475,8 @@ extern int highest_channel_member_count(Client *client);
 extern MODVAR long long central_spamfilter_last_download;
 extern int valid_operclass_character(char c);
 extern int valid_operclass_name(const char *str);
+#define safe_free_outgoingwebrequest(x)	do { if (x) { free_outgoingwebrequest(x); x = NULL; } } while(0)
+extern void free_outgoingwebrequest(OutgoingWebRequest *r);
+extern OutgoingWebRequest *duplicate_outgoingwebrequest(OutgoingWebRequest *orig);
+extern void url_callback(OutgoingWebRequest *r, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *ptr);
+extern const char *synchronous_http_request(const char *url, int max_redirects, int connect_timeout, int transfer_timeout);

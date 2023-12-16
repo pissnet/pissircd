@@ -192,6 +192,7 @@ extern void unload_all_unused_extbans(void);
 extern void unload_all_unused_caps(void);
 extern void unload_all_unused_history_backends(void);
 extern void unload_all_unused_rpc_handlers(void);
+extern void unload_all_unused_apicallbacks(void);
 
 int reloadable_perm_module_unloaded(void);
 int tls_tests(void);
@@ -264,7 +265,8 @@ long long central_spamfilter_last_download = 0;
 
 int add_config_resource(const char *resource, int type, ConfigEntry *ce);
 ConfigResource *find_config_resource(const char *resource);
-void resource_download_complete(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *rs_key);
+void resource_download_complete(OutgoingWebRequest *request, OutgoingWebResponse *response);
+void resource_download_complete_parse(ConfigResource *rs);
 void free_all_config_resources(void);
 int rehash_internal(Client *client);
 int is_blacklisted_module(const char *name);
@@ -1710,6 +1712,7 @@ void config_setdefaultsettings(Configuration *i)
 	i->server_notice_show_event = 1;
 	i->ident_read_timeout = 7;
 	i->ident_connect_timeout = 3;
+	i->hide_ban_reason = HIDE_BAN_REASON_AUTO;
 	i->ban_version_tkl_time = 86400; /* 1d */
 	i->spamfilter_ban_time = 86400; /* 1d */
 	i->spamfilter_utf8 = 1;
@@ -1818,8 +1821,8 @@ void config_setdefaultsettings(Configuration *i)
 	i->who_limit = 100;
 	i->named_extended_bans = 1;
 	i->high_connection_rate = 1000;
-	safe_strdup(i->central_spamfilter_url, "https://spamfilter.unrealircd.org/spamfilter/v6/$feed/central_spamfilter.conf");
-	safe_strdup(i->central_spamfilter_feed, "standard");
+	safe_strdup(i->central_spamfilter_url, DEFAULT_CENTRAL_SPAMFILTER_URL_OPEN_ACCESS);
+	safe_strdup(i->central_spamfilter_feed, DEFAULT_CENTRAL_SPAMFILTER_FEED);
 	i->central_spamfilter_refresh_time = 3600;
 	i->central_spamfilter_enabled = 0;
 	i->central_spamfilter_except = safe_alloc(sizeof(SecurityGroup));
@@ -4552,8 +4555,12 @@ ProxyType proxy_type_string_to_value(const char *s)
 		return PROXY_WEBIRC;
 	else if (!strcmp(s, "old"))
 		return PROXY_WEBIRC_PASS;
-	else if (!strcmp(s, "web"))
-		return PROXY_WEB;
+	else if (!strcmp(s, "forwarded"))
+		return PROXY_FORWARDED;
+	else if (!strcmp(s, "x-forwarded"))
+		return PROXY_X_FORWARDED;
+	else if (!strcmp(s, "cloudflare"))
+		return PROXY_CLOUDFLARE;
 	return 0;
 }
 
@@ -4622,6 +4629,16 @@ int _test_proxy(ConfigFile *conf, ConfigEntry *ce)
 					cep->line_number, "proxy::type");
 			}
 			has_type = 1;
+			if (!strcmp(cep->value, "web"))
+			{
+				config_error("%s:%i: type 'web' has been replaced. You now need to specify "
+				             "the reverse proxy type explicitly. Instead of 'web', use one of: "
+				             "'forwarded', 'x-forwarded' or 'cloudflare'. "
+				             "See https://www.unrealircd.org/docs/Proxy_block",
+				             cep->file->filename, cep->line_number);
+				errors++;
+				continue;
+			}
 			proxy_type = proxy_type_string_to_value(cep->value);
 			if (proxy_type == 0)
 			{
@@ -4692,10 +4709,10 @@ int _conf_proxy(ConfigFile *conf, ConfigEntry *ce)
 
 	AddListItem(proxy, conf_proxy);
 
-	/* For proxy type web, we automatically add the host to except ban { }
+	/* For the web proxy types, we automatically add the host to except ban { }
 	 * for blacklist, connect-flood, handshake-data-flood
 	 */
-	if (proxy->type == PROXY_WEB)
+	if (IsWebProxy(proxy->type))
 	{
 		SecurityGroup *sg = duplicate_security_group(proxy->mask);
 		tkl_add_banexception(TKL_EXCEPTION, "-", "-", sg, "proxy { } block",
@@ -5322,7 +5339,9 @@ void conf_listen_configure(const char *ip, int port, SocketType socket_type, int
 		free_tls_options(listen->tls_options);
 		listen->tls_options = NULL;
 	}
-	safe_free(listen->webserver);
+	safe_free_webserver(listen->webserver);
+	free_entire_name_list(listen->websocket_origin);
+	// NOTE: duplicate code overlap with listen_cleanup()
 
 	/* Now set the new settings: */
 	if (tlsconfig)
@@ -7890,7 +7909,12 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 			safe_strdup(tempiConf.cloak_prefix, cep->value);
 		}
 		else if (!strcmp(cep->name, "hide-ban-reason")) {
-			tempiConf.hide_ban_reason = config_checkval(cep->value, CFG_YESNO);
+			if (!strcmp(cep->value, "yes"))
+				tempiConf.hide_ban_reason = HIDE_BAN_REASON_YES;
+			else if (!strcmp(cep->value, "no"))
+				tempiConf.hide_ban_reason = HIDE_BAN_REASON_NO;
+			else if (!strcmp(cep->value, "auto"))
+				tempiConf.hide_ban_reason = HIDE_BAN_REASON_AUTO;
 		}
 		else if (!strcmp(cep->name, "prefix-quit")) {
 			if (!strcmp(cep->value, "0") || !strcmp(cep->value, "no"))
@@ -8691,6 +8715,15 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "hide-ban-reason")) {
 			CheckNull(cep);
 			CheckDuplicate(cep, hide_ban_reason, "hide-ban-reason");
+			if (strcmp(cep->value, "yes") &&
+			    strcmp(cep->value, "no") &&
+			    strcmp(cep->value, "auto"))
+			{
+				config_error("%s:%i: set::hide-ban-reason must be one of: yes, no, auto",
+					cep->file->filename, cep->line_number);
+				errors++;
+				continue;
+			}
 		}
 		else if (!strcmp(cep->name, "restrict-channelmodes"))
 		{
@@ -11024,16 +11057,16 @@ int _conf_secret(ConfigFile *conf, ConfigEntry *ce)
 	return 1;
 }
 
-void resource_download_complete(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *rs_key)
+void resource_download_complete(OutgoingWebRequest *request, OutgoingWebResponse *response)
 {
-	ConfigResource *rs = (ConfigResource *)rs_key;
+	ConfigResource *rs = (ConfigResource *)request->callback_data;
 
 	rs->type &= ~RESOURCE_DLQUEUED;
 
 	if (config_verbose)
-		config_status("resource_download_complete() for %s [%s]", url, errorbuf?errorbuf:"success");
+		config_status("resource_download_complete() for %s [%s]", request->url, response->errorbuf?response->errorbuf:"success");
 
-	if (!file && !cached)
+	if (!response->file && !response->cached)
 	{
 		/* DOWNLOAD FAILED */
 		if (rs->cache_file)
@@ -11043,16 +11076,16 @@ void resource_download_complete(const char *url, const char *file, const char *m
 				   "Using a cached copy instead.",
 				   log_data_string("file", rs->wce->ce->file->filename),
 				   log_data_integer("line_number", rs->wce->ce->line_number),
-				   log_data_string("url", displayurl(url)),
-				   log_data_string("error_message", errorbuf));
+				   log_data_string("url", displayurl(request->url)),
+				   log_data_string("error_message", response->errorbuf));
 			safe_strdup(rs->file, rs->cache_file);
 		} else {
 			unreal_log(ULOG_ERROR, "config", "DOWNLOAD_FAILED_HARD", NULL,
 				   "$file:$line_number: Failed to download '$url': $error_message",
 				   log_data_string("file", rs->wce->ce->file->filename),
 				   log_data_integer("line_number", rs->wce->ce->line_number),
-				   log_data_string("url", displayurl(url)),
-				   log_data_string("error_message", errorbuf));
+				   log_data_string("url", displayurl(request->url)),
+				   log_data_string("error_message", response->errorbuf));
 			/* Set error condition, this so config_read_file() later will stop. */
 			loop.config_load_failed = 1;
 			/* We keep the other transfers running since they may raise (more) errors.
@@ -11063,18 +11096,22 @@ void resource_download_complete(const char *url, const char *file, const char *m
 	}
 	else
 	{
-		if (cached)
+		if (response->cached)
 		{
 			/* Copy from cache */
 			safe_strdup(rs->file, rs->cache_file);
 		} else {
 			/* Copy to cache */
-			const char *cache_file = unreal_mkcache(url);
-			unreal_copyfileex(file, cache_file, 1);
+			const char *cache_file = unreal_mkcache(request->url);
+			unreal_copyfileex(response->file, cache_file, 1);
 			safe_strdup(rs->file, cache_file);
 		}
 	}
+	resource_download_complete_parse(rs);
+}
 
+void resource_download_complete_parse(ConfigResource *rs)
+{
 	if (rs->file)
 	{
 		if (rs->type & RESOURCE_INCLUDE)
@@ -11152,7 +11189,8 @@ int rehash_internal(Client *client)
 	unload_all_unused_caps();
 	unload_all_unused_history_backends();
 	unload_all_unused_rpc_handlers();
-	// unload_all_unused_moddata(); -- this will crash
+	unload_all_unused_apicallbacks();
+	unload_all_unused_moddata();
 	clicap_check_for_changes();
 	umodes_check_for_changes();
 	charsys_check_for_changes();
@@ -11246,6 +11284,8 @@ void listen_cleanup()
 				free_tls_options(listener->tls_options);
 				/* listener->ssl_ctx is already freed by close_listener() */
 				safe_free_webserver(listener->webserver);
+				free_entire_name_list(listener->websocket_origin);
+				// NOTE: duplicate code overlap with conf_listen_configure() - but not 100% identical
 				safe_free(listener);
 			} else {
 				/* Still has clients */
@@ -11381,8 +11421,9 @@ int add_config_resource(const char *resource, int type, ConfigEntry *ce)
 					if (TStime() - modtime < refresh_time)
 					{
 						/* Don't download, use cached copy */
-						//config_status("DEBUG: using cached copy due to url-refresh %ld", refresh_time);
-						resource_download_complete(rs->url, NULL, NULL, 0, NULL, 1, rs);
+						safe_strdup(rs->file, rs->cache_file);
+						rs->type &= ~RESOURCE_DLQUEUED;
+						resource_download_complete_parse(rs);
 						return 1;
 					} else {
 						//config_status("DEBUG: requires download attempt, out of date url-refresh %ld < %ld", refresh_time, TStime() - modtime);
@@ -11392,7 +11433,7 @@ int add_config_resource(const char *resource, int type, ConfigEntry *ce)
 				prev = cep;
 			}
 		}
-		download_file_async(rs->url, modtime, resource_download_complete, (void *)rs, NULL, DOWNLOAD_MAX_REDIRECTS);
+		download_file_async(rs->url, modtime, resource_download_complete, (void *)rs, DOWNLOAD_MAX_REDIRECTS);
 	}
 	return 1;
 }
@@ -11851,7 +11892,7 @@ int count_central_spamfilter_rules(void)
 	return count;
 }
 
-void central_spamfilter_download_complete(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *rs_key)
+void central_spamfilter_download_complete(OutgoingWebRequest *request, OutgoingWebResponse *response)
 {
 	ConfigFile *cfptr;
 	int errors;
@@ -11869,13 +11910,13 @@ void central_spamfilter_download_complete(const char *url, const char *file, con
 		           "Processing central spamfilter rules...");
 	}
 
-	if (errorbuf)
+	if (response->errorbuf)
 	{
-		config_error("Central spamfilter URL fetch failed (this could be a temporary problem): %s: %s", url, errorbuf);
+		config_error("Central spamfilter URL fetch failed (this could be a temporary problem): %s: %s", request->url, response->errorbuf);
 		return;
 	}
 	
-	if (!(cfptr = config_load(file, "central_spamfilter.conf")))
+	if (!(cfptr = config_load(response->file, "central_spamfilter.conf")))
 	{
 		unreal_log(ULOG_ERROR, "central-spamfilter", "CENTRAL_SPAMFILTER_LOAD_FAILED", NULL,
 		           "[Central spamfilter] Failed to load"); // Where is the REASON ???
@@ -11914,6 +11955,8 @@ void central_spamfilter_start_download(void)
 {
 	char url[512];
 	NameValuePrioList *nvp = NULL;
+	const char *apikey;
+	OutgoingWebRequest *request;
 
 	if (central_spamfilter_downloading)
 		return;
@@ -11926,13 +11969,32 @@ void central_spamfilter_start_download(void)
 
 	central_spamfilter_downloading = 1;
 
+	/* Prepare the request */
+	request = safe_alloc(sizeof(OutgoingWebRequest));
+	request->http_method = HTTP_METHOD_GET;
+	request->cachetime = CENTRAL_SPAMFILTER_CACHE_TIME;
+	request->callback = central_spamfilter_download_complete;
+	request->callback_data = NULL;
+	request->max_redirects = DOWNLOAD_MAX_REDIRECTS;
+	request->store_in_file = 1;
+
 	/* Build the URL */
 	add_nvplist(&nvp, 0, "feed", iConf.central_spamfilter_feed);
-	buildvarstring_nvp(iConf.central_spamfilter_url, url, sizeof(url), nvp, 0);
+	apikey = get_central_api_key();
+	if (apikey && !strcmp(iConf.central_spamfilter_url, DEFAULT_CENTRAL_SPAMFILTER_URL_OPEN_ACCESS))
+	{
+		/* Use the restricted URL */
+		buildvarstring_nvp(DEFAULT_CENTRAL_SPAMFILTER_URL_RESTRICTED_ACCESS, url, sizeof(url), nvp, 0);
+		add_nvplist(&request->headers, 0, "X-API-Key", apikey);
+	} else {
+		/* Use the open access URL */
+		buildvarstring_nvp(iConf.central_spamfilter_url, url, sizeof(url), nvp, 0);
+	}
 	safe_free_nvplist(nvp);
 
 	/* Start HTTPS request */
-	download_file_async(url, CENTRAL_SPAMFILTER_CACHE_TIME, central_spamfilter_download_complete, NULL, NULL, DOWNLOAD_MAX_REDIRECTS);
+	safe_strdup(request->url, url);
+	url_start_async(request);
 }
 
 EVENT(central_spamfilter_download_evt)

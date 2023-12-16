@@ -18,7 +18,6 @@
  */
 
 #include "unrealircd.h"
-#include "dns.h"
 
 ModuleHeader MOD_HEADER
 = {
@@ -143,12 +142,6 @@ MOD_INIT()
 	ModDataInfo mreq;
 
 	MARK_AS_OFFICIAL_MODULE(modinfo);
-	/* This module needs to be permanent.
-	 * Not because of UnrealIRCd restrictions,
-	 * but because we use c-ares callbacks and the address
-	 * of those functions will change if we REHASH.
-	 */
-	ModuleSetOptions(modinfo->handle, MOD_OPT_PERM, 1);
 	
 	memset(&mreq, 0, sizeof(mreq));
 	mreq.name = "blacklist";
@@ -182,6 +175,8 @@ MOD_INIT()
 	HookAdd(modinfo->handle, HOOKTYPE_LOCAL_QUIT, 0, blacklist_quit);
 
 	EventAdd(modinfo->handle, "blacklist_recheck", blacklist_recheck, NULL, 2000, 0);
+
+	RegisterApiCallbackResolverHost(modinfo->handle, "blacklist_resolver_callback", blacklist_resolver_callback);
 
 	return MOD_SUCCESS;
 }
@@ -611,6 +606,7 @@ int blacklist_set_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 				config_error("%s:%i: set::blacklist::recheck-time-first with no value",
 					cep->file->filename, cep->line_number);
 				errors++;
+				continue;
 			}
 			if (!strcmp(cep->value, "never"))
 			{
@@ -637,6 +633,7 @@ int blacklist_set_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 				config_error("%s:%i: set::blacklist::recheck-time with no value",
 					cep->file->filename, cep->line_number);
 				errors++;
+				continue;
 			}
 			if (strcmp(cep->value, "never"))
 			{
@@ -792,7 +789,7 @@ int blacklist_dns_request(Client *client, Blacklist *d)
 
 	BLUSER(client)->refcnt++; /* one (more) blacklist result remaining */
 	
-	unreal_gethostbyname_dnsbl(buf, AF_INET, blacklist_resolver_callback, BLUSER(client));
+	unreal_gethostbyname_api(buf, AF_INET, "blacklist_resolver_callback", BLUSER(client));
 	
 	return 0;
 }
@@ -988,6 +985,11 @@ void blacklist_resolver_callback(void *arg, int status, int timeouts, struct hos
 {
 	BLUser *blu = (BLUser *)arg;
 	Client *client = blu->client;
+
+#ifdef DEBUGMODE
+	unreal_log(ULOG_DEBUG, "blacklist", "BLACKLIST_RESOLVER_CALLBACK", client,
+	           "Called for client $client.details");
+#endif
 
 	blu->refcnt--; /* one less outstanding DNS request remaining */
 

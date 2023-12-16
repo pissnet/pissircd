@@ -5,7 +5,6 @@
  */
    
 #include "unrealircd.h"
-#include "dns.h"
 
 ModuleHeader MOD_HEADER
   = {
@@ -182,9 +181,10 @@ int webserver_packet_in(Client *client, const char *readbuf, int *length)
 }
 
 /** Helper function to parse the HTTP header consisting of multiple 'Key: value' pairs */
-int webserver_handshake_helper(char *buffer, int len, char **key, char **value, char **lastloc, int *end_of_request)
+int webserver_handshake_helper(char *buffer, int len, char **key, char **value, char **lastloc, int *lastloc_len, int *end_of_request)
 {
-	static char buf[4096], *nextptr;
+	static char buf[32768], *nextptr;
+	static int buflen;
 	char *p;
 	char *k = NULL, *v = NULL;
 	int foundlf = 0;
@@ -194,6 +194,7 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 		/* Initialize */
 		if (len > sizeof(buf) - 1)
 			len = sizeof(buf) - 1;
+		buflen = len;
 
 		memcpy(buf, buffer, len);
 		buf[len] = '\0';
@@ -201,6 +202,7 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 	}
 
 	*end_of_request = 0;
+	*lastloc_len = 0;
 
 	p = nextptr;
 
@@ -269,6 +271,12 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 	{
 		*key = *value = NULL;
 		*lastloc = k;
+		*lastloc_len = buflen - (k - buf);
+		/* unreal_log(ULOG_DEBUG, "webserver", "WEBSERVER_FRAMING", NULL,
+		           "Framing: processed $bytes_processed, remaining $bytes_remaining of $bytes_total",
+		           log_data_integer("bytes_processed", (int)(k - buf)),
+		           log_data_integer("bytes_remaining", *lastloc_len),
+		           log_data_integer("bytes_total", buflen)); */
 		return 0;
 	}
 
@@ -352,50 +360,34 @@ char *find_end_of_request(char *header, int totalsize, int *remaining_bytes)
 }
 
 /** Handle HTTP request
- * Yes, I'm going to assume that the header fits in one packet and one packet only.
  */
 int webserver_handle_request_header(Client *client, const char *readbuf, int *length)
 {
 	char *key, *value;
 	int r, end_of_request;
-	static char netbuf[16384];
-	static char netbuf2[16384];
+	char *netbuf;
 	char *lastloc = NULL;
-	int n, maxcopy, nprefix=0;
+	int lastloc_len = 0;
 	int totalsize;
 
-	/* Totally paranoid: */
-	memset(netbuf, 0, sizeof(netbuf));
-	memset(netbuf2, 0, sizeof(netbuf2));
-
-	/** Frame re-assembling starts here **/
+	totalsize = WEB(client)->lefttoparselen + *length;
+	netbuf = safe_alloc(totalsize+1);
 	if (WEB(client)->lefttoparse)
 	{
-		strlcpy(netbuf, WEB(client)->lefttoparse, sizeof(netbuf));
-		nprefix = strlen(netbuf);
+		memcpy(netbuf, WEB(client)->lefttoparse, WEB(client)->lefttoparselen);
+		memcpy(netbuf + WEB(client)->lefttoparselen, readbuf, *length);
+	} else {
+		memcpy(netbuf, readbuf, *length);
 	}
-	maxcopy = sizeof(netbuf) - nprefix - 1;
-	/* (Need to do some manual checking here as strlen() can't be safely used
-	 *  on readbuf. Same is true for strlncat since it uses strlen().)
-	 */
-	n = *length;
-	if (n > maxcopy)
-		n = maxcopy;
-	if (n <= 0)
-	{
-		webserver_close_client(client); // Oversized line
-		return -1;
-	}
-	memcpy(netbuf+nprefix, readbuf, n); /* SAFE: see checking above */
-	totalsize = n + nprefix;
-	netbuf[totalsize] = '\0';
-	memcpy(netbuf2, netbuf, totalsize+1); // copy, including the "always present \0 at the end just in case we use strstr etc".
 	safe_free(WEB(client)->lefttoparse);
+	WEB(client)->lefttoparselen = 0;
+
+	// remember to always safe_free(netbuf); below BEFORE RETURNING !!!
 
 	/** Now step through the lines.. **/
-	for (r = webserver_handshake_helper(netbuf, strlen(netbuf), &key, &value, &lastloc, &end_of_request);
+	for (r = webserver_handshake_helper(netbuf, totalsize, &key, &value, &lastloc, &lastloc_len, &end_of_request);
 	     r;
-	     r = webserver_handshake_helper(NULL, 0, &key, &value, &lastloc, &end_of_request))
+	     r = webserver_handshake_helper(NULL, 0, &key, &value, &lastloc, &lastloc_len, &end_of_request))
 	{
 		if (BadPtr(value))
 			continue; /* skip empty values */
@@ -428,6 +420,7 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 		if (!WEB(client)->uri)
 		{
 			webserver_send_response(client, 400, "Malformed HTTP request");
+			safe_free(netbuf);
 			return -1;
 		}
 
@@ -435,22 +428,33 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 		parse_proxy_header(client);
 		n = WEBSERVER(client)->handle_request(client, WEB(client));
 		if ((n <= 0) || IsDead(client))
+		{
+			safe_free(netbuf);
 			return n; /* byebye */
+		}
 		
 		/* There could be data directly after the request header (eg for
 		 * a POST or PUT), check for it here so it isn't lost.
 		 */
-		nextframe = find_end_of_request(netbuf2, totalsize, &remaining_bytes);
+		nextframe = find_end_of_request(netbuf, totalsize, &remaining_bytes);
 		if (nextframe)
-			return WEBSERVER(client)->handle_body(client, WEB(client), nextframe, remaining_bytes);
+		{
+			int n = WEBSERVER(client)->handle_body(client, WEB(client), nextframe, remaining_bytes);
+			safe_free(netbuf);
+			return n;
+		}
+		safe_free(netbuf);
 		return 0;
 	}
 
-	if (lastloc)
+	if (lastloc && lastloc_len)
 	{
 		/* Last line was cut somewhere, save it for next round. */
-		safe_strdup(WEB(client)->lefttoparse, lastloc);
+		WEB(client)->lefttoparselen = lastloc_len;
+		WEB(client)->lefttoparse = safe_alloc(lastloc_len);
+		memcpy(WEB(client)->lefttoparse, lastloc, lastloc_len);
 	}
+	safe_free(netbuf);
 	return 0; /* don't let UnrealIRCd process this */
 }
 
@@ -684,26 +688,55 @@ int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf,
 	return 1;
 }
 
-/** If a valid Forwarded: http header is received from a trusted source (proxy server), this function will
-  * extract remote IP address and secure (https) status from it. If more than one field with same name is received,
-  * we'll accept the last one. This should work correctly with chained proxies. */
+/** If a valid Forwarded http header is received from a trusted source (proxy server),
+ * this function will extract remote IP address and secure (https) status from it.
+ * If more than one field with same name is received, we'll accept the last one.
+ */
 void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded)
 {
-	char buf[512];
-	char *name, *value, *p = NULL;
+	char *buf = NULL;
+	char *name, *value, *p = NULL, *x;
 
-	memset(forwarded, 0, sizeof(HTTPForwardedHeader));
-	strlcpy(buf, input, sizeof(buf));
+	safe_strdup(buf, input);
 
-	for (name = strtoken(&p, buf, ";"); name; name = strtoken(&p, NULL, ";"))
+	for (name = strtoken(&p, buf, ";,"); name; name = strtoken(&p, NULL, ";,"))
 	{
+		skip_whitespace(&name);
 		value = strchr(name, '=');
 		if (value)
 			*value++ = '\0';
 		if (!value)
 			continue; /* we don't use value-less items atm anyway */
-		if (!strcmp(name, "for"))
+
+		/* Remove quotes - if any */
+		if (*value == '"')
 		{
+			value++;
+			x = strchr(value, '"');
+			if (x)
+				*x = '\0';
+		}
+		if (!strcasecmp(name, "for"))
+		{
+			/* IPv6 is in brackets, so cut it off */
+			if (*value == '[')
+			{
+				value++;
+				char *x = strchr(value, ']');
+				if (x)
+					*x = '\0';
+				/* ^^ this cuts off everything after ']', which
+				 *    may also cut off the optional local port,
+				 *    but that is fine: we don't use it.
+				 */
+			} else
+			if ((x = strchr(value, ':')))
+			{
+				/* For non-IPv6 ip:port, cut off at the ':',
+				 * so we only have IP.
+				 */
+				*x = '\0';
+			}
 			strlcpy(forwarded->ip, value, sizeof(forwarded->ip));
 		} else
 		if (!strcasecmp(name, "proto"))
@@ -720,6 +753,35 @@ void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded
 			}
 		}
 	}
+	safe_free(buf);
+}
+
+/** If a valid X-Forwarded-For http header is received from a trusted source (proxy server),
+ * this function will extract remote IP address and secure (https) status from it.
+ * If more than one IP is received, we'll accept the last one.
+ */
+void do_parse_x_forwarded_for_header(const char *input, HTTPForwardedHeader *forwarded)
+{
+	char *buf = NULL;
+	char *name, *value, *p = NULL;
+
+	safe_strdup(buf, input);
+
+	for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
+	{
+		skip_whitespace(&name);
+		strlcpy(forwarded->ip, name, sizeof(forwarded->ip));
+	}
+
+	safe_free(buf);
+}
+
+void do_parse_x_forwarded_proto_header(const char *value, HTTPForwardedHeader *forwarded)
+{
+	if (!strcmp(value, "https"))
+		forwarded->secure = 1;
+	else if (!strcmp(value, "http"))
+		forwarded->secure = 0;
 }
 
 void webserver_handle_proxy(Client *client, ConfigItem_proxy *proxy)
@@ -740,14 +802,39 @@ void webserver_handle_proxy(Client *client, ConfigItem_proxy *proxy)
 	/* Go through the headers and parse them */
 	for (header = WEB(client)->headers; header; header = header->next)
 	{
-		if (!strcasecmp(header->name, "Forwarded") || !strcasecmp(header->name, "X-Forwarded"))
-			do_parse_forwarded_header(header->value, forwarded);
+		if (proxy->type == PROXY_FORWARDED)
+		{
+			if (!strcasecmp(header->name, "Forwarded"))
+				do_parse_forwarded_header(header->value, forwarded);
+		} else
+		if (proxy->type == PROXY_X_FORWARDED)
+		{
+			if (!strcasecmp(header->name, "X-Forwarded-For"))
+				do_parse_x_forwarded_for_header(header->value, forwarded);
+			else if (!strcasecmp(header->name, "X-Forwarded-Proto"))
+				do_parse_x_forwarded_proto_header(header->value, forwarded);
+		} else
+		if (proxy->type == PROXY_CLOUDFLARE)
+		{
+			/* This is a mix of CF-Connecting-IP and X-Forwarded-Proto */
+			if (!strcasecmp(header->name, "CF-Connecting-IP"))
+				do_parse_x_forwarded_for_header(header->value, forwarded);
+			else if (!strcasecmp(header->name, "X-Forwarded-Proto"))
+				do_parse_x_forwarded_proto_header(header->value, forwarded);
+		}
 	}
+
+#ifdef DEBUGMODE
+	unreal_log(ULOG_DEBUG, "webserver", "FORWARDING_INFO", client,
+	           "For client $client.details forwarding IP is $ip and is $secure",
+	           log_data_string("ip", forwarded->ip),
+	           log_data_string("secure", forwarded->secure ? "secure" : "insecure"));
+#endif
 
 	/* check header values */
 	if (!is_valid_ip(forwarded->ip))
 	{
-		unreal_log(ULOG_WARNING, "websocket", "MISSING_PROXY_HEADER", client,
+		unreal_log(ULOG_WARNING, "webserver", "MISSING_PROXY_HEADER", client,
 		           "Client on proxy $client.ip has matching proxy { } block "
 		           "but the proxy did not send a valid forwarded header. "
 		           "The IP of the user is now the proxy IP $client.ip (bad!).");
@@ -775,7 +862,8 @@ void parse_proxy_header(Client *client)
 
 	for (proxy = conf_proxy; proxy; proxy = proxy->next)
 	{
-		if ((proxy->type == PROXY_WEB) && user_allowed_by_security_group(client, proxy->mask))
+		if (IsWebProxy(proxy->type) &&
+		    user_allowed_by_security_group(client, proxy->mask))
 		{
 			webserver_handle_proxy(client, proxy);
 			return;

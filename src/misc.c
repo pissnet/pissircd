@@ -1466,6 +1466,46 @@ int IsWebsocket(Client *client)
 	return (MyConnect(client) && moddata_client(client, md).ptr) ? 1 : 0;
 }
 
+const char *compressed_ip(const char *ip)
+{
+	char scratch[64];
+	static char ret[64];
+
+	if (ip && strchr(ip, ':') && (inet_pton(AF_INET6, ip, scratch) == 1))
+		if (inet_ntop(AF_INET6, scratch, ret, sizeof(ret)))
+			return ret;
+
+	return ip;
+}
+
+static int should_hide_ban_reason(Client *client, const char *reason)
+{
+	if (HIDE_BAN_REASON == HIDE_BAN_REASON_AUTO)
+	{
+		/* If we detect the IP address in the ban reason or
+		 * it contains an unrealircd.org/ URL then the
+		 * ban reason is hidden since it may expose client
+		 * details.
+		 */
+		// First the simple check:
+		if (strstr(reason, "unrealircd.org/") ||
+		    strstr(reason, client->ip))
+		{
+			return 1;
+		}
+		// For IPv6, check compressed IP too:
+		if (IsIPV6(client))
+		{
+			const char *ip = compressed_ip(client->ip);
+			if (strstr(reason, ip))
+				return 1;
+		}
+		return 0;
+	} else {
+		return HIDE_BAN_REASON == HIDE_BAN_REASON_YES ? 1 : 0;
+	}
+}
+
 /** Generic function to inform the user he/she has been banned.
  * @param client   The affected client.
  * @param bantype  The ban type, such as: "K-Lined", "G-Lined" or "realname".
@@ -1516,7 +1556,7 @@ void banned_client(Client *client, const char *bantype, const char *reason, int 
 	}
 
 	/* The final message in the ERROR is shorter. */
-	if (HIDE_BAN_REASON && IsRegistered(client))
+	if (IsRegistered(client) && should_hide_ban_reason(client, reason))
 	{
 		/* Hide the ban reason, but put the real reason in unrealircd.org/real-quit-reason */
 		MessageTag *m = safe_alloc(sizeof(MessageTag));
@@ -1731,7 +1771,7 @@ int is_silenced_default_handler(Client *client, Client *acptr)
 	return 0;
 }
 
-int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block)
+int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by)
 {
 	return -1;
 }
@@ -1850,6 +1890,21 @@ void cancel_ident_lookup_default_handler(Client *client)
 
 void ban_act_set_reputation_default_handler(Client *client, BanAction *action)
 {
+}
+
+const char *get_central_api_key_default_handler(void)
+{
+	return NULL;
+}
+
+int central_spamreport_default_handler(Client *target, Client *by)
+{
+	return 0;
+}
+
+int central_spamreport_enabled_default_handler(void)
+{
+	return 0;
 }
 
 /** my_timegm: mktime()-like function which will use GMT/UTC.
@@ -3095,15 +3150,15 @@ int valid_spamfilter_id(const char *s)
 	return 1;
 }
 
-void download_complete_dontcare(const char *url, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *ptr)
+void download_complete_dontcare(OutgoingWebRequest *request, OutgoingWebResponse *response)
 {
 #ifdef DEBUGMODE
-	if (memory)
+	if (response->memory)
 	{
 		unreal_log(ULOG_DEBUG, "url", "DEBUG_URL_RESPONSE", NULL,
 		           "Response for '$url': $response",
-		           log_data_string("url", url),
-		           log_data_string("response", memory));
+		           log_data_string("url", request->url),
+		           log_data_string("response", response->memory));
 	}
 #endif
 }
@@ -3129,3 +3184,161 @@ int valid_operclass_name(const char *str)
 
 	return 1;
 }
+
+/** Free an OutgoingWebRequest struct - note: use safe_free_outgoingwebrequest() instead (which calls us). */
+void free_outgoingwebrequest(OutgoingWebRequest *r)
+{
+	safe_free(r->apicallback);
+	safe_free(r->url);
+	safe_free(r->actual_url);
+        safe_free(r->body);
+        safe_free_nvplist(r->headers);
+        safe_free(r);
+}
+
+/** Safely duplicate an OutgoingWebRequest struct (eg for https redirects) */
+OutgoingWebRequest *duplicate_outgoingwebrequest(OutgoingWebRequest *orig)
+{
+	OutgoingWebRequest *e = safe_alloc(sizeof(OutgoingWebRequest));
+
+	e->callback = orig->callback;
+	safe_strdup(e->apicallback, orig->apicallback);
+	e->callback_data = orig->callback_data;
+	safe_strdup(e->url, orig->url);
+	safe_strdup(e->actual_url, orig->actual_url);
+	e->http_method = orig->http_method;
+	safe_strdup(e->body, orig->body);
+	e->headers = duplicate_nvplist(orig->headers);
+	e->store_in_file = orig->store_in_file;
+	e->cachetime = orig->cachetime;
+	e->max_redirects = orig->max_redirects;
+	e->keep_file = orig->keep_file;
+	e->connect_timeout = orig->connect_timeout;
+	e->transfer_timeout = orig->transfer_timeout;
+	return e;
+}
+
+/*
+ * Handles asynchronous downloading of a file (simple non-flexible version).
+ * NOTE: url_start_async() is the more advanced one.
+ *
+ * This function allows a download to be made transparently without
+ * the caller having any knowledge of how libcurl works. The specified
+ * callback function is called when the download completes, or the
+ * download fails. The callback function is defined as:
+ *
+ * void callback(const char *url, const char *filename, const char *memory_data, int memory_data_len, char *errorbuf, int cached, void *data);
+ *  - url will contain the original URL used to download the file.
+ *  - filename will contain the name of the file (if successful, NULL on error or if cached).
+ *    This file will be cleaned up after the callback returns, so save a copy to support caching.
+ *  - errorbuf will contain the error message (if failed, NULL otherwise).
+ *  - cached 1 if the specified cachetime is >= the current file on the server,
+ *    if so, errorbuf will be NULL, filename will contain the path to the file.
+ *  - data will be the value of callback_data, allowing you to figure
+ *    out how to use the data contained in the downloaded file ;-).
+ *    Make sure that if you access the contents of this pointer, you
+ *    know that this pointer will persist. A download could take more
+ *    than 10 seconds to happen and the config file can be rehashed
+ *    multiple times during that time.
+ */
+void download_file_async(const char *url,
+                         time_t cachetime,
+                         void (*callback)(OutgoingWebRequest *request, OutgoingWebResponse *response),
+                         void *callback_data,
+                         int maxredirects)
+{
+	OutgoingWebRequest *request = safe_alloc(sizeof(OutgoingWebRequest));
+	safe_strdup(request->url, url);
+	request->http_method = HTTP_METHOD_GET;
+	request->cachetime = cachetime;
+	request->callback = callback;
+	request->callback_data = callback_data;
+	request->max_redirects = maxredirects;
+	request->store_in_file = 1;
+	url_start_async(request);
+}
+
+void url_callback(OutgoingWebRequest *r, const char *file, const char *memory, int memory_len, const char *errorbuf, int cached, void *ptr)
+{
+	OutgoingWebResponse *response;
+
+	if (!r->callback && !r->apicallback)
+		return; /* Nothing to do */
+
+	response = safe_alloc(sizeof(OutgoingWebResponse));
+	response->file = file;
+	response->memory = memory;
+	response->memory_len = memory_len;
+	response->errorbuf = errorbuf;
+	response->cached = cached;
+	response->ptr = ptr;
+
+	if (r->callback)
+	{
+		r->callback(r, response);
+	} else if (r->apicallback)
+	{
+		APICallback *cb = APICallbackFind(r->apicallback, API_CALLBACK_WEB_RESPONSE);
+		if (cb && !cb->unloaded)
+			cb->callback.web_response(r, response);
+	}
+
+	safe_free(response);
+}
+
+static int synchronous_http_request_in_progress;
+static char synchronous_http_request_tmpfile[512];
+
+void synchronous_http_request_handle_response(OutgoingWebRequest *request, OutgoingWebResponse *response)
+{
+	if (response->errorbuf)
+	{
+		config_error("%s: %s", request->url, response->errorbuf);
+		synchronous_http_request_in_progress = -1;
+		return;
+	}
+	if (response->file)
+	{
+		strlcpy(synchronous_http_request_tmpfile, response->file, sizeof(synchronous_http_request_tmpfile));
+		synchronous_http_request_in_progress = 0;
+	} else {
+		config_error("%s: Unexpected error, no error but no file", request->url);
+		synchronous_http_request_in_progress = -1;
+	}
+	return;
+}
+
+const char *synchronous_http_request(const char *url, int max_redirects, int connect_timeout, int transfer_timeout)
+{
+	OutgoingWebRequest *request;
+
+	if (loop.booted)
+		abort(); /* this function is NOT for modules or the like */
+
+	request = safe_alloc(sizeof(OutgoingWebRequest));
+	safe_strdup(request->url, url);
+	request->http_method = HTTP_METHOD_GET;
+	request->callback = synchronous_http_request_handle_response;
+	request->max_redirects = max_redirects;
+	request->store_in_file = 1;
+	request->keep_file = 1;
+	request->connect_timeout = connect_timeout;
+	request->transfer_timeout = transfer_timeout;
+	url_start_async(request);
+	synchronous_http_request_in_progress = 1;
+
+	while (synchronous_http_request_in_progress == 1)
+	{
+		gettimeofday(&timeofday_tv, NULL);
+		timeofday = timeofday_tv.tv_sec;
+		url_socket_timeout(NULL);
+		unrealdns_timeout(NULL);
+		fd_select(500);
+	}
+
+	if (synchronous_http_request_in_progress == 0)
+		return synchronous_http_request_tmpfile;
+	return NULL; /* failure */
+}
+
+// TODO: move all that url shit to url_generic.c ? ;)

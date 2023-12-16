@@ -195,12 +195,24 @@ void unload_moddata_commit(ModDataInfo *md)
 					md->free(&moddata_client(client, md));
 				memset(&moddata_client(client, md), 0, sizeof(ModData));
 			}
+			list_for_each_entry(client, &unknown_list, lclient_node)
+			{
+				if (md->free && moddata_client(client, md).ptr)
+					md->free(&moddata_client(client, md));
+				memset(&moddata_client(client, md), 0, sizeof(ModData));
+			}
 			break;
 		}
 		case MODDATATYPE_LOCAL_CLIENT:
 		{
 			Client *client;
 			list_for_each_entry(client, &lclient_list, lclient_node)
+			{
+				if (md->free && moddata_local_client(client, md).ptr)
+					md->free(&moddata_local_client(client, md));
+				memset(&moddata_local_client(client, md), 0, sizeof(ModData));
+			}
+			list_for_each_entry(client, &unknown_list, lclient_node)
 			{
 				if (md->free && moddata_local_client(client, md).ptr)
 					md->free(&moddata_local_client(client, md));
@@ -273,24 +285,41 @@ void ModDataDel(ModDataInfo *md)
 				break;
 			}
 		}
+		/* Module is unloading, so owner will be gone: */
 		md->owner = NULL;
 	}
 
 	if (loop.rehashing)
+	{
+		/* Since the module is unloaded, these are not safe anymore either: */
+		md->free = NULL;
+		md->serialize = NULL;
+		md->unserialize = NULL;
 		md->unloaded = 1;
-	else
+	} else {
+		/* We need the free function and the like,
+		 * and then completely destroy 'md'.
+		 */
 		unload_moddata_commit(md);
+	}
 }
 
 void unload_all_unused_moddata(void)
 {
-ModDataInfo *md, *md_next;
+	ModDataInfo *md, *md_next;
 
 	for (md = MDInfo; md; md = md_next)
 	{
 		md_next = md->next;
 		if (md->unloaded)
+		{
+			//config_status("UNLOADING: md %s (owner %p, type %d, slot %d)",
+			//	md->name, md->owner, md->type, md->slot);
 			unload_moddata_commit(md);
+		} else {
+			//config_status("loaded: md %s (owner %p, type %d, slot %d)",
+			//	md->name, md->owner, md->type, md->slot);
+		}
 	}
 }
 

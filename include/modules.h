@@ -60,6 +60,7 @@ typedef struct Hooktype Hooktype;
 typedef struct Callback Callback;
 typedef struct Efunction Efunction;
 typedef enum EfunctionType EfunctionType;
+typedef struct APICallback APICallback;
 
 /*
  * Module header that every module must include, with the name of
@@ -108,6 +109,7 @@ typedef enum ModuleObjectType {
 	MOBJ_MTAG = 17,
 	MOBJ_HISTORY_BACKEND = 18,
 	MOBJ_RPC = 19,
+	MOBJ_API_CALLBACK = 20,
 } ModuleObjectType;
 
 typedef struct Umode Umode;
@@ -746,6 +748,7 @@ typedef struct ModuleObject {
 		MessageTagHandler *mtag;
 		HistoryBackend *history_backend;
 		RPCHandler *rpc;
+		APICallback *apicallback;
 	} object;
 } ModuleObject;
 
@@ -832,6 +835,22 @@ struct EventInfo {
 	void *data;
 };
 
+typedef enum APICallbackType {
+	API_CALLBACK_WEB_RESPONSE = 1,
+	API_CALLBACK_RESOLVER_HOST = 11,
+} APICallbackType;
+
+struct APICallback {
+	APICallback *prev, *next;
+	char *name; /**< Name of the api callback */
+	Module *owner; /**< To which module this object belongs */
+	char unloaded; /**< Set to 1 if this object is marked for deletion */
+	APICallbackType callback_type;
+	union {
+		void (*web_response)(OutgoingWebRequest *request, OutgoingWebResponse *response);
+		ares_host_callback resolver_host;
+	} callback; /**< The callback itself, obviously chosen by .callback_type */
+};
 
 extern MODVAR Hook		*Hooks[MAXHOOKTYPES];
 extern MODVAR Hooktype		Hooktypes[MAXCUSTOMHOOKS];
@@ -996,25 +1015,45 @@ extern ModData *moddata_client_get_raw(Client *client, const char *varname);
 extern int moddata_local_client_set(Client *acptr, const char *varname, const char *value);
 extern const char *moddata_local_client_get(Client *acptr, const char *varname);
 
-extern int LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void **var, void (*free_variable)(ModData *m));
+extern void LoadPersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void **var, void (*free_variable)(ModData *m));
 #define LoadPersistentPointer(modinfo, var, free_variable) LoadPersistentPointerX(modinfo, #var, (void **)&var, free_variable)
 extern void SavePersistentPointerX(ModuleInfo *modinfo, const char *varshortname, void *var);
 #define SavePersistentPointer(modinfo, var) SavePersistentPointerX(modinfo, #var, var)
 
-extern int LoadPersistentIntX(ModuleInfo *modinfo, const char *varshortname, int *var);
+extern void LoadPersistentIntX(ModuleInfo *modinfo, const char *varshortname, int *var);
 #define LoadPersistentInt(modinfo, var) LoadPersistentIntX(modinfo, #var, &var)
 extern void SavePersistentIntX(ModuleInfo *modinfo, const char *varshortname, int var);
 #define SavePersistentInt(modinfo, var) SavePersistentIntX(modinfo, #var, var)
 
-extern int LoadPersistentLongX(ModuleInfo *modinfo, const char *varshortname, long *var);
+extern void LoadPersistentLongX(ModuleInfo *modinfo, const char *varshortname, long *var);
 #define LoadPersistentLong(modinfo, var) LoadPersistentLongX(modinfo, #var, &var)
 extern void SavePersistentLongX(ModuleInfo *modinfo, const char *varshortname, long var);
 #define SavePersistentLong(modinfo, var) SavePersistentLongX(modinfo, #var, var)
 
-extern int LoadPersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long *var);
+extern void LoadPersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long *var);
 #define LoadPersistentLongLong(modinfo, var) LoadPersistentLongLongX(modinfo, #var, &var)
 extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortname, long long var);
 #define SavePersistentLongLong(modinfo, var) SavePersistentLongLongX(modinfo, #var, var)
+
+extern APICallback *APICallbackFind(const char *method, APICallbackType callback_type);
+extern void APICallbackDel(APICallback *m);
+extern APICallback *APICallbackAdd(Module *module, APICallback *mreq);
+
+#define RegisterApiCallback(modhandle, api_callback_type, api_callback_function, api_name, api_func) \
+	do { \
+		APICallback req; \
+		memset(&req, 0, sizeof(req)); \
+		req.name = api_name; \
+		req.callback_type = api_callback_type; \
+		req.callback.api_callback_function = api_func; \
+		APICallbackAdd(modhandle, &req); \
+	} while(0)
+
+#define RegisterApiCallbackWebResponse(modhandle, api_name, api_func) \
+	RegisterApiCallback(modhandle, API_CALLBACK_WEB_RESPONSE, web_response, api_name, api_func)
+
+#define RegisterApiCallbackResolverHost(modhandle, api_name, api_func) \
+	RegisterApiCallback(modhandle, API_CALLBACK_RESOLVER_HOST, resolver_host, api_name, api_func)
 
 /** Hooks trigger on "events", such as a new user connecting or joining a channel,
  * see https://www.unrealircd.org/docs/Dev:Hook_API for background info.
@@ -1259,6 +1298,12 @@ extern void SavePersistentLongLongX(ModuleInfo *modinfo, const char *varshortnam
 #define HOOKTYPE_DNS_FINISHED	119
 /** See hooktype_reconfigure_web_listener */
 #define HOOKTYPE_CONFIG_LISTENER	120
+/** See hooktype_watch_add */
+#define HOOKTYPE_WATCH_ADD	121
+/** See hooktype_watch_del */
+#define HOOKTYPE_WATCH_DEL	122
+/** See hooktype_monitor_notification */
+#define HOOKTYPE_MONITOR_NOTIFICATION	123
 
 /** Used by third/centralblocklist; defined to avoid conflicts with pissnet-specific hook */
 #define HOOKTYPE_GET_CENTRAL_API_KEY 198
@@ -2353,6 +2398,30 @@ int hooktype_dns_finished(Client *client);
  */
 int hooktype_config_listener(ConfigItem_listen *listener);
 
+/** Called after an entry is added to a WATCH (or MONITOR) list.
+ * @param nick	Name of the new entry (watched user's nick)
+ * @param client	Owner of the watch list
+ * @param flags	Flags for the entry (WATCH_FLAG_TYPE_*)
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_watch_add(char *nick, Client *client, int flags);
+
+/** Called after an entry is removed from a WATCH (or MONITOR) list.
+ * @param nick	Name of the entry (watched user's nick) to be deleted
+ * @param client	Owner of the watch list
+ * @param flags	Flags for the entry (WATCH_FLAG_TYPE_*) to be deleted
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_watch_del(char *nick, Client *client, int flags);
+
+/** Called when an user is notified about a MONITORed nick coming off- or online.
+ * @param watcher	The user being notified
+ * @param client	The user (dis)appearing
+ * @param online	1 if it's coming online, 0 otherwise
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_monitor_notification(Client *watcher, Client *client, int online);
+
 /** @} */
 
 #ifdef GCC_TYPECHECKING
@@ -2476,7 +2545,10 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT) && !ValidateHook(hooktype_pre_local_handshake_timeout, func)) || \
         ((hooktype == HOOKTYPE_REHASH_LOG) && !ValidateHook(hooktype_rehash_log, func)) || \
         ((hooktype == HOOKTYPE_DNS_FINISHED) && !ValidateHook(hooktype_dns_finished, func)) || \
-        ((hooktype == HOOKTYPE_CONFIG_LISTENER) && !ValidateHook(hooktype_config_listener, func))) \
+        ((hooktype == HOOKTYPE_CONFIG_LISTENER) && !ValidateHook(hooktype_config_listener, func)) || \
+        ((hooktype == HOOKTYPE_WATCH_ADD) && !ValidateHook(hooktype_watch_add, func)) || \
+        ((hooktype == HOOKTYPE_WATCH_DEL) && !ValidateHook(hooktype_watch_del, func)) || \
+        ((hooktype == HOOKTYPE_MONITOR_NOTIFICATION) && !ValidateHook(hooktype_monitor_notification, func))) \
         _hook_error_incompatible();
 #endif /* GCC_TYPECHECKING */
 
@@ -2631,6 +2703,9 @@ enum EfunctionType {
 	EFUNC_CRULE_FREE,
 	EFUNC_CRULE_ERRSTRING,
 	EFUNC_BAN_ACT_SET_REPUTATION,
+	EFUNC_GET_CENTRAL_API_KEY,
+	EFUNC_CENTRAL_SPAMREPORT,
+	EFUNC_CENTRAL_SPAMREPORT_ENABLED,
 };
 
 /* Module flags */

@@ -1,5 +1,123 @@
-UnrealIRCd 6.1.2.3
-===================
+UnrealIRCd 6.1.4
+=================
+This release fixes a crash issue with websockets in UnrealIRCd 6.1.0 - 6.1.3.
+
+The full advisory with all details is available at:
+https://forums.unrealircd.org/viewtopic.php?t=9340
+
+See that advisory also for a way to hot-patch, to fix the crash issue on *NIX
+without restarting (zero downtime). If you choose to go with the hot-patch,
+then you don't need to upgrade to 6.1.4.
+
+UnrealIRCd 6.1.4 is for those people who run Windows, or otherwise just feel
+like it is a good time to do a full upgrade (with restart). It's naturally
+also for new installations.
+
+### Fixes:
+* Crash that can be triggered by users when
+  [Websockets](https://www.unrealircd.org/docs/WebSocket_support)
+  are in use (a listen block with `listen::options::websocket`).
+  This was assigned CVE-2023-50784.
+* In 6.1.3, [Websockets](https://www.unrealircd.org/docs/WebSocket_support)
+  were not working with Chrome and possibly other browsers.
+  The fix for this is also included in the hot-patch (for 6.1.3 only).
+
+UnrealIRCd 6.1.3
+=================
+
+The main focus of this release is adding countermeasures against large
+scale spam/drones. We do this by offering a central API which can be used
+for accessing Central Blocklist, Central Spamreport and Central Spamfilter.
+
+### Enhancements:
+* Central anti-spam services:
+  * The services from below require a central-api key, which
+    you can [request here](https://www.unrealircd.org/central-api/).
+  * [Central Blocklist](https://www.unrealircd.org/docs/Central_Blocklist)
+    is an attempt to detect and block spammers. It works similar to DNS
+    Blacklists but the central blocklist receives many more details about the
+    user that is trying to connect and therefore can make a better decision on
+    whether a user is likely a spammer.
+  * [Central Spamreport](https://www.unrealircd.org/docs/Central_spamreport)
+    allows you to send spam reports (user details, last sent lines) via
+    the `SPAMREPORT` command. This information may then be used to improve
+    [Central Blocklist](https://www.unrealircd.org/docs/Central_Blocklist)
+    and/or [Central Spamfilter](https://www.unrealircd.org/docs/Central_Spamfilter).
+  * The [Central Spamfilter](https://www.unrealircd.org/docs/Central_Spamfilter),
+    which provides spamfilter { } blocks that are centrally managed, is
+    now fetched from a different URL if you have an Central API key set.
+    This way, we can later provide spamfilter { } blocks that build on
+    central blocklist scoring functionality, and also so we don't have to
+    reveal all the central spamfilter blocks to the world.
+* New option `auto` for
+  [set::hide-ban-reason](https://www.unrealircd.org/docs/Set_block#set::hide-ban-reason),
+  which is now the default. This will hide the *LINE reason to other users
+  if the *LINE reason contains the IP of the user, for example when it contains
+  a DroneBL URL which has `lookup?ip=XXX`. This to protect the privacy of the user.
+  Other possible settings are `no` (never hide, the previous default) and
+  `yes` to always hide the *LINE reason. In all cases the user affected by
+  the server ban can still see the reason and IRCOps too.
+* Make [Deny channel](https://www.unrealircd.org/docs/Deny_channel_block)
+  support escaped sequences like `channel "#xyz\*";` so you can match
+  a literal `*` or `?` via `\*` and `\?`.
+* New option
+  [listen::options::websocket::allow-origin](https://www.unrealircd.org/docs/Listen_block#options_block_(optional)):
+  this allows to restrict websocket connections to a list of websites
+  (the sites hosting the HTML/JS page that makes the websocket connection).
+  It doesn't *securely* restrict it though, non-browsers will bypass this
+  restriction, but it can still be useful to restrict regular webchat users.
+* The [Proxy block](https://www.unrealircd.org/docs/Proxy_block) already
+  had support for reverse proxying with the `Forwarded` header. Now it
+  also properly supports `X-Forwarded-For`. If you previously used a proxy
+  block with type `web`, then you now need to choose one of the new types
+  explicitly. Note that using a reverse proxy for IRC traffic is rare
+  (see the proxy block docs for details), but we offer the option.
+
+### Changes:
+* Reserve more file descriptors for internal use. For example, when there
+  are 10,000 fd's are available we now reserve 250, and when 2048 are
+  available we reserve 32. This so we have more fd's available to handle
+  things like log files, do HTTPS callbacks to blacklists, etc.
+* Get rid of compiler check for modules vs core, this is mostly an issue
+  when you are upgrading a system (eg. Linux distro) and it would previously
+  make REHASHing impossible after such an upgrade. Though, if you are doing
+  a major distro upgrade you can still be bitten by things like library
+  removals such as major openssl upgrades.
+* Make `$client.details` in logs follow the ident rules for users in
+  the handshake too, so use the `~` prefix if ident lookups are enabled
+  and identd fails etc.
+* More validation for operclass names (a-zA-Z0-9_-)
+* Hits for central-blocklist are now broadcasted globally instead of
+  staying on the same server.
+
+### Fixes:
+* When using a trusted reverse proxy with the
+  [Proxy block](https://www.unrealircd.org/docs/Proxy_block),
+  under some circumstances it was possible for end-users to spoof IP's.
+* Crash issue when a module is reloaded (not unloaded) and that module
+  no longer provides a particular moddata object, e.g. because it was
+  renamed or no longer needed. This is rare, but did happen for one
+  third party module recently.
+* The crash reporter was no longer able to submit reports.
+* [Module manager](https://www.unrealircd.org/docs/Module_manager) fixes
+* For people running git versions, who did not use 'make clean', 3rd party
+  modules were not always automatically recompiled, causing potential
+  problems such as crashes.
+* Fix memory leak when unloading a module for good and that module provided
+  ModData objects for "unknown users" (users still in the handshake).
+* Don't ask to generate TLS certificate if one already exists (issue
+  introduced in 6.1.2).
+
+### Developers and protocol:
+* New hooks: `HOOKTYPE_WATCH_ADD`, `HOOKTYPE_WATCH_DEL`,
+  `HOOKTYPE_MONITOR_NOTIFICATION`.
+* The hook `HOOKTYPE_IS_HANDSHAKE_FINISHED` is now properly called
+  at all places.
+* A new [URL API](https://www.unrealircd.org/docs/Dev:URL_API)
+  to easily fetch URLs from modules.
+
+UnrealIRCd 6.1.2
+-----------------
 UnrealIRCd 6.1.2 focuses on adding spamfilter features but also contains
 various other new features and some fixes.
 
