@@ -24,7 +24,7 @@
 ModuleHeader MOD_HEADER
 = {
 	"crule",
-	"1.0.0",
+	"1.0.1",
 	"Crule support for and deny link::rule and spamfilter::rule",
 	"UnrealIRCd Team",
 	"unrealircd-6",
@@ -129,6 +129,9 @@ static int crule_inchannel(crule_context *, int, void **);
 static int crule_destination(crule_context *, int, void **);
 static int crule_cap_version(crule_context *, int, void **);
 static int crule_cap_set(crule_context *, int, void **);
+static int crule_has_user_mode(crule_context *, int, void **);
+static int crule_has_channel_mode(crule_context *, int, void **);
+static int crule_away(crule_context *, int, void **);
 
 /* parsing function prototypes - local! */
 static int crule_gettoken(crule_token *next_tokp, const char **str);
@@ -156,13 +159,12 @@ char *crule_errstr[] = {
 
 /* function table - null terminated */
 struct crule_funclistent {
-	char name[15];		/* MAXIMUM FUNCTION NAME LENGTH IS 14 CHARS!! */
+	char name[32];
 	int reqnumargs;
 	crule_funcptr funcptr;
 };
 
 struct crule_funclistent crule_funclist[] = {
-	/* maximum function name length is 14 chars */
 	{"connected", 1, crule_connected},
 	{"online_time", 0, crule_online_time},
 	{"reputation", 0, crule_reputation},
@@ -174,9 +176,11 @@ struct crule_funclistent crule_funclist[] = {
 	{"directcon", 1, crule_directcon},
 	{"via", 2, crule_via},
 	{"directop", 0, crule_directop},
-	{"", 0, NULL}		/* this must be here to mark end of list */
+	{"has_user_mode", 1, crule_has_user_mode},
+	{"has_channel_mode", 1, crule_has_channel_mode},
+	{"is_away", 0, crule_away},
+	{"", 0, NULL} /* this must be here to mark end of list */
 };
-
 
 MOD_TEST()
 {
@@ -202,6 +206,47 @@ MOD_LOAD()
 MOD_UNLOAD()
 {
 	return MOD_SUCCESS;
+}
+
+static int crule_away(crule_context *context, int numargs, void *crulearg[])
+{
+	if (!context || !context->client || !IsUser(context->client))
+		return 0;
+
+	return (!BadPtr(context->client->user->away)) ? 1 : 0;
+}
+
+static int crule_has_user_mode(crule_context *context, int numargs, void *crulearg[])
+{
+	const char *modes = (char *)crulearg[0];
+
+	if (!context || !context->client || !strlen(modes))
+		return 0;
+
+	for (; *modes; modes++)
+		if (!has_user_mode(context->client, *modes))
+			return 0;
+
+	return 1;
+}
+
+static int crule_has_channel_mode(crule_context *context, int numargs, void *crulearg[])
+{
+	const char *modes = (char *)crulearg[0];
+	Channel *channel;
+
+	if (!context || !context->destination || (context->destination[0] != '#'))
+		return 0;
+
+	channel = find_channel(context->destination);
+	if (!channel)
+		return 0;
+
+	for (; *modes; modes++)
+		if (!has_channel_mode(channel, *modes))
+			return 0;
+
+	return 1;
 }
 
 static int crule_connected(crule_context *context, int numargs, void *crulearg[])

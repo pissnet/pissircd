@@ -636,7 +636,21 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	}
 
 	if (match)
-		m = unreal_create_match(match_type, match, NULL);
+	{
+		char *err;
+		m = unreal_create_match(match_type, match, &err);
+		if (!m)
+		{
+			config_warn("%s:%i: This spamfilter block is ignored because spamfilter::match contained an invalid regex: %s",
+				ce->file->filename,
+				ce->line_number,
+				err);
+			/* This is great, now we need to undo everything.. */
+			free_security_group(except);
+			safe_free_all_ban_actions(action);
+			return 1;
+		}
+	}
 
 	banreason = unreal_encodespace(banreason);
 	tkl_add_spamfilter(TKL_SPAMF,
@@ -5308,36 +5322,42 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 		{
 			// TODO: wait, why are we running slow spamfilter detection for simple (non-regex) too ?
 #ifdef SPAMFILTER_DETECTSLOW
-			memset(&rnow, 0, sizeof(rnow));
-			memset(&rprev, 0, sizeof(rnow));
+			if (tkl->ptr.spamfilter->match->type == MATCH_PCRE_REGEX)
+			{
+				memset(&rnow, 0, sizeof(rnow));
+				memset(&rprev, 0, sizeof(rnow));
 
-			getrusage(RUSAGE_SELF, &rprev);
+				getrusage(RUSAGE_SELF, &rprev);
+			}
 #endif
 
 			ret = unreal_match(tkl->ptr.spamfilter->match, str);
 
 #ifdef SPAMFILTER_DETECTSLOW
-			getrusage(RUSAGE_SELF, &rnow);
-
-			ms_past = ((rnow.ru_utime.tv_sec - rprev.ru_utime.tv_sec) * 1000) +
-				  ((rnow.ru_utime.tv_usec - rprev.ru_utime.tv_usec) / 1000);
-
-			if ((SPAMFILTER_DETECTSLOW_FATAL > 0) && (ms_past > SPAMFILTER_DETECTSLOW_FATAL))
+			if (tkl->ptr.spamfilter->match->type == MATCH_PCRE_REGEX)
 			{
-				unreal_log(ULOG_ERROR, "tkl", "SPAMFILTER_SLOW_FATAL", NULL,
-					   "[Spamfilter] WARNING: Too slow spamfilter detected (took $msec_time msec to execute) "
-					   "-- spamfilter will be \002REMOVED!\002: $tkl",
-					   log_data_tkl("tkl", tkl),
-					   log_data_integer("msec_time", ms_past));
-				tkl_del_line(tkl);
-				return 0; /* Act as if it didn't match, even if it did.. it's gone now anyway.. */
-			} else
-			if ((SPAMFILTER_DETECTSLOW_WARN > 0) && (ms_past > SPAMFILTER_DETECTSLOW_WARN))
-			{
-				unreal_log(ULOG_WARNING, "tkl", "SPAMFILTER_SLOW_WARN", NULL,
-					   "[Spamfilter] WARNING: Slow spamfilter detected (took $msec_time msec to execute): $tkl",
-					   log_data_tkl("tkl", tkl),
-					   log_data_integer("msec_time", ms_past));
+				getrusage(RUSAGE_SELF, &rnow);
+
+				ms_past = ((rnow.ru_utime.tv_sec - rprev.ru_utime.tv_sec) * 1000) +
+					  ((rnow.ru_utime.tv_usec - rprev.ru_utime.tv_usec) / 1000);
+
+				if ((SPAMFILTER_DETECTSLOW_FATAL > 0) && (ms_past > SPAMFILTER_DETECTSLOW_FATAL))
+				{
+					unreal_log(ULOG_ERROR, "tkl", "SPAMFILTER_SLOW_FATAL", NULL,
+						   "[Spamfilter] WARNING: Too slow spamfilter detected (took $msec_time msec to execute) "
+						   "-- spamfilter will be \002REMOVED!\002: $tkl",
+						   log_data_tkl("tkl", tkl),
+						   log_data_integer("msec_time", ms_past));
+					tkl_del_line(tkl);
+					return 0; /* Act as if it didn't match, even if it did.. it's gone now anyway.. */
+				} else
+				if ((SPAMFILTER_DETECTSLOW_WARN > 0) && (ms_past > SPAMFILTER_DETECTSLOW_WARN))
+				{
+					unreal_log(ULOG_WARNING, "tkl", "SPAMFILTER_SLOW_WARN", NULL,
+						   "[Spamfilter] WARNING: Slow spamfilter detected (took $msec_time msec to execute): $tkl",
+						   log_data_tkl("tkl", tkl),
+						   log_data_integer("msec_time", ms_past));
+				}
 			}
 #endif
 		} else {

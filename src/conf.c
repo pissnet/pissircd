@@ -1165,6 +1165,10 @@ ConfigFile *config_parse_with_offset(const char *filename, char *confdata, unsig
 						{
 							ptr++;
 							break;
+						} else if ((*ptr == '/') && (*(ptr+1) == '*'))
+						{
+							config_warn("%s:%i nested comments are not supported (comment started at line %d)\n",
+								filename, linenumber, commentstart);
 						}
 					}
 					if (!*ptr)
@@ -1286,7 +1290,7 @@ ConfigFile *config_parse_with_offset(const char *filename, char *confdata, unsig
 				{
 					if (preprocessor_level == 0)
 					{
-						config_error("%s:%i: @endif unexpected. There was no preciding unclosed @if.",
+						config_error("%s:%i: @endif unexpected. There was no preceding unclosed @if.",
 							filename, linenumber);
 						errors++;
 					}
@@ -2475,6 +2479,7 @@ void config_rehash()
 		safe_free(oper_ptr->snomask);
 		safe_free(oper_ptr->operclass);
 		safe_free(oper_ptr->vhost);
+		safe_free(oper_ptr->auto_join);
 		Auth_FreeAuthConfig(oper_ptr->auth);
 		free_security_group(oper_ptr->match);
 		DelListItem(oper_ptr, conf_oper);
@@ -4213,6 +4218,10 @@ int	_conf_oper(ConfigFile *conf, ConfigEntry *ce)
 		{
 			oper->server_notice_show_event = config_checkval(cep->value, CFG_YESNO);
 		}
+		else if (!strcmp(cep->name, "auto-join"))
+		{
+			safe_strdup(oper->auto_join, cep->value);
+		}
 		else if (!strcmp(cep->name, "auto-login"))
 		{
 			oper->auto_login = config_checkval(cep->value, CFG_YESNO);
@@ -4275,8 +4284,6 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 					continue;
 				}
 				has_password = 1;
-				if (Auth_CheckError(cep, 1) < 0)
-					errors++;
 
 				if (ce->value && cep->value &&
 					!strcmp(ce->value, "bobsmith") &&
@@ -4286,7 +4293,12 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 								 "default 'bobsmith' oper block",
 								 ce->file->filename, ce->line_number);
 					errors++;
+					continue;
 				}
+
+				if (Auth_CheckError(cep, 1) < 0)
+					errors++;
+
 				continue;
 			}
 			/* oper::operclass */
@@ -4356,6 +4368,9 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 			{
 			}
 			else if (!strcmp(cep->name, "server-notice-show-event"))
+			{
+			}
+			else if (!strcmp(cep->name, "auto-join"))
 			{
 			}
 			else if (!strcmp(cep->name, "auto-login"))

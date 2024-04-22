@@ -6,7 +6,7 @@
 
 [Setup]
 AppName=PissIRCd 6
-AppVerName=PissIRCd 6.1.4
+AppVerName=PissIRCd 6.1.5
 AppPublisher=PissIRCd Team
 AppPublisherURL=https://piss.network
 AppSupportURL=https://wiki.letspiss.net

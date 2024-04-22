@@ -1085,7 +1085,12 @@ int _register_user(Client *client)
 			break;
 	}
 
+	/* User is going to be accepted -- don't reject the user anymore under this line! */
+
 	SetUser(client);
+
+	/* set::modes-on-connect - needs to be here for account-based custom set settings (PR #270) */
+	client->umodes |= get_setting_for_user_number(client, SET_MODES_ON_CONNECT);
 
 	make_cloakedhost(client, client->user->realhost, client->user->cloakedhost, sizeof(client->user->cloakedhost));
 

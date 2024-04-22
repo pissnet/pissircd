@@ -132,14 +132,6 @@
 /* The default value for class::recvq */
 #define	DEFAULT_RECVQ	8000
 
-/* You can define the nickname of NickServ here (usually "NickServ").
- * This is ONLY used for the ""infamous IDENTIFY feature"", which is:
- * whenever a user connects with a server password but there isn't
- * a server password set, the password is sent to NickServ in an
- * 'IDENTIFY <pass>' message.
- */
-#define NickServ "NickServ"
-
 /*   STOP STOP STOP STOP STOP STOP STOP STOP STOP STOP STOP STOP STOP STOP  */
 
 /* You shouldn't change anything below this line, unless absolutely needed. */
@@ -173,21 +165,6 @@
   /* Automatic mode, but we only have select(). Bummer... */
   #define MAXCONNECTIONS 1024
  #endif
-#endif
-
-/* Number of file descriptors reserved for non-incoming-clients.
- * One of which may be used by auth, the rest are really reserved.
- * They can be used for outgoing server links, listeners, logging,
- * DNS lookups, HTTPS callbacks, etc.
- */
-#if MAXCONNECTIONS >= 10000
- #define CLIENTS_RESERVE 250
-#elif MAXCONNECTIONS >= 2048
- #define CLIENTS_RESERVE 32
-#elif MAXCONNECTIONS >= 1024
- #define CLIENTS_RESERVE 16
-#else
- #define CLIENTS_RESERVE 8
 #endif
 
 /*
