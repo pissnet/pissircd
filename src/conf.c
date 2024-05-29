@@ -1700,6 +1700,9 @@ void free_iConf(Configuration *i)
 		free_floodsettings(f);
 	}
 	i->floodsettings = NULL;
+
+	/* And zero out everything, too easy to make a mistake above. */
+	memset(i, 0, sizeof(Configuration));
 }
 
 /** Set default set { } block settings. Note that some of these settings
@@ -2071,6 +2074,8 @@ int config_read_start(void)
 		return -1;
 	}
 
+	init_config_defines();
+
 	/* We set this to 1 because otherwise we may call rehash_internal()
 	 * already from config_read_file() which is too soon (race).
 	 */
@@ -2129,7 +2134,6 @@ int config_test(void)
 	config_setdefaultsettings(&tempiConf);
 	clicap_pre_rehash();
 	log_pre_rehash();
-	free_config_defines();
 
 	if (!config_loadmodules())
 	{
@@ -11094,7 +11098,22 @@ void resource_download_complete(OutgoingWebRequest *request, OutgoingWebResponse
 				   log_data_string("url", displayurl(request->url)),
 				   log_data_string("error_message", response->errorbuf));
 			safe_strdup(rs->file, rs->cache_file);
-		} else {
+		} else
+		if (rs->warn_only_on_fail)
+		{
+			const char *cache_file;
+			unreal_log(ULOG_WARNING, "config", "DOWNLOAD_FAILED_WARN", NULL,
+				   "$file:$line_number: Failed to download '$url': $error_message\n"
+				   "Continuing anyway...",
+				   log_data_string("file", rs->wce->ce->file->filename),
+				   log_data_integer("line_number", rs->wce->ce->line_number),
+				   log_data_string("url", displayurl(request->url)),
+				   log_data_string("error_message", response->errorbuf));
+			cache_file = unreal_mkcache(request->url);
+			unreal_touch(cache_file, 1577880000); /* 2020-01-01 12:00 GMT */
+			safe_strdup(rs->file, cache_file);
+		} else
+		{
 			unreal_log(ULOG_ERROR, "config", "DOWNLOAD_FAILED_HARD", NULL,
 				   "$file:$line_number: Failed to download '$url': $error_message",
 				   log_data_string("file", rs->wce->ce->file->filename),
@@ -11410,11 +11429,15 @@ int add_config_resource(const char *resource, int type, ConfigEntry *ce)
 
 		cache_file = unreal_mkcache(rs->url);
 		modtime = unreal_getfilemodtime(cache_file);
+
 		if (modtime > 0)
 		{
+			/* CACHED COPY IS AVAILABLE */
+			ConfigEntry *cep, *prev;
 			safe_strdup(rs->cache_file, cache_file); /* Cached copy is available */
+
 			/* Check if there is an "url-refresh" argument */
-			ConfigEntry *cep, *prev = NULL;
+			prev = NULL;
 			for (cep = ce->items; cep; cep = cep->next)
 			{
 				if (!strcmp(cep->name, "url-refresh"))
@@ -11443,6 +11466,34 @@ int add_config_resource(const char *resource, int type, ConfigEntry *ce)
 					} else {
 						//config_status("DEBUG: requires download attempt, out of date url-refresh %ld < %ld", refresh_time, TStime() - modtime);
 					}
+					break; // MUST break now as we touched the linked list.
+				}
+				prev = cep;
+			}
+		} else {
+			/* CACHED COPY IS NOT AVAILABLE */
+			ConfigEntry *cep, *prev;
+			/* Check if there is an "url-fail" argument */
+			prev = NULL;
+			for (cep = ce->items; cep; cep = cep->next)
+			{
+				if (!strcmp(cep->name, "url-fail"))
+				{
+					if (cep->value)
+					{
+						if (!strcmp(cep->value, "warn"))
+							rs->warn_only_on_fail = 1;
+					}
+
+					/* Then remove the config item so it is not seen by the rest of unrealircd.
+					 * Can't use DelListItem() here as ConfigEntry has no ->prev, only ->next.
+					 */
+					if (prev)
+						prev->next = cep->next; /* (skip over us) */
+					else
+						ce->items = cep->next; /* (new head) */
+					/* ..and free it */
+					config_entry_free(cep);
 					break; // MUST break now as we touched the linked list.
 				}
 				prev = cep;

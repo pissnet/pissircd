@@ -82,7 +82,7 @@ extern void preprocessor_cc_free_level(ConditionalConfig **cc_list, int level);
 extern void preprocessor_cc_free_list(ConditionalConfig *cc);
 extern void preprocessor_resolve_conditionals_ce(ConfigEntry **ce_list, PreprocessorPhase phase);
 extern void preprocessor_resolve_conditionals_all(PreprocessorPhase phase);
-extern void free_config_defines(void);
+extern void init_config_defines(void);
 extern void preprocessor_replace_defines(char **item, ConfigEntry *ce);
 
 /*
@@ -717,6 +717,7 @@ extern int unreal_copyfile(const char *src, const char *dest);
 extern int unreal_copyfileex(const char *src, const char *dest, int tryhardlink);
 extern time_t unreal_getfilemodtime(const char *filename);
 extern void unreal_setfilemodtime(const char *filename, time_t mtime);
+extern int unreal_touch(const char *filename, time_t mtime);
 extern void DeleteTempModules(void);
 extern MODVAR Extban *extbaninfo;
 extern Extban *findmod_by_bantype(const char *str, const char **remainder);
@@ -922,14 +923,17 @@ extern MODVAR void (*cancel_ident_lookup)(Client *client);
 extern MODVAR int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
 extern MODVAR int (*crule_test)(const char *rule);
 extern MODVAR CRuleNode *(*crule_parse)(const char *rule);
-extern int (*crule_eval)(crule_context *context, CRuleNode *rule);
+extern MODVAR int (*crule_eval)(crule_context *context, CRuleNode *rule);
 #define safe_crule_free(x) do { if (x) crule_free(&x); } while(0)
-extern void (*crule_free)(CRuleNode **);
-extern const char *(*crule_errstring)(int errcode);
-extern void (*ban_act_set_reputation)(Client *client, BanAction *action);
-extern const char *(*get_central_api_key)(void);
-extern int (*central_spamreport)(Client *target, Client *by);
-extern int (*central_spamreport_enabled)(void);
+extern MODVAR void (*crule_free)(CRuleNode **);
+extern MODVAR const char *(*crule_errstring)(int errcode);
+extern MODVAR void (*ban_act_set_reputation)(Client *client, BanAction *action);
+extern MODVAR const char *(*get_central_api_key)(void);
+extern MODVAR int (*central_spamreport)(Client *target, Client *by);
+extern MODVAR int (*central_spamreport_enabled)(void);
+extern MODVAR void (*sasl_succeeded)(Client *client);
+extern MODVAR void (*sasl_failed)(Client *client);
+extern MODVAR int (*decode_authenticate_plain)(const char *param, char **authorization_id, char **authentication_id, char **passwd);
 /* /Efuncs */
 
 /* TLS functions */
@@ -987,6 +991,9 @@ extern void ban_act_set_reputation_default_handler(Client *client, BanAction *ac
 extern const char *get_central_api_key_default_handler(void);
 extern int central_spamreport_default_handler(Client *target, Client *by);
 extern int central_spamreport_enabled_default_handler(void);
+extern void sasl_succeeded_default_handler(Client *client);
+extern void sasl_failed_default_handler(Client *client);
+extern int decode_authenticate_plain_default_handler(const char *param, char **authorization_id, char **authentication_id, char **passwd);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1300,6 +1307,8 @@ extern int conf_match_block(ConfigFile *conf, ConfigEntry *ce, SecurityGroup **b
 extern int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors);
 extern int test_set_security_group(ConfigFile *conf, ConfigEntry *ce);
 extern int config_set_security_group(ConfigFile *conf, ConfigEntry *ce);
+extern int user_matches_extended_server_ban(Client *client, const char *name, const char *value);
+extern int user_matches_extended_list(Client *client, NameValuePrioList *e);
 /* securitygroup.c end */
 /* src/unrealdb.c start */
 extern UnrealDB *unrealdb_open(const char *filename, UnrealDBMode mode, char *secret_block);

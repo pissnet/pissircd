@@ -692,16 +692,34 @@ void set_security_group_defaults(void)
 	s->reputation_score = 25;
 	s->webirc = 0;
 
-	/* Default group: tls-and-known-users */
-	s = add_security_group("tls-and-known-users", 200);
-	s->identified = 1;
-	s->reputation_score = 25;
-	s->webirc = 0;
-	s->tls = 1;
-
 	/* Default group: tls-users */
 	s = add_security_group("tls-users", 300);
 	s->tls = 1;
+}
+
+/* Next function looks similar to _match_user_extended_server_ban in tkl.c,
+ * but the one in tkl.c works on a single string, has an extra 'is extended ban?'
+ * check and splits it into name/value etc.
+ */
+
+int user_matches_extended_server_ban(Client *client, const char *name, const char *value)
+{
+	Extban *extban;
+	BanContext b;
+
+	extban = findmod_by_bantype_raw(name, strlen(name));
+	if (!extban ||
+	    !(extban->options & EXTBOPT_TKL) ||
+	    !(extban->is_banned_events & BANCHK_TKL))
+	{
+		return 0; /* extban not found or of incorrect type */
+	}
+
+	memset(&b, 0, sizeof(BanContext));
+	b.client = client;
+	b.banstr = value;
+	b.ban_check_types = BANCHK_TKL;
+	return extban->is_banned(&b);
 }
 
 int user_matches_extended_list(Client *client, NameValuePrioList *e)
@@ -710,22 +728,8 @@ int user_matches_extended_list(Client *client, NameValuePrioList *e)
 	BanContext b;
 
 	for (; e; e = e->next)
-	{
-		extban = findmod_by_bantype_raw(e->name, strlen(e->name));
-		if (!extban ||
-		    !(extban->options & EXTBOPT_TKL) ||
-		    !(extban->is_banned_events & BANCHK_TKL))
-		{
-			continue; /* extban not found or of incorrect type */
-		}
-
-		memset(&b, 0, sizeof(BanContext));
-		b.client = client;
-		b.banstr = e->value;
-		b.ban_check_types = BANCHK_TKL;
-		if (extban->is_banned(&b))
+		if (user_matches_extended_server_ban(client, e->name, e->value))
 			return 1;
-	}
 
 	return 0;
 }
@@ -872,7 +876,22 @@ int user_allowed_by_security_group(Client *client, SecurityGroup *s)
 		if ((s->connect_time < 0) && (connect_time < 0 - s->connect_time))
 			goto user_allowed;
 	}
-	if (s->tls && (IsSecureConnect(client) || (MyConnect(client) && IsSecure(client))))
+	/* The following check for 'tls' means:
+	 * - If the user has user mode +z
+	 * - Or, if the user is local but NOT a user, e.g. the user is in
+	 *   pre-connect-stage, then check if the underlying connection
+	 *   is using SSL/TLS.
+	 * The reason for this is that:
+	 * - We want this security group / match to work in both pre-connect
+	 *   and post-connect stage.
+	 * - In post-connect stage we should only check for +z.
+	 *   This because it may be a situation of: user--proxy--us where
+	 *   the proxy--us connection is SSL/TLS so IsSecure() returns true
+	 *   but the user--proxy connection is not on SSL/TLS. We deal with
+	 *   that situation elsewhere by stripping the +z in such a case
+	 *   and we should behave the same way here, seeing it as non-TLS.
+	 */
+	if (s->tls && (IsSecureConnect(client) || (MyConnect(client) && !IsUser(client) && IsSecure(client))))
 		goto user_allowed;
 	if (s->mask && unreal_mask_match(client, s->mask))
 		goto user_allowed;

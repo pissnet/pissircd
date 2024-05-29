@@ -468,7 +468,6 @@ int b64_encode(unsigned char const *src, size_t srclength, char *target, size_t 
 
 /** Base64 decode a string.
  * @param src		The data to decode (input)
- * @param srclength	The length of the data to decode (input length)
  * @param target	The output buffer to use (output)
  * @param targetsize	The length of the output buffer to use (maximum output length)
  * @returns length of the targetsize, or -1 in case of error.
@@ -1167,6 +1166,17 @@ time_t unreal_getfilemodtime(const char *filename)
 	
 	return fullTime.LowPart;	
 #endif
+}
+
+/** Touch a file (create if needed) and set timestamp. */
+int unreal_touch(const char *filename, time_t mtime)
+{
+	FILE *fd = fopen(filename, "a");
+	if (!fd)
+		return 0;
+	fclose(fd);
+	unreal_setfilemodtime(filename, mtime);
+	return 1;
 }
 
 #ifndef	AF_INET6

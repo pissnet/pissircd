@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.1.5], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.1.6-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -34,13 +34,13 @@ UNREAL_VERSION_MAJOR=["1"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["5"]
+UNREAL_VERSION_MINOR=["6"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
 # marker. (e.g.: -rcX for unrealircd-3.2.9-rcX). This macro is a
 # string instead of an integer because it contains arbitrary data.
-UNREAL_VERSION_SUFFIX=[""]
+UNREAL_VERSION_SUFFIX=["-git"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_SUFFIX], ["$UNREAL_VERSION_SUFFIX"], [Version suffix such as a beta marker or release candidate marker. (e.g.: -rcX for unrealircd-3.2.9-rcX)])
 
 AC_PATH_PROG(RM,rm)
@@ -131,7 +131,7 @@ AS_IF([test x"$hardening" != x"no"], [
   check_cc_flag([-fno-strict-overflow], [HARDEN_CFLAGS="$HARDEN_CFLAGS -fno-strict-overflow"])
 
   # This one will likely succeed, even on platforms where it does nothing.
-  check_cc_flag([-D_FORTIFY_SOURCE=2], [HARDEN_CFLAGS="$HARDEN_CFLAGS -D_FORTIFY_SOURCE=2"])
+  check_cc_flag([-D_FORTIFY_SOURCE=3], [HARDEN_CFLAGS="$HARDEN_CFLAGS -D_FORTIFY_SOURCE=3"])
 
   check_cc_flag([-fstack-protector-all],
    [check_link_flag([-fstack-protector-all],
@@ -896,7 +896,7 @@ fi
 
 dnl Address sanitizer build
 if test "$ac_cv_asan" = "yes" ; then
-	CFLAGS="$CFLAGS -O1 -fno-inline -fsanitize=address -fno-omit-frame-pointer -DNOCLOSEFD"
+	CFLAGS="$CFLAGS -O2 -fno-inline -fsanitize=address -fno-omit-frame-pointer -DNOCLOSEFD"
 	IRCDLIBS="-fsanitize=address $IRCDLIBS"
 fi
 

@@ -2130,14 +2130,14 @@ struct ConfigResource {
 	char *url; /**< URL, if it is an URL */
 	char *cache_file; /**< Set to filename of local cached copy, if it is available */
 	NameList *restrict_config; /**< If non-NULL: list of permitted config items */
+	int warn_only_on_fail; /**< Set to 1 if we should ignore failed download attempts (and only warn) */
 };
 
 /* When doing a HTTP request and it is requested to store the
  * response to memory (rather than file), we enlarge the buffer
  * in this chunk size.
- * XXX: 128 bytes for testing chunks, should be 8k or so in production.
  */
-#define URL_MEMORY_BACKED_CHUNK_SIZE	128
+#define URL_MEMORY_BACKED_CHUNK_SIZE	8192
 
 struct ConfigItem_blacklist_module {
 	ConfigItem_blacklist_module *prev, *next;
