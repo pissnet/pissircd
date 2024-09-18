@@ -75,6 +75,7 @@ struct Configuration {
 	unsigned disable_cap:1;
 	unsigned check_target_nick_bans:1;
 	HideBanReasonOption hide_ban_reason;
+	int hide_killed_by;
 	char *link_bindip;
 	long throttle_period;
 	char throttle_count;
@@ -121,7 +122,7 @@ struct Configuration {
 	char *spamfilter_ban_reason;
 	char *spamfilter_virus_help_channel;
 	char spamfilter_vchan_deny;
-	SpamExcept *spamexcept;
+	SecurityGroup *spamfilter_except;
 	char *spamexcept_line;
 	long spamfilter_detectslow_warn;
 	long spamfilter_detectslow_fatal;
@@ -352,4 +353,5 @@ struct SetCheck {
 	unsigned has_min_nick_length:1;
 	unsigned has_nick_length:1;
 	unsigned has_hide_ban_reason:1;
+	unsigned has_hide_killed_by:1;
 };

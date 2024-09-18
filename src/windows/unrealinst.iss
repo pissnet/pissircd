@@ -6,7 +6,7 @@
 
 [Setup]
 AppName=PissIRCd 6
-AppVerName=PissIRCd 6.1.6-git
+AppVerName=PissIRCd 6.1.8-git
 AppPublisher=PissIRCd Team
 AppPublisherURL=https://piss.network
 AppSupportURL=https://wiki.letspiss.net
@@ -87,7 +87,6 @@ Source: "doc\conf\help\*.conf"; DestDir: "{app}\conf\help"; Flags: ignoreversion
 Source: "doc\conf\examples\*.conf"; DestDir: "{app}\conf\examples"; Flags: ignoreversion
 
 ; Documentation etc.
-Source: "doc\Donation"; DestDir: "{app}\doc"; DestName: "Donation.txt"; Flags: ignoreversion
 Source: "LICENSE"; DestDir: "{app}\doc"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "doc\*.*"; DestDir: "{app}\doc"; Flags: ignoreversion
 Source: "doc\technical\*.*"; DestDir: "{app}\doc\technical"; Flags: ignoreversion

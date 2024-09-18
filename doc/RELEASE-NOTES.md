@@ -1,8 +1,152 @@
-UnrealIRCd 6.1.6-git
-=================
+UnrealIRCd 6.1.8-git
+===============
 
-This is the git version (development version) for future 6.1.6. This is work
+This is the git version (development version) for future 6.1.8. This is work
 in progress and may not always be a stable version.
+
+### Enhancements:
+* New [Extended ban](https://www.unrealircd.org/docs/Extended_bans#Group_4:_special)
+  to inherit channel bans from another channel:
+  * If in channel `#test` you add `+b ~inherit:#main` then anyone banned in
+    `#main` will be unable to join `#test`.
+  * This only applies for on-join ban checking, not for quiet bans,
+    nick-changes, text bans, etc.
+  * If the other channel (`#main` in this example) also has `~inherit` bans
+    then we do not follow these (no nesting).
+  * The maximum number of ~inherit bans in a channel is limited to only
+    1 by default, see 
+    [set::max-inherit-extended-bans](https://www.unrealircd.org/docs/Set_block#set::max-inherit-extended-bans)
+  * This can also be used in `+I`, which entries are counted separately and
+    have their own limit. (TODO: `+e` still needs to be done)
+
+### Changes:
+* When retrieving cold or hot patches we now do proper GPG/PGP checks.
+  Just like we do on `./unrealircd upgrade`
+* Update shipped libraries: c-ares to 1.33.1
+
+### Fixes:
+* The [require authentication { }](https://www.unrealircd.org/docs/Require_authentication_block)
+  was broken in 6.1.7.*.
+* [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) call `spamfilter.get`
+  could not retrieve information about config-based spamfilters.
+
+### Developers and protocol:
+* The `MD` S2S command now supports `BIGLINES`, allowing synching of 16K
+  serialized moddata per entry. We don't plan to use this anytime soon,
+  this is mostly so all UnrealIRCd servers support this in a year or
+  two. However, if you do plan to serialize big moddata results then be
+  sure all UnrealIRCd servers are on 6.1.8 or higher to prevent cut-off.
+
+UnrealIRCd 6.1.7.2
+-------------------
+UnrealIRCd 6.1.7.2 is a dot release:
+* [Central Blocklist](https://www.unrealircd.org/docs/Central_Blocklist):
+  Fix issue if CBL server is not reachable (caused nick collisions)
+* Stop offering curlinstall script. Most people don't need it anymore as
+  without curl we support https remote includes since UnrealIRCd 6.0.0,
+  which is usually sufficient. People who need other protocols can install
+  the curl library system-wide.
+
+UnrealIRCd 6.1.7.1 is a dot release:
+* Add country and ASN support in `WHOWAS`
+* Fix an annoying "[BUG] trying to modify fd -2 in fd table" message that
+  appeared to IRCOps sometimes. It was harmless and only happened if you
+  were using a recent version of the c-ares library (1.31.0 from June 18 2024
+  or later, which also is the one we ship with as fallback if the system
+  has no c-ares library installed).
+
+See the release notes for 6.1.7 below for a lot more features/changes.
+
+UnrealIRCd 6.1.7
+-----------------
+
+This is UnrealIRCd 6.1.7 stable. It comes with ASN support, more flexible
+ban user { } and require authentication { } blocks and more.
+
+UnrealIRCd recently turned 25 years! 🎉 See
+[UnrealIRCd celebrates its 25th birthday](https://forums.unrealircd.org/viewtopic.php?t=9363).
+
+### Enhancements:
+* In the [ban user { }](https://www.unrealircd.org/docs/Ban_user_block)
+  and [require authentication { }](https://www.unrealircd.org/docs/Require_authentication_block)
+  blocks the `mask` is now a
+  [Mask item](https://www.unrealircd.org/docs/Mask_item).
+  This means you can use all the power of mask items and security groups and
+  multiple matching criteria.
+* The GeoIP module now contains information about
+  [Autonomous System Numbers](https://www.unrealircd.org/docs/ASN):
+   * The asn is shown in the user connecting notice as `[asn: ###]`,
+     is shown in `WHOIS` (for IRCOps) and it is expanded in JSON data such as
+     [JSON Logging](https://www.unrealircd.org/docs/JSON_logging) and
+     [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) calls like
+     `user.list`.
+  * Can be used in [Extended server ban](https://www.unrealircd.org/docs/Extended_server_bans):
+    `GLINE ~asn:64496 0 This ISP is banned`.
+  * Can be used in security groups and [mask items](https://www.unrealircd.org/docs/Mask_item)
+    so you can do like:
+    ```
+    require authentication {
+        mask { asn { 64496; 64497; 64498; } }
+        reason "Too much abuse from this ISP. You are required to log in with an account using SASL.";
+    }
+    ```
+   * In [Crule](https://www.unrealircd.org/docs/Crule) functions as `match_asn(64496)`
+   * Also available in regular extbans/invex, but normally users don't
+     know the IP or ASN of other users, unless you use no cloaking or
+     change [set::whois-details::asn](https://www.unrealircd.org/docs/Set_block#set::whois-details).
+* [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC):
+  Similar to oper and operclass, in an
+  [rpc-user](https://www.unrealircd.org/docs/Rpc-user_block) you now have
+  to specify an rpc-user::rpc-class. The rpc-class is defined in an
+  [rpc-class block](https://www.unrealircd.org/docs/Rpc-class_block)
+  and configures what JSON methods can be called.  
+  There are two default json-rpc classes:
+  * `full`: access to all JSON-RPC Methods
+  * `read-only`: access to things like *server_ban.list* but not to *server_ban.add*
+* [set::spamfilter::except](https://www.unrealircd.org/docs/Set_block#set::spamfilter::except)
+  is now a [Mask item](https://www.unrealircd.org/docs/Mask_item) instead of
+  only a list of exempted targets. A warning is created to existing users
+  along with a suggestion of how to use the new syntax. Technically, this is
+  not really new functionality as all this was already possible via
+  the [Except ban block](https://www.unrealircd.org/docs/Except_ban_block)
+  with type spamfilter, but it is more visible/logical to have this also.
+* New option [set::hide-killed-by](https://www.unrealircd.org/docs/Set_block#set::hide-killed-by):
+  We normally show the nickname of the oper who did the /KILL in the quit message.
+  When set to `yes` the quit message becomes shortened to "Killed (Reason)".
+  This can prevent oper harassment.
+* [set::restrict-commands](https://www.unrealircd.org/docs/Restrict_commands):
+  new option `channel-create` for managing who may create new channels.
+* New option [set::tls::certificate-expiry-notification](https://www.unrealircd.org/docs/Set_block#set::tls::certificate-expiry-notification):
+  since UnrealIRCd 5.0.8 we warn if a SSL/TLS certificate is (nearly) expired.
+  This new option allows turning it off, it is (still) on by default.
+* Add the ability to capture the same data as
+  [Central Spamreport](https://www.unrealircd.org/docs/Central_spamreport)
+  by providing an spamreport::url option.
+
+### Changes:
+* IRCOps with the operclass `locop` can now only `REHASH` the local server
+  and not remote servers.
+* Comment out some more in example.conf by default
+* Update shipped libraries: c-ares to 1.31.0, PCRE2 to 10.44,
+  Sodium to 1.0.20
+
+### Fixes:
+* Crash when removing the `websocket` option on a websocket listener.
+* Silence some compiler warnings regarding deprecation of c-ares API in
+  src/dns.c.
+* Memory leaks of around 1-2KB per rehash
+
+### Developers and protocol:
+* We use numeric 569 (RPL_WHOISASN) for displaying ASN info to IRCOps:  
+  `:irc.example.net 569 x whoiseduser 64496 :is connecting from AS64496 [Example Corp]`
+
+UnrealIRCd 6.1.6
+-----------------
+
+This is mostly a bug fix release but also comes with Crule enhancements.
+
+UnrealIRCd turned 25 a few weeks ago! 🎉 See
+[UnrealIRCd celebrates its 25th birthday](https://forums.unrealircd.org/viewtopic.php?t=9363).
 
 ### Enhancements:
 * [Crule](https://www.unrealircd.org/docs/Crule) functions can now do everything
@@ -38,7 +182,8 @@ in progress and may not always be a stable version.
 
 ### Fixes:
 * Crash if you first REHASH and have a parse error (failed rehash 1) and then
-  REHASH again but a remote include fails to load (failed rehash 2).
+  REHASH again but have a "late" rehash error, such as a remote include
+  failing to load (failed rehash 2).
 * Crash on Windows when using
   [Crule](https://www.unrealircd.org/docs/Crule) functions,
   [Central Spamreport](https://www.unrealircd.org/docs/Central_spamreport) or

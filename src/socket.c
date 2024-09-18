@@ -400,10 +400,19 @@ void close_listener(ConfigItem_listen *listener)
 {
 	if (listener->fd >= 0)
 	{
-		unreal_log(ULOG_INFO, "listen", "LISTEN_REMOVED", NULL,
-			   "UnrealIRCd is now no longer listening on $listen_ip:$listen_port",
-			   log_data_string("listen_ip", listener->ip),
-			   log_data_integer("listen_port", listener->port));
+		if (listener->socket_type == SOCKET_TYPE_UNIX)
+		{
+			unreal_log(ULOG_INFO, "listen", "LISTEN_REMOVED", NULL,
+				   "UnrealIRCd is now no longer listening on $listen_file [$protocol]",
+				   log_data_string("listen_file", listener->file),
+				   log_data_string("protocol", socket_type_valtostr(listener->socket_type)));
+		} else {
+			unreal_log(ULOG_INFO, "listen", "LISTEN_REMOVED", NULL,
+				   "UnrealIRCd is now no longer listening on $listen_ip:$listen_port [$protocol]",
+				   log_data_string("listen_ip", listener->ip),
+				   log_data_integer("listen_port", listener->port),
+				   log_data_string("protocol", socket_type_valtostr(listener->socket_type)));
+		}
 		fd_close(listener->fd);
 		--OpenFiles;
 	}
@@ -799,11 +808,11 @@ int is_loopback_ip(char *ip)
  * @param port		Remote port (will be written)
  * @returns The IP address
  */
-const char *getpeerip(Client *client, int fd, int *port)
+const char *getpeerip(Client *client, int fd, SocketType socket_type, int *port)
 {
 	static char ret[HOSTLEN+1];
 
-	if (IsIPV6(client))
+	if (socket_type == SOCKET_TYPE_IPV6)
 	{
 		struct sockaddr_in6 addr;
 		int len = sizeof(addr);
@@ -850,7 +859,7 @@ Client *add_connection(ConfigItem_listen *listener, int fd)
 	if (listener->socket_type == SOCKET_TYPE_UNIX)
 		ip = listener->spoof_ip ? listener->spoof_ip : "127.0.0.1";
 	else
-		ip = getpeerip(client, fd, &port);
+		ip = getpeerip(client, fd, listener->socket_type, &port);
 
 	if (!ip)
 	{
@@ -880,7 +889,8 @@ refuse_client:
 
 	/* Fill in sockhost & ip ASAP */
 	set_sockhost(client, ip);
-	safe_strdup(client->ip, ip);
+	if (!set_client_ip(client, ip))
+		abort(); // would mean getpeerip() or spoof_ip is bad, which is impossible.
 	client->local->port = port;
 	client->local->fd = fd;
 
@@ -1136,9 +1146,11 @@ void start_of_normal_client_handshake(Client *client)
 
 	RunHook(HOOKTYPE_HANDSHAKE, client);
 
-	start_dns_and_ident_lookup(client);
+	if (!IsDead(client))
+		start_dns_and_ident_lookup(client);
 
-	fd_setselect(client->local->fd, FD_SELECT_READ, read_packet, client);
+	if (!IsDead(client))
+		fd_setselect(client->local->fd, FD_SELECT_READ, read_packet, client);
 }
 
 /** Called when DNS lookup has been completed and we can proceed with the client handshake.
@@ -1565,3 +1577,91 @@ void init_winsock(void)
 	}
 }
 #endif
+
+const char *socket_type_valtostr(SocketType t)
+{
+	switch(t)
+	{
+		case SOCKET_TYPE_IPV4:
+			return "IPv4";
+		case SOCKET_TYPE_IPV6:
+			return "IPv6";
+		case SOCKET_TYPE_UNIX:
+			return "UNIX Socket";
+		default:
+			return "???";
+	}
+}
+
+/* Set or update the client IP address.
+ * This will validate, set and then run various hooks in modules,
+ * such as fetching reputation for the IP, checking max unknown connections,
+ * and so on. In the end the client may be rejected and KILLED
+ * if we return 0.
+ * @param client	Client
+ * @param ip		The new IP address (either IPv4 or IPv6)
+ * @returns 1 if all OK, 0 if client was killed.
+ */
+int set_client_ip(Client *client, const char *ip)
+{
+	Hook *h;
+	char oldip[128];
+	char newip[128];
+	int af = strchr(ip, ':') ? AF_INET6 : AF_INET;
+
+	/* Make a copy of the old IP, however the current
+	 * client->ip could be NULL (this could be a first set)
+	 */
+	if (client->ip)
+		strlcpy(oldip, client->ip, sizeof(oldip));
+	else
+		*oldip = '\0';
+
+	// wait: better use a scratch buffer and then memcpy?
+	// otherwise client->rawip may be different from client->ip
+	if (!inet_pton(af, ip, client->rawip))
+	{
+		dead_socket(client, "Invalid IP address");
+		return 0;
+	}
+
+	if (af == AF_INET6)
+		SetIPV6(client);
+	else
+		ClearIPV6(client);
+
+	/* Set the actual IP address.
+	 * These may never go out of synch so are together here:
+	 */
+	inetntop(af, client->rawip, newip, sizeof(newip));
+	safe_strdup(client->ip, newip);
+
+	/* For IP changes (so not first set), call this hook */
+	if (*oldip)
+	{
+		for (h = Hooks[HOOKTYPE_IP_CHANGE]; h; h = h->next)
+		{
+			int n = h->func.intfunc(client, oldip);
+			if (n == HOOK_DENY)
+			{
+				/* When using HOOK_DENY, the client must be killed
+				 * by dead_socket().
+				 * A) It should not be forgotten
+				 * B) Not by exit_client() since that is dangerous.
+				 */
+#ifdef DEBUGMODE
+				if (IsDead(client))
+					abort(); /* You should have used dead_socket() and not exit_client() */
+#endif
+				if (!IsDeadSocket(client))
+#ifdef DEBUGMODE
+					abort(); /* You should have used dead_socket() */
+#else
+					dead_socket(client, "Invalid IP change");
+#endif
+				return 0;
+			}
+		}
+	}
+	return 1;
+}

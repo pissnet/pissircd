@@ -367,7 +367,6 @@ inline Ban *is_banned(Client *client, Channel *channel, int type, const char **m
 /** ban_check_mask - Checks if the user matches the specified n!u@h mask -or- run an extended ban.
  * This is basically extracting the mask and extban check from is_banned_with_nick,
  * but with being a bit more strict in what an extban is.
- * Strange things could happen if this is called outside standard ban checking.
  * @param b	Ban context, see BanContext
  * @returns	Nonzero if the mask/extban succeeds. Zero if it doesn't.
  */
@@ -434,6 +433,7 @@ Ban *is_banned_with_nick(Client *client, Channel *channel, int type, const char 
 	 * If a +e was found we return NULL, if not, we return the ban.
 	 */
 
+	b->ban_type = EXBTYPE_BAN;
 	for (ban = channel->banlist; ban; ban = ban->next)
 	{
 		b->banstr = ban->banstr;
@@ -444,6 +444,7 @@ Ban *is_banned_with_nick(Client *client, Channel *channel, int type, const char 
 	if (ban)
 	{
 		/* Ban found, now check for +e */
+		b->ban_type = EXBTYPE_EXCEPT;
 		for (ex = channel->exlist; ex; ex = ex->next)
 		{
 			b->banstr = ex->banstr;
@@ -791,15 +792,17 @@ const char *convert_regular_ban(char *mask, char *buf, size_t buflen)
  * This takes user input (eg: "nick") and converts it to a mask suitable
  * in the +beI lists (eg: "nick!*@*"). It also deals with extended bans,
  * in which case it will call the extban->conv_param() function.
- * @param mask		The ban mask
+ * @param mask_in	The ban mask
  * @param what		MODE_DEL or MODE_ADD
+ * @param ban_type	One of EXBTYPE_*, such as EXBTYPE_BAN.
  * @param client	The client adding/removing this ban mask
+ * @param channel	The channel on which this entry will be added or removed
  * @param conv_options	Options for BanContext.conv_options (eg BCTX_CONV_OPTION_WRITE_LETTER_BANS)
  * @returns pointer to correct banmask or NULL in case of error
  * @note A pointer is returned to a static buffer, which is overwritten
  *       on next clean_ban_mask or make_nick_user_host call.
  */
-const char *clean_ban_mask(const char *mask_in, int what, Client *client, int conv_options)
+const char *clean_ban_mask(const char *mask_in, int what, ExtbanType ban_type, Client *client, Channel *channel, int conv_options)
 {
 	char *cp, *x;
 	static char mask[512];
@@ -863,7 +866,9 @@ const char *clean_ban_mask(const char *mask_in, int what, Client *client, int co
 			static char retbuf[512];
 			BanContext *b = safe_alloc(sizeof(BanContext));
 			b->client = client;
+			b->channel = channel;
 			b->what = what;
+			b->ban_type = ban_type;
 			b->banstr = nextbanstr;
 			b->conv_options = conv_options;
 			ret = extban->conv_param(b, extban);
@@ -891,6 +896,7 @@ int find_invex(Channel *channel, Client *client)
 	b->client = client;
 	b->channel = channel;
 	b->ban_check_types = BANCHK_JOIN;
+	b->ban_type = EXBTYPE_INVEX;
 
 	for (inv = channel->invexlist; inv; inv = inv->next)
 	{
@@ -1452,4 +1458,14 @@ void free_multilinemode(MultiLineMode *m)
 		safe_free(m->paramline[i]);
 	}
 	safe_free(m);
+}
+
+ExtbanType mode_letter_to_extbantype(char c)
+{
+	if (c == 'e')
+		return EXBTYPE_EXCEPT;
+	else if (c == 'I')
+		return EXBTYPE_INVEX;
+	/* Else default to 'b' */
+	return EXBTYPE_BAN;
 }

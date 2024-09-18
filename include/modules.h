@@ -2326,7 +2326,9 @@ int hooktype_realname_change(Client *client, const char *oldinfo);
 /** Called when changing IP (eg due to PROXY/WEBIRC/etc).
  * @param client		The client whose IP has changed
  * @param oldip			Old IP of the client
- * @return The return value is ignored (use return 0)
+ * @returns If you reject the user then use dead_link() and return HOOK_DENY
+ *          (DO NOT USE exit_client(), only dead_link()!),
+ *          otherwise use 'return 0' to proceed normally.
  */
 int hooktype_ip_change(Client *client, const char *oldip);
 
@@ -2729,6 +2731,10 @@ enum EfunctionType {
 	EFUNC_SASL_SUCCEEDED,
 	EFUNC_SASL_FAILED,
 	EFUNC_DECODE_AUTHENTICATE_PLAIN,
+	EFUNC_EXIT_CLIENT,
+	EFUNC_EXIT_CLIENT_FMT,
+	EFUNC_EXIT_CLIENT_EX,
+	EFUNC_BANNED_CLIENT,
 };
 
 /* Module flags */

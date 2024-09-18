@@ -1,6 +1,6 @@
 /*
- * Extended ban to ban/exempt by country/geoip info (+b ~country:UK)
- * (C) Copyright 2021 The UnrealIRCd Team
+ * Extended ban to ban/exempt by asn/geoip info (+b ~asn:64496)
+ * (C) Copyright 2024 The UnrealIRCd Team
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,28 +20,28 @@
 
 ModuleHeader MOD_HEADER
 = {
-	"extbans/country",
+	"extbans/asn",
 	"6.0",
-	"ExtBan ~country - Ban/exempt by country (geoip)",
+	"ExtBan ~asn - Ban/exempt by ASN (geoip)",
 	"UnrealIRCd Team",
 	"unrealircd-6",
 };
 
 /* Forward declarations */
-int extban_country_is_ok(BanContext *b);
-const char *extban_country_conv_param(BanContext *b, Extban *extban);
-int extban_country_is_banned(BanContext *b);
+int extban_asn_is_ok(BanContext *b);
+const char *extban_asn_conv_param(BanContext *b, Extban *extban);
+int extban_asn_is_banned(BanContext *b);
 
-Extban *register_country_extban(ModuleInfo *modinfo)
+Extban *register_asn_extban(ModuleInfo *modinfo)
 {
 	ExtbanInfo req;
 
 	memset(&req, 0, sizeof(req));
-	req.letter = 'C';
-	req.name = "country";
-	req.is_ok = extban_country_is_ok;
-	req.conv_param = extban_country_conv_param;
-	req.is_banned = extban_country_is_banned;
+	req.letter = 'A';
+	req.name = "asn";
+	req.is_ok = extban_asn_is_ok;
+	req.conv_param = extban_asn_conv_param;
+	req.is_banned = extban_asn_is_banned;
 	req.is_banned_events = BANCHK_ALL|BANCHK_TKL;
 	req.options = EXTBOPT_INVEX|EXTBOPT_TKL;
 	return ExtbanAdd(modinfo->handle, req);
@@ -50,7 +50,7 @@ Extban *register_country_extban(ModuleInfo *modinfo)
 /* Called upon module test */
 MOD_TEST()
 {
-	if (!register_country_extban(modinfo))
+	if (!register_asn_extban(modinfo))
 	{
 		config_error("could not register extended ban type");
 		return MOD_FAILED;
@@ -62,7 +62,7 @@ MOD_TEST()
 /* Called upon module init */
 MOD_INIT()
 {
-	if (!register_country_extban(modinfo))
+	if (!register_asn_extban(modinfo))
 	{
 		config_error("could not register extended ban type");
 		return MOD_FAILED;
@@ -85,14 +85,14 @@ MOD_UNLOAD()
 	return MOD_SUCCESS;
 }
 
-int extban_country_usage(Client *client)
+int extban_asn_usage(Client *client)
 {
-	sendnotice(client, "ERROR: ExtBan ~country expects a two letter country code, or * to ban unknown countries. "
-					 "For example: +b ~country:UK");
+	sendnotice(client, "ERROR: ExtBan ~asn expects the AS number (all digits). "
+	                   "For example: +b ~asn:64496");
 	return EX_DENY;
 }
 
-int extban_country_is_ok(BanContext *b)
+int extban_asn_is_ok(BanContext *b)
 {
 	if (b->is_ok_check == EXCHK_PARAM)
 	{
@@ -101,41 +101,43 @@ int extban_country_is_ok(BanContext *b)
 		if (!strcmp(b->banstr, "*"))
 			return EX_ALLOW;
 
-		if ((strlen(b->banstr) != 2))
-			return extban_country_usage(b->client);
+		if (!*b->banstr)
+			return extban_asn_usage(b->client);
 
 		for (p = b->banstr; *p; p++)
-			if (!isalpha(*p))
-				return extban_country_usage(b->client);
+			if (!isdigit(*p))
+				return extban_asn_usage(b->client);
 
 		return EX_ALLOW;
 	}
 	return EX_ALLOW;
 }
 
-/* Obtain targeted country from the ban string */
-const char *extban_country_conv_param(BanContext *b, Extban *extban)
+/* Obtain targeted asn from the ban string */
+const char *extban_asn_conv_param(BanContext *b, Extban *extban)
 {
-	static char retbuf[64];
-	char *p;
+	static char retbuf[32];
+	unsigned int asn;
+	char *p=NULL;
 
-	strlcpy(retbuf, b->banstr, sizeof(retbuf));
+	if (!isdigit(b->banstr[0]))
+		return NULL;
 
-	for (p = retbuf; *p; p++)
-		*p = toupper(*p);
+	asn = strtoul(b->banstr, &p, 10);
+	if (!BadPtr(p))
+		return NULL; /* contains invalid characters */
 
+	snprintf(retbuf, sizeof(retbuf), "%u", asn);
 	return retbuf;
 }
 
-int extban_country_is_banned(BanContext *b)
+int extban_asn_is_banned(BanContext *b)
 {
+	unsigned int banned_asn = strtoul(b->banstr, NULL, 10);
 	GeoIPResult *geo = geoip_client(b->client);
-	char *country;
 
-	country = geo ? geo->country_code : "*";
+	if (geo)
+		return banned_asn == geo->asn;
 
-	if (!strcmp(b->banstr, country))
-		return 1;
-
-	return 0;
+	return banned_asn == 0; /* ASN 0 is for unknown */
 }

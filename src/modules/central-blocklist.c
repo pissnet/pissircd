@@ -8,7 +8,7 @@
 ModuleHeader MOD_HEADER
   = {
 	"central-blocklist",
-	"1.0.6",
+	"1.0.7",
 	"Check users at central blocklist",
 	"UnrealIRCd Team",
 	"unrealircd-6",
@@ -72,7 +72,7 @@ static struct reqstruct req;
 CBLTransfer *cbltransfers = NULL;
 
 /* Forward declarations */
-int _central_spamreport(Client *client, Client *by);
+int _central_spamreport(Client *client, Client *by, const char *url);
 int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs);
 int cbl_config_posttest(int *errs);
 int cbl_config_run(ConfigFile *cf, ConfigEntry *ce, int type);
@@ -773,7 +773,11 @@ int cbl_is_handshake_finished(Client *client)
 void cbl_allow(Client *client)
 {
 	if (CBL(client))
+	{
+		if (CBL(client)->allowed_in)
+			return; /* Already allowed in */
 		CBL(client)->allowed_in = 1;
+	}
 
 	if (is_handshake_finished(client))
 		register_user(client);
@@ -850,6 +854,8 @@ void cbl_error_response(CBLTransfer *transfer, const char *error)
 		client = hash_find_id(n->name, NULL);
 		if (!client)
 			continue; /* Client disconnected already */
+		if (CBL(client) && CBL(client)->allowed_in)
+			continue; /* Client allowed in already (eg due to timeout) */
 		unreal_log(ULOG_DEBUG, "central-blocklist", "DEBUG_CENTRAL_BLOCKLIST_ERROR", client,
 			   "CBL: Client $client.details allowed in due to CBL error: $error",
 			   log_data_string("error", error));
@@ -1076,7 +1082,7 @@ CMD_OVERRIDE_FUNC(cbl_override_spamreport_gather)
 	CALL_NEXT_COMMAND_OVERRIDE();
 }
 
-int _central_spamreport(Client *client, Client *by)
+int _central_spamreport(Client *client, Client *by, const char *url)
 {
 	json_t *j, *requests, *data, *cmds, *item;
 	OutgoingWebRequest *w;
@@ -1148,7 +1154,7 @@ int _central_spamreport(Client *client, Client *by)
 	add_nvplist(&headers, 0, "X-API-Key", cfg.api_key);
 	/* Do the web request */
 	w = safe_alloc(sizeof(OutgoingWebRequest));
-	safe_strdup(w->url, cfg.spamreport_url);
+	safe_strdup(w->url, url ? url : cfg.spamreport_url);
 	w->http_method = HTTP_METHOD_POST;
 	w->body = json_serialized;
 	w->headers = headers;

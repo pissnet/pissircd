@@ -83,8 +83,20 @@ MOD_LOAD()
 	return MOD_SUCCESS;
 }
 
+void free_config(void)
+{
+	WhoisConfig *w, *w_next;
+	for (w = whoisconfig; w; w = w_next)
+	{
+		w_next = w->next;
+		safe_free(w->name);
+		safe_free(w);
+	}
+}
+
 MOD_UNLOAD()
 {
+	free_config();
 	return MOD_SUCCESS;
 }
 
@@ -149,6 +161,8 @@ static void whois_config_setdefaults(void)
 	whois_config_add("security-groups", WHOIS_CONFIG_USER_OPER, WHOIS_CONFIG_DETAILS_FULL);
 
 	whois_config_add("geo", WHOIS_CONFIG_USER_OPER, WHOIS_CONFIG_DETAILS_FULL);
+
+	whois_config_add("asn", WHOIS_CONFIG_USER_OPER, WHOIS_CONFIG_DETAILS_FULL);
 
 	whois_config_add("certfp", WHOIS_CONFIG_USER_EVERYONE, WHOIS_CONFIG_DETAILS_FULL);
 

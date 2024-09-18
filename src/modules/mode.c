@@ -107,7 +107,7 @@ CMD_FUNC(cmd_mode)
 			channel = find_channel(parv[1]);
 			if (!channel)
 			{
-				CALL_CMD_FUNC(cmd_umode);
+				sendnumeric(client, ERR_NOSUCHCHANNEL, parv[1]);
 				return;
 			}
 		} else
@@ -525,7 +525,7 @@ const char *mode_ban_handler(Client *client, Channel *channel, const char *param
 	const char *tmpstr;
 	BanContext *b;
 
-	tmpstr = clean_ban_mask(param, what, client, 0);
+	tmpstr = clean_ban_mask(param, what, extbtype, client, channel, 0);
 	if (BadPtr(tmpstr))
 	{
 		/* Invalid ban. See if we can send an error about that (only for extbans) */

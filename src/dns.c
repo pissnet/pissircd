@@ -33,6 +33,23 @@
  #error "You have an old c-ares version on your system and/or Unreals c-ares failed to compile!"
 #endif
 
+#if defined(__GNUC__)
+/* Ignore these for src/dns.c & src/url_unreal.c
+ * Quoting https://github.com/c-ares/c-ares/pull/732#issuecomment-2028454381:
+ * "Those deprecated functions will remain available until there is an ABI
+ *  break, which honestly will likely never happen. It's more to encourage
+ *  integrators to move to the more modern functions."
+ * Also, keep in mind that several of these 'deprecations' happened in early 2024
+ * while the new function was introduced in March 2020, like for ares_getaddrinfo().
+ * That isn't all that long ago, only 4 years. So we would need compatibility code
+ * for both the old and new function for a while.
+ * So: we can look into that in some major new UnrealIRCd version, nothing urgent,
+ * and perhaps by then it is long enough that we don't need the fallback to older
+ * functions.
+ */
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 /* Forward declerations */
 void unrealdns_cb_iptoname(void *arg, int status, int timeouts, struct hostent *he);
 void unrealdns_cb_nametoip_verify(void *arg, int status, int timeouts, struct hostent *he);
@@ -181,6 +198,20 @@ void init_resolver(int firsttime)
 	options.sock_state_cb_data = RESOLVER_CHANNEL_CLIENT;
 	options.timeout = iConf.dns_client_timeout ? iConf.dns_client_timeout : DNS_DEFAULT_CLIENT_TIMEOUT;
 	options.tries = iConf.dns_client_retry ? iConf.dns_client_retry : DNS_DEFAULT_CLIENT_RETRIES;
+#if defined(ARES_OPT_MAXTIMEOUTMS)
+	/* (yeah, apparently the normal timeout is only a suggestion
+	 *  in c-ares 1.32.0+, so we have to set a 'max' timeout now)
+	 */
+	optmask |= ARES_OPT_MAXTIMEOUTMS;
+	options.maxtimeout = options.timeout;
+#endif
+#if defined(ARES_OPT_QUERY_CACHE)
+	/* Turn off query cache (added in c-ares 1.31.0), as we
+	 * already have our own DNS cache for client lookups (ip->host->ip).
+	 */
+	optmask |= ARES_OPT_QUERY_CACHE;
+	options.qcache_max_ttl = 0;
+#endif
 	n = ares_init_options(&resolver_channel_client, &options, optmask);
 	if (n != ARES_SUCCESS)
 	{
@@ -197,6 +228,22 @@ void init_resolver(int firsttime)
 	options.sock_state_cb_data = RESOLVER_CHANNEL_DNSBL;
 	options.timeout = iConf.dns_dnsbl_timeout ? iConf.dns_dnsbl_timeout : DNS_DEFAULT_DNSBL_TIMEOUT;
 	options.tries = iConf.dns_dnsbl_retry ? iConf.dns_dnsbl_retry : DNS_DEFAULT_DNSBL_RETRIES;
+#if defined(ARES_OPT_MAXTIMEOUTMS)
+	options.maxtimeout = options.timeout;
+#endif
+#if defined(ARES_OPT_QUERY_CACHE)
+	/* For DNSBL, enabling query cache is fine, as we don't cache this ourselves.
+	 * We just set the TTL relatively low due to the nature of DNSBLs.
+	 */
+	optmask |= ARES_OPT_QUERY_CACHE;
+	/* now the upper bound of the cache time: since we want DNSBL rechecking
+	 * to work well, those should not be cached. So this should be the
+	 * lower amount of set::blacklist::recheck-time-first and
+	 * set::blacklist::recheck-time, which is 120 by default, and perhaps
+	 * some users would set it to 60. So have picked 55 seconds here.
+	 */
+	options.qcache_max_ttl = 55;
+#endif
 	n = ares_init_options(&resolver_channel_dnsbl, &options, optmask);
 	if (n != ARES_SUCCESS)
 	{

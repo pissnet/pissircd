@@ -294,6 +294,9 @@ MOD_UNLOAD()
 
 	free_channel_flood_profiles();
 
+	/* Free config */
+	safe_free(cfg.default_profile);
+
 	return MOD_SUCCESS;
 }
 
@@ -1120,6 +1123,7 @@ int is_floodprot_exempt(Client *client, Channel *channel, char flood_type_letter
 	char *p;
 	BanContext *b = safe_alloc(sizeof(BanContext));
 
+	b->ban_type = EXBTYPE_EXCEPT;
 	b->client = client;
 	b->channel = channel;
 	b->ban_check_types = BANCHK_MSG;

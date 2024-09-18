@@ -54,7 +54,8 @@ char (*tkl_configtypetochar)(const char *name);
 const char *(*tkl_type_string)(TKL *tk);
 const char *(*tkl_type_config_string)(TKL *tk);
 char *(*tkl_uhost)(TKL *tkl, char *buf, size_t buflen, int options);
-TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, const char *reason, const char *setby,
+TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
+                              const char *reason, const char *setby,
                               time_t expire_at, time_t set_at, int soft, int flags);
 TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
                             time_t expire_at, time_t set_at, int flags);
@@ -172,11 +173,15 @@ void (*crule_free)(CRuleNode **);
 const char *(*crule_errstring)(int errcode);
 void (*ban_act_set_reputation)(Client *client, BanAction *action);
 const char *(*get_central_api_key)(void);
-int (*central_spamreport)(Client *target, Client *by);
+int (*central_spamreport)(Client *target, Client *by, const char *url);
 int (*central_spamreport_enabled)(void);
 void (*sasl_succeeded)(Client *client);
 void (*sasl_failed)(Client *client);
 int (*decode_authenticate_plain)(const char *param, char **authorization_id, char **authentication_id, char **passwd);
+void (*exit_client)(Client *client, MessageTag *recv_mtags, const char *comment);
+void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...);
+void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
+void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -499,4 +504,8 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_SASL_SUCCEEDED, sasl_succeeded, sasl_succeeded_default_handler, 0);
 	efunc_init_function(EFUNC_SASL_FAILED, sasl_failed, sasl_failed_default_handler, 0);
 	efunc_init_function(EFUNC_DECODE_AUTHENTICATE_PLAIN, decode_authenticate_plain, decode_authenticate_plain_default_handler, 0);
+	efunc_init_function(EFUNC_EXIT_CLIENT, exit_client, NULL, 0);
+	efunc_init_function(EFUNC_EXIT_CLIENT_FMT, exit_client_fmt, NULL, 0);
+	efunc_init_function(EFUNC_EXIT_CLIENT_EX, exit_client_ex, NULL, 0);
+	efunc_init_function(EFUNC_BANNED_CLIENT, banned_client, NULL, 0);
 }

@@ -601,6 +601,7 @@ int read_tkldb(void)
 			{
 				tkl_add_serverban(tkl->type, tkl->ptr.serverban->usermask,
 				                  tkl->ptr.serverban->hostmask,
+				                  NULL,
 				                  tkl->ptr.serverban->reason,
 				                  tkl->set_by, tkl->expire_at,
 				                  tkl->set_at, softban, 0);

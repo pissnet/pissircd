@@ -180,6 +180,7 @@ ILangList *ilanglist = NULL;
 const char *illegalnickchars = "!+%@&~#$:'\"?*,.";
 
 /* Forward declarations */
+void charsys_free_mblist(void);
 int _do_nick_name(char *nick);
 int _do_remote_nick_name(char *nick);
 static int do_nick_name_multibyte(char *nick);
@@ -227,6 +228,7 @@ MOD_LOAD()
 /* Called when module is unloaded */
 MOD_UNLOAD()
 {
+	charsys_free_mblist();
 	return MOD_SUCCESS;
 }
 
@@ -361,16 +363,9 @@ int charsys_config_posttest(int *errs)
 	return errors ? -1 : 1;
 }
 
-/** Called on boot and just before config run */
-void charsys_reset(void)
+void charsys_free_mblist(void)
 {
-	int i;
 	MBList *m, *m_next;
-	UList *u, *u_next;
-
-	/* First, reset everything */
-	for (i=0; i < 256; i++)
-		char_atribs[i] &= ~ALLOWN;
 	for (m=mblist; m; m=m_next)
 	{
 		m_next = m->next;
@@ -384,7 +379,20 @@ void charsys_reset(void)
 		safe_free(u);
 	}
 	ulist = ulist_tail = NULL;
+}
 
+/** Called on boot and just before config run */
+void charsys_reset(void)
+{
+	int i;
+	MBList *m, *m_next;
+	UList *u, *u_next;
+
+	/* First, reset everything */
+	for (i=0; i < 256; i++)
+		char_atribs[i] &= ~ALLOWN;
+
+	charsys_free_mblist();
 	/* Then add the default which will always be allowed */
 	charsys_addallowed("0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyzy{|}");
 	langav = 0;

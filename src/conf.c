@@ -273,6 +273,7 @@ int is_blacklisted_module(const char *name);
 int modules_default_conf_modified(const char *filebuf);
 int config_item_allowed_for_config_file(const char *resource, const char *item);
 void remove_config_tkls(int flag);
+void free_operclass_struct(OperClass *o);
 
 /** Return the printable string of a 'cep' location, such as set::something::xyz */
 const char *config_var(ConfigEntry *cep)
@@ -1673,7 +1674,7 @@ void free_iConf(Configuration *i)
 	safe_free(i->level_on_join);
 	safe_free(i->spamfilter_ban_reason);
 	safe_free(i->spamfilter_virus_help_channel);
-	// spamexcept is freed elsewhere
+	safe_free_security_group(i->spamfilter_except);
 	safe_free(i->spamexcept_line);
 	safe_free(i->reject_message_too_many_connections);
 	safe_free(i->reject_message_server_full);
@@ -1803,7 +1804,7 @@ void config_setdefaultsettings(Configuration *i)
 	 * Any decent client using AES will use ECDHE-xx-AES.
 	 */
 	safe_strdup(i->tls_options->outdated_ciphers, "AES*,RC4*,DES*");
-
+	i->tls_options->certificate_expiry_notification = 1;
 	i->plaintext_policy_user = POLICY_ALLOW;
 	i->plaintext_policy_oper = POLICY_DENY;
 	i->plaintext_policy_server = POLICY_DENY;
@@ -2445,6 +2446,7 @@ void free_all_proxy_blocks(void)
 void config_rehash()
 {
 	ConfigItem_oper			*oper_ptr;
+	ConfigItem_operclass		*operclass_ptr;
 	ConfigItem_class 		*class_ptr;
 	ConfigItem_ulines 		*uline_ptr;
 	ConfigItem_allow 		*allow_ptr;
@@ -2463,7 +2465,6 @@ void config_rehash()
 	ConfigItem_sni			*sni;
 	OperStat 			*os_ptr;
 	ListStruct 	*next, *next2;
-	SpamExcept *spamex_ptr;
 
 	USE_BAN_VERSION = 0;
 
@@ -2486,7 +2487,6 @@ void config_rehash()
 		safe_free(oper_ptr->auto_join);
 		Auth_FreeAuthConfig(oper_ptr->auth);
 		free_security_group(oper_ptr->match);
-		DelListItem(oper_ptr, conf_oper);
 		for (s = oper_ptr->swhois; s; s = s_next)
 		{
 			s_next = s->next;
@@ -2494,7 +2494,16 @@ void config_rehash()
 			safe_free(s->setby);
 			safe_free(s);
 		}
+		DelListItem(oper_ptr, conf_oper);
 		safe_free(oper_ptr);
+	}
+
+	for (operclass_ptr = conf_operclass; operclass_ptr; operclass_ptr = (ConfigItem_operclass *)next)
+	{
+		next = (ListStruct *)operclass_ptr->next;
+		free_operclass_struct(operclass_ptr->classStruct);
+		DelListItem(operclass_ptr, conf_operclass);
+		safe_free(operclass_ptr);
 	}
 
 	for (link_ptr = conf_link; link_ptr; link_ptr = (ConfigItem_link *) next)
@@ -2680,12 +2689,6 @@ void config_rehash()
 		safe_free(os_ptr);
 	}
 	iConf.allow_user_stats_ext = NULL;
-	for (spamex_ptr = iConf.spamexcept; spamex_ptr; spamex_ptr = (SpamExcept *)next)
-	{
-		next = (ListStruct *)spamex_ptr->next;
-		safe_free(spamex_ptr);
-	}
-	iConf.spamexcept = NULL;
 	for (of_ptr = conf_offchans; of_ptr; of_ptr = (ConfigItem_offchans *)next)
 	{
 		next = (ListStruct *)of_ptr->next;
@@ -3092,7 +3095,6 @@ int config_run_blocks(void)
 	listen_cleanup();
 	loop.do_bancheck = 1;
 	config_switchover();
-	update_throttling_timer_settings();
 
 	/* initialize conf_files with defaults if the block isn't set: */
 	if (!conf_files)
@@ -4040,6 +4042,58 @@ OperClassACL* _conf_parseACL(const char *name, ConfigEntry *ce)
 	return acl;
 }
 
+/** Free previously allocated _conf_parseACLEntry() */
+void free_acl_entry(OperClassACLEntry *e)
+{
+	OperClassACLEntryVar *v, *v_next;
+
+	for (v = e->variables; v; v = v_next)
+	{
+		v_next = v->next;
+		safe_free(v->name);
+		safe_free(v->value);
+		safe_free(v);
+	}
+	safe_free(e);
+}
+
+/** Free previously allocated _conf_parseACL() */
+void free_operclass_acls(OperClassACL *acl)
+{
+	OperClassACL *acl_next;
+	OperClassACLEntry *x, *x_next;
+	OperClassACL *sub, *sub_next;
+
+	for (; acl; acl = acl_next)
+	{
+		acl_next = acl->next;
+		for (x = acl->entries; x; x = x_next)
+		{
+			x_next = x->next;
+			DelListItem(x, acl->entries);
+			free_acl_entry(x);
+		}
+		acl->entries = NULL;
+		for (sub = acl->acls; sub; sub = sub_next)
+		{
+			sub_next = sub->next;
+			DelListItem(sub, acl->acls);
+			free_operclass_acls(sub);
+		}
+		acl->acls = NULL;
+		safe_free(acl->name);
+		safe_free(acl);
+	}
+}
+
+void free_operclass_struct(OperClass *o)
+{
+	free_operclass_acls(o->acls);
+	safe_free(o->ISA);
+	safe_free(o->name);
+	safe_free(o);
+}
+
 int	_conf_operclass(ConfigFile *conf, ConfigEntry *ce)
 {
 	ConfigEntry *cep;
@@ -4124,7 +4178,7 @@ int 	_test_operclass(ConfigFile *conf, ConfigEntry *ce)
 			if (has_permissions)
 			{
 				config_warn_duplicate(cep->file->filename,
-				cep->line_number, "oper::permissions");
+				cep->line_number, "operclass::permissions");
 				continue;
 			}
 			has_permissions = 1;
@@ -4147,7 +4201,7 @@ int 	_test_operclass(ConfigFile *conf, ConfigEntry *ce)
 	if (!has_permissions)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"oper::permissions");
+			"operclass::permissions");
 		errors++;
 	}
 
@@ -5360,6 +5414,7 @@ void conf_listen_configure(const char *ip, int port, SocketType socket_type, int
 	}
 	safe_free_webserver(listen->webserver);
 	free_entire_name_list(listen->websocket_origin);
+	listen->websocket_options = 0;
 	// NOTE: duplicate code overlap with listen_cleanup()
 
 	/* Now set the new settings: */
@@ -5681,6 +5736,13 @@ int	_test_listen(ConfigFile *conf, ConfigEntry *ce)
 
 			has_port = 1;
 
+			if (strchr(cep->value, ','))
+			{
+				config_error("%s:%i: listen::port does not support comma's",
+				             cep->file->filename, cep->line_number);
+				errors++;
+				continue;
+			}
 			port_range(cep->value, &start, &end);
 			if (start == end)
 			{
@@ -5688,7 +5750,8 @@ int	_test_listen(ConfigFile *conf, ConfigEntry *ce)
 				{
 					config_error("%s:%i: listen: illegal port (must be 1..65535)",
 						cep->file->filename, cep->line_number);
-					return 1;
+					errors++;
+					continue;
 				}
 			}
 			else
@@ -5697,7 +5760,8 @@ int	_test_listen(ConfigFile *conf, ConfigEntry *ce)
 				{
 					config_error("%s:%i: listen: illegal port range end value is less than starting value",
 						cep->file->filename, cep->line_number);
-					return 1;
+					errors++;
+					continue;
 				}
 				if (end - start >= 100)
 				{
@@ -5705,13 +5769,15 @@ int	_test_listen(ConfigFile *conf, ConfigEntry *ce)
 						"(and thus consumes %d sockets) this is probably not what you want.",
 						cep->file->filename, cep->line_number, start, end,
 						end - start + 1, end - start + 1);
-					return 1;
+					errors++;
+					continue;
 				}
 				if ((start < 1) || (start > 65535) || (end < 1) || (end > 65535))
 				{
 					config_error("%s:%i: listen: illegal port range values must be between 1 and 65535",
 						cep->file->filename, cep->line_number);
-					return 1;
+					errors++;
+					continue;
 				}
 			}
 
@@ -7205,8 +7271,7 @@ int _conf_require(ConfigFile *conf, ConfigEntry *ce)
 {
 	ConfigEntry *cep;
 	Hook *h;
-	char *usermask = NULL;
-	char *hostmask = NULL;
+	SecurityGroup *match = NULL;
 	char *reason = NULL;
 
 	if (strcmp(ce->value, "authentication") && strcmp(ce->value, "sasl"))
@@ -7224,33 +7289,16 @@ int _conf_require(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
-		if (!strcmp(cep->name, "mask"))
-		{
-			char buf[512], *p;
-			strlcpy(buf, cep->value, sizeof(buf));
-			p = strchr(buf, '@');
-			if (p)
-			{
-				*p++ = '\0';
-				safe_strdup(usermask, buf);
-				safe_strdup(hostmask, p);
-			} else {
-				safe_strdup(hostmask, cep->value);
-			}
-		}
+		if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
+			conf_match_block(conf, cep, &match);
 		else if (!strcmp(cep->name, "reason"))
 			safe_strdup(reason, cep->value);
 	}
 
-	if (!usermask)
-		safe_strdup(usermask, "*");
-
 	if (!reason)
 		safe_strdup(reason, "-");
 
-	tkl_add_serverban(TKL_KILL, usermask, hostmask, reason, "-config-", 0, TStime(), 1, TKL_FLAG_CONFIG);
-	safe_free(usermask);
-	safe_free(hostmask);
+	tkl_add_serverban(TKL_KILL, NULL, NULL, match, reason, "-config-", 0, TStime(), 1, TKL_FLAG_CONFIG);
 	safe_free(reason);
 	return 0;
 }
@@ -7260,7 +7308,7 @@ int _test_require(ConfigFile *conf, ConfigEntry *ce)
 	ConfigEntry *cep;
 	int errors = 0;
 	Hook *h;
-	char has_mask = 0, has_reason = 0;
+	char has_mask = 0, has_match = 0, has_reason = 0;
 
 	if (!ce->value)
 	{
@@ -7315,20 +7363,26 @@ int _test_require(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
+		if (!strcmp(cep->name, "mask"))
+		{
+			if (cep->value || cep->items)
+			{
+				has_mask = 1;
+				test_match_block(conf, cep, &errors);
+			}
+		} else
+		if (!strcmp(cep->name, "match"))
+		{
+			if (cep->value || cep->items)
+			{
+				has_match = 1;
+				test_match_block(conf, cep, &errors);
+			}
+		} else
 		if (config_is_blankorempty(cep, "require"))
 		{
 			errors++;
 			continue;
-		}
-		if (!strcmp(cep->name, "mask"))
-		{
-			if (has_mask)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "require::mask");
-				continue;
-			}
-			has_mask = 1;
 		}
 		else if (!strcmp(cep->name, "reason"))
 		{
@@ -7339,15 +7393,30 @@ int _test_require(ConfigFile *conf, ConfigEntry *ce)
 				continue;
 			}
 			has_reason = 1;
+		} else
+		{
+			config_error_unknown(cep->file->filename,
+				cep->line_number, "require", cep->name);
+			errors++;
+			continue;
 		}
 	}
 
-	if (!has_mask)
+	if (!has_mask && !has_match)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
 			"require::mask");
 		errors++;
 	}
+
+	if (has_mask && has_match)
+	{
+		config_error("%s:%d: You cannot have both ::mask and ::match. "
+		             "You should only use require::match.",
+		             ce->file->filename, ce->line_number);
+		errors++;
+	}
+
 	if (!has_reason)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
@@ -7582,6 +7651,9 @@ void test_tlsblock(ConfigFile *conf, ConfigEntry *cep, int *totalerrors)
 				errors++;
 			}
 		}
+		else if (!strcmp(cepp->name, "certificate-expiry-notification"))
+		{
+		}
 		else
 		{
 			config_error("%s:%i: unknown directive %s",
@@ -7634,6 +7706,7 @@ void conf_tlsblock(ConfigFile *conf, ConfigEntry *cep, TLSOptions *tlsoptions)
 		tlsoptions->sts_port = tempiConf.tls_options->sts_port;
 		tlsoptions->sts_duration = tempiConf.tls_options->sts_duration;
 		tlsoptions->sts_preload = tempiConf.tls_options->sts_preload;
+		tlsoptions->certificate_expiry_notification = tempiConf.tls_options->certificate_expiry_notification;
 	}
 
 	/* Now process the options */
@@ -7747,6 +7820,10 @@ void conf_tlsblock(ConfigFile *conf, ConfigEntry *cep, TLSOptions *tlsoptions)
 				else if (!strcmp(ceppp->name, "preload"))
 					tlsoptions->sts_preload = config_checkval(ceppp->value, CFG_YESNO);
 			}
+		}
+		else if (!strcmp(cepp->name, "certificate-expiry-notification"))
+		{
+			tlsoptions->certificate_expiry_notification = config_checkval(cepp->value, CFG_YESNO);
 		}
 	}
 }
@@ -7934,6 +8011,9 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 				tempiConf.hide_ban_reason = HIDE_BAN_REASON_NO;
 			else if (!strcmp(cep->value, "auto"))
 				tempiConf.hide_ban_reason = HIDE_BAN_REASON_AUTO;
+		}
+		else if (!strcmp(cep->name, "hide-killed-by")) {
+			tempiConf.hide_killed_by = config_checkval(cep->value, CFG_YESNO);
 		}
 		else if (!strcmp(cep->name, "prefix-quit")) {
 			if (!strcmp(cep->value, "0") || !strcmp(cep->value, "no"))
@@ -8127,19 +8207,20 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 					tempiConf.spamfilter_vchan_deny = config_checkval(cepp->value,CFG_YESNO);
 				else if (!strcmp(cepp->name, "except"))
 				{
-					char *name, *p;
-					SpamExcept *e;
-					safe_strdup(tempiConf.spamexcept_line, cepp->value);
-					for (name = strtoken(&p, cepp->value, ","); name; name = strtoken(&p, NULL, ","))
+					if (cepp->value && !tempiConf.spamfilter_except)
 					{
-						if (*name == ' ')
-							name++;
-						if (*name)
+						/* OLD set::spamfilter::except compatibility code when it was "#chan,xyz" */
+						char buf[512], *p = NULL, *name;
+						strlcpy(buf, cepp->value, sizeof(buf));
+						tempiConf.spamfilter_except = safe_alloc(sizeof(SecurityGroup));
+						for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
 						{
-							e = safe_alloc(sizeof(SpamExcept) + strlen(name));
-							strcpy(e->name, name);
-							AddListItem(e, tempiConf.spamexcept);
+							skip_whitespace(&name);
+							add_name_list(tempiConf.spamfilter_except->destination, name);
 						}
+					} else {
+						/* New set::spamfilter::except code, where it is a mask item */
+						conf_match_block(conf, cepp, &tempiConf.spamfilter_except);
 					}
 				}
 				else if (!strcmp(cepp->name, "detect-slow-warn"))
@@ -8744,6 +8825,10 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 				continue;
 			}
 		}
+		else if (!strcmp(cep->name, "hide-killed-by")) {
+			CheckNull(cep);
+			CheckDuplicate(cep, hide_killed_by, "hide-killed-by");
+		}
 		else if (!strcmp(cep->name, "restrict-channelmodes"))
 		{
 			CheckNull(cep);
@@ -9276,6 +9361,23 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "spamfilter")) {
 			for (cepp = cep->items; cepp; cepp = cepp->next)
 			{
+				if (!strcmp(cepp->name, "except"))
+				{
+					if (cepp->value)
+					{
+						/* Old compatibility code */
+						config_warn("%s: %d: set::spamfilter::except is now a mask item. "
+						            "Your setting has been read correctly but please update your item "
+						            "because future UnrealIRCd versions will make this an error. "
+						            "Update your item to use this style: "
+						            "except { destination { \"#chan1\"; \"#chan2\"; \"SomeNick\"; } }",
+						            cepp->file->filename, cepp->line_number);
+						config_warn("For more information, see https://www.unrealircd.org/docs/Set_block#set::spamfilter::except");
+					} else {
+						test_match_block(conf, cepp, &errors);
+					}
+					continue; // needed, because we are above the CheckNull and the multiple if's below.
+				}
 				CheckNull(cepp);
 				if (!strcmp(cepp->name, "ban-time"))
 				{
@@ -9311,10 +9413,6 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 				if (!strcmp(cepp->name, "virus-help-channel-deny"))
 				{
 					CheckDuplicate(cepp, spamfilter_virus_help_channel_deny, "spamfilter::virus-help-channel-deny");
-				} else
-				if (!strcmp(cepp->name, "except"))
-				{
-					CheckDuplicate(cepp, spamfilter_except, "spamfilter::except");
 				} else
 #ifdef SPAMFILTER_DETECTSLOW
 				if (!strcmp(cepp->name, "detect-slow-warn"))
@@ -10005,10 +10103,12 @@ void start_listeners(void)
 {
 	ConfigItem_listen *listener;
 	int failed = 0, ports_bound = 0;
-	char boundmsg_ipv4[512], boundmsg_ipv6[512];
+	char boundmsg_ipv4[512];
+	char boundmsg_ipv6[512];
+	char boundmsg_unix[512];
 	int last_errno = 0;
 
-	*boundmsg_ipv4 = *boundmsg_ipv6 = '\0';
+	*boundmsg_ipv4 = *boundmsg_ipv6 = *boundmsg_unix = '\0';
 
 	for (listener = conf_listen; listener; listener = listener->next)
 	{
@@ -10023,10 +10123,19 @@ void start_listeners(void)
 			} else {
 				if (loop.booted)
 				{
-					unreal_log(ULOG_INFO, "listen", "LISTEN_ADDED", NULL,
-					           "UnrealIRCd is now also listening on $listen_ip:$listen_port",
-					           log_data_string("listen_ip", listener->ip),
-					           log_data_integer("listen_port", listener->port));
+					if (listener->socket_type == SOCKET_TYPE_UNIX)
+					{
+						unreal_log(ULOG_INFO, "listen", "LISTEN_ADDED", NULL,
+							   "UnrealIRCd is now also listening on $listen_file [$protocol]",
+							   log_data_string("listen_file", listener->file),
+							   log_data_string("protocol", socket_type_valtostr(listener->socket_type)));
+					} else {
+						unreal_log(ULOG_INFO, "listen", "LISTEN_ADDED", NULL,
+							   "UnrealIRCd is now also listening on $listen_ip:$listen_port [$protocol]",
+							   log_data_string("listen_ip", listener->ip),
+							   log_data_integer("listen_port", listener->port),
+							   log_data_string("protocol", socket_type_valtostr(listener->socket_type)));
+					}
 				} else {
 					switch (listener->socket_type)
 					{
@@ -10040,7 +10149,11 @@ void start_listeners(void)
 								"%s:%d%s, ", listener->ip, listener->port,
 								listener->options & LISTENER_TLS ? "(TLS)" : "");
 							break;
-						// TODO: show unix domain sockets ;)
+						case SOCKET_TYPE_UNIX:
+							snprintf(boundmsg_unix+strlen(boundmsg_unix), sizeof(boundmsg_unix)-strlen(boundmsg_unix),
+								"%s%s, ", listener->file,
+								listener->options & LISTENER_TLS ? "(TLS)" : "");
+							break;
 						default:
 							break;
 					}
@@ -10093,24 +10206,32 @@ void start_listeners(void)
 			boundmsg_ipv4[strlen(boundmsg_ipv4)-2] = '\0';
 		if (strlen(boundmsg_ipv6) > 2)
 			boundmsg_ipv6[strlen(boundmsg_ipv6)-2] = '\0';
+		if (strlen(boundmsg_unix) > 2)
+			boundmsg_unix[strlen(boundmsg_unix)-2] = '\0';
 
 		if (!*boundmsg_ipv4)
 			strlcpy(boundmsg_ipv4, "<none>", sizeof(boundmsg_ipv4));
 		if (!*boundmsg_ipv6)
 			strlcpy(boundmsg_ipv6, "<none>", sizeof(boundmsg_ipv6));
+		if (!*boundmsg_unix)
+			strlcpy(boundmsg_unix, "<none>", sizeof(boundmsg_unix));
 
 		unreal_log(ULOG_INFO, "listen", "LISTENING", NULL,
 		           "UnrealIRCd is now listening on the following addresses/ports:\n"
 		           "IPv4: $ipv4_port_list\n"
-		           "IPv6: $ipv6_port_list\n",
+		           "IPv6: $ipv6_port_list\n"
+		           "Unix Sockets: $unix_socket_list\n",
 		           log_data_string("ipv4_port_list", boundmsg_ipv4),
-		           log_data_string("ipv6_port_list", boundmsg_ipv6));
+		           log_data_string("ipv6_port_list", boundmsg_ipv6),
+		           log_data_string("unix_socket_list", boundmsg_unix));
 	}
 }
 
 /* Actually use configuration */
 void config_run(void)
 {
+	Module *mi;
+
 	loop.config_status = CONFIG_STATUS_POSTLOAD;
 	extcmodes_check_for_changes();
 	start_listeners();
@@ -10118,6 +10239,10 @@ void config_run(void)
 		add_proc_io_server();
 	free_all_config_resources();
 	dns_check_for_changes();
+
+	for (mi = Modules; mi; mi = mi->next)
+		if (!(mi->options & MOD_OPT_OFFICIAL))
+			tainted = 99;
 }
 
 int	_conf_offchans(ConfigFile *conf, ConfigEntry *ce)

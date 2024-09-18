@@ -127,8 +127,8 @@ int _can_join(Client *client, Channel *channel, const char *key, char **errmsg)
 
 #ifndef NO_OPEROVERRIDE
 #ifdef OPEROVERRIDE_VERIFY
-	if (ValidatePermissionsForPath("channel:override:privsecret",client,NULL,channel,NULL) && (channel->mode.mode & MODE_SECRET ||
-	    channel->mode.mode & MODE_PRIVATE))
+	if (ValidatePermissionsForPath("channel:override:privsecret",client,NULL,channel,NULL)
+		&& (SecretChannel(channel) || HiddenChannel(channel)))
 	{
 		*errmsg = STR_ERR_OPERSPVERIFY;
 		return (ERR_OPERSPVERIFY);
@@ -506,11 +506,11 @@ void _do_join(Client *client, int parc, const char *parv[])
 		}
 
 		channel = make_channel(name);
-		if (channel && (lp = find_membership_link(client->user->channel, channel)))
-			continue;
-
 		if (!channel)
-			continue;
+			continue; /* would be VERY rare, but e.g. for empty chan ('') */
+
+		if (find_membership_link(client->user->channel, channel))
+			continue; /* user already in channel, so JOIN ignored */
 
 		i = HOOK_CONTINUE;
 		if (!MyConnect(client))
@@ -539,6 +539,9 @@ void _do_join(Client *client, int parc, const char *parv[])
 			{
 				if (i != -1)
 					send_cannot_join_error(client, i, errmsg, name);
+				/* Rejected... if we just created a new chan we should destroy it too. -- Syzop */
+				if (!channel->users)
+					sub1_from_channel(channel);
 				continue;
 			}
 		}

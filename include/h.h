@@ -114,7 +114,6 @@ extern MODVAR ConfigItem_proxy		*conf_proxy;
 extern void		completed_connection(int, int, void *);
 extern void clear_unknown();
 extern EVENT(e_unload_module_delayed);
-extern EVENT(throttling_check_expire);
 
 extern void  module_loadall(void);
 extern long set_usermode(const char *umode);
@@ -158,6 +157,12 @@ extern ConfigItem_help 	*find_Help(const char *command);
 
 extern OperPermission ValidatePermissionsForPath(const char *path, Client *client, Client *victim, Channel *channel, const void *extra);
 extern void OperClassValidatorDel(OperClassValidator *validator);
+extern OperClassACLPath *OperClass_parsePath(const char *path);
+extern OperClassACL *OperClass_FindACL(OperClassACL *acl, char *name);
+extern OperPermission ValidatePermissionsForPathEx(OperClassACL *acl, OperClassACLPath *path, OperClassCheckParams *params);
+extern void OperClass_freePath(OperClassACLPath *path);
+extern OperClassACL *_conf_parseACL(const char *name, ConfigEntry *ce);
+extern void free_operclass_struct(OperClass *o);
 
 extern ConfigItem_ban  *find_ban_ip(Client *client);
 extern void add_ListItem(ListStruct *, ListStruct **);
@@ -377,9 +382,6 @@ extern const char *pretty_date(time_t t);
 extern time_t server_time_to_unix_time(const char *tbuf);
 extern time_t rfc2616_time_to_unix_time(const char *tbuf);
 extern const char *rfc2616_time(time_t clock);
-extern void exit_client(Client *client, MessageTag *recv_mtags, const char *comment);
-extern void exit_client_fmt(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 3, 4)));
-extern void exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
 extern void initstats();
 extern const char *check_string(const char *);
 extern char *make_nick_user_host(const char *, const char *, const char *);
@@ -431,8 +433,6 @@ extern void del_queries(const char *);
 #define NICK_HASH_TABLE_SIZE 32768
 #define CHAN_HASH_TABLE_SIZE 32768
 #define WHOWAS_HASH_TABLE_SIZE 32768
-#define THROTTLING_HASH_TABLE_SIZE 8192
-#define IPUSERS_HASH_TABLE_SIZE 8192
 extern uint64_t siphash(const char *in, const char *k);
 extern uint64_t siphash_raw(const char *in, size_t len, const char *k);
 extern uint64_t siphash_nocase(const char *in, const char *k);
@@ -458,13 +458,6 @@ extern Client *hash_find_id(const char *, Client *);
 extern Client *hash_find_nickatserver(const char *, Client *);
 extern Channel *find_channel(const char *name);
 extern Client *hash_find_server(const char *, Client *);
-extern IpUsersBucket *find_ipusers_bucket(Client *client);
-extern IpUsersBucket *add_ipusers_bucket(Client *client);
-extern void decrease_ipusers_bucket(Client *client);
-extern MODVAR struct ThrottlingBucket *ThrottlingHash[THROTTLING_HASH_TABLE_SIZE];
-extern MODVAR IpUsersBucket *IpUsersHash_ipv4[IPUSERS_HASH_TABLE_SIZE];
-extern MODVAR IpUsersBucket *IpUsersHash_ipv6[IPUSERS_HASH_TABLE_SIZE];
-
 
 /* Mode externs
 */
@@ -809,8 +802,9 @@ extern MODVAR int (*tkl_chartotype)(char c);
 extern MODVAR char (*tkl_configtypetochar)(const char *name);
 extern MODVAR const char *(*tkl_type_string)(TKL *tk);
 extern MODVAR const char *(*tkl_type_config_string)(TKL *tk);
-extern MODVAR TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, const char *reason, const char *setby,
-                                            time_t expire_at, time_t set_at, int soft, int flags);
+extern MODVAR TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
+                                        const char *reason, const char *setby,
+                                        time_t expire_at, time_t set_at, int soft, int flags);
 extern MODVAR TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
                                            const char *reason, const char *set_by,
                                            time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
@@ -929,11 +923,15 @@ extern MODVAR void (*crule_free)(CRuleNode **);
 extern MODVAR const char *(*crule_errstring)(int errcode);
 extern MODVAR void (*ban_act_set_reputation)(Client *client, BanAction *action);
 extern MODVAR const char *(*get_central_api_key)(void);
-extern MODVAR int (*central_spamreport)(Client *target, Client *by);
+extern MODVAR int (*central_spamreport)(Client *target, Client *by, const char *url);
 extern MODVAR int (*central_spamreport_enabled)(void);
 extern MODVAR void (*sasl_succeeded)(Client *client);
 extern MODVAR void (*sasl_failed)(Client *client);
 extern MODVAR int (*decode_authenticate_plain)(const char *param, char **authorization_id, char **authentication_id, char **passwd);
+extern MODVAR void (*exit_client)(Client *client, MessageTag *recv_mtags, const char *comment);
+extern MODVAR void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 3, 4)));
+extern MODVAR void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
+extern MODVAR void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
 /* /Efuncs */
 
 /* TLS functions */
@@ -989,7 +987,7 @@ extern void cancel_ident_lookup_default_handler(Client *client);
 extern int spamreport_default_handler(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
 extern void ban_act_set_reputation_default_handler(Client *client, BanAction *action);
 extern const char *get_central_api_key_default_handler(void);
-extern int central_spamreport_default_handler(Client *target, Client *by);
+extern int central_spamreport_default_handler(Client *target, Client *by, const char *url);
 extern int central_spamreport_enabled_default_handler(void);
 extern void sasl_succeeded_default_handler(Client *client);
 extern void sasl_failed_default_handler(Client *client);
@@ -1003,7 +1001,7 @@ extern int add_listmode_ex(Ban **list, Client *cptr, Channel *channel, const cha
 extern int del_listmode(Ban **list, Channel *channel, const char *banid);
 extern int Halfop_mode(long mode);
 extern const char *convert_regular_ban(char *mask, char *buf, size_t buflen);
-extern const char *clean_ban_mask(const char *, int, Client *, int);
+extern const char *clean_ban_mask(const char *, int, ExtbanType, Client *, Channel *, int);
 extern int find_invex(Channel *channel, Client *client);
 extern void DoMD5(char *mdout, const char *src, unsigned long n);
 extern char *md5hash(char *dst, const char *src, unsigned long n);
@@ -1071,9 +1069,11 @@ extern int inet_pton6(const char *src, unsigned char *dst);
 extern const char *compressed_ip(const char *ip);
 extern int unreal_bind(int fd, const char *ip, int port, SocketType socket_type);
 extern int unreal_connect(int fd, const char *ip, int port, SocketType socket_type);
+extern const char *socket_type_valtostr(SocketType t);
 extern int is_valid_ip(const char *str);
 extern int ipv6_capable(void);
 extern int unix_sockets_capable(void);
+extern int set_client_ip(Client *client, const char *ip);
 #ifdef _WIN32
 extern void init_winsock(void);
 #endif
@@ -1130,7 +1130,6 @@ extern const char *spki_fingerprint_ex(X509 *x509_cert);
 extern int is_module_loaded(const char *name);
 extern int is_blacklisted_module(const char *name);
 extern void close_std_descriptors(void);
-extern void banned_client(Client *acptr, const char *bantype, const char *reason, int global, int noexit);
 extern char *mystpcpy(char *dst, const char *src);
 extern size_t add_sjsby(char *buf, const char *setby, time_t seton);
 extern MaxTarget *findmaxtarget(const char *cmd);
@@ -1202,6 +1201,7 @@ extern int is_extended_server_ban(const char *str);
 extern int empty_mode(const char *m);
 extern void free_multilinemode(MultiLineMode *m);
 #define safe_free_multilinemode(m) do { if (m) free_multilinemode(m); m = NULL; } while(0)
+extern ExtbanType mode_letter_to_extbantype(char c);
 extern int valid_sid(const char *name);
 extern int valid_uid(const char *name);
 extern void parse_client_queued(Client *client);
@@ -1219,7 +1219,6 @@ extern const char *unreal_add_quotes(const char *str);
 extern int unreal_add_quotes_r(const char *i, char *o, size_t len);
 extern void user_account_login(MessageTag *recv_mtags, Client *client);
 extern void link_generator(void);
-extern void update_throttling_timer_settings(void);
 extern int hide_idle_time(Client *client, Client *target);
 extern void lost_server_link(Client *serv, const char *tls_error_string);
 extern const char *sendtype_to_cmd(SendType sendtype);
@@ -1295,9 +1294,11 @@ extern int security_group_exists(const char *name);
 extern SecurityGroup *add_security_group(const char *name, int order);
 extern SecurityGroup *find_security_group(const char *name);
 extern void free_security_group(SecurityGroup *s);
+#define safe_free_security_group(x) do { if (x) { free_security_group(x); x = NULL; } } while(0)
 extern SecurityGroup *duplicate_security_group(SecurityGroup *s);
 extern void set_security_group_defaults(void);
 extern int user_allowed_by_security_group(Client *client, SecurityGroup *s);
+extern int user_allowed_by_security_group_context(Client *client, SecurityGroup *s, crule_context *context);
 extern int user_allowed_by_security_group_name(Client *client, const char *secgroupname);
 extern const char *get_security_groups(Client *client);
 extern int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors);
@@ -1405,7 +1406,6 @@ extern GeoIPResult *geoip_lookup(const char *ip);
 extern void free_geoip_result(GeoIPResult *r);
 extern const char *get_operlogin(Client *client);
 extern const char *get_operclass(Client *client);
-extern struct sockaddr *raw_client_ip(Client *client);
 /* url stuff */
 extern const char *unreal_mkcache(const char *url);
 extern int has_cached_version(const char *url);
