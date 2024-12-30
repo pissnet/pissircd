@@ -608,7 +608,7 @@ while [ -z "$TEST" ] ; do
 	echo "UnrealIRCd always supports 'remote includes' for https URLs like:"
 	echo "include \"https://www.example.org/files/opers.conf\";"
 	echo "Do you also need support for non-https, such as ftp, tftp, smb or insecure http?"
-	echo "Answer 'Yes' if you need such protocols."
+	echo "Answer 'Yes' if you need such protocols and want to use the cURL library."
 	echo "By default (answer 'No') we only support the https protocol, which is perfectly fine for most people."
 	echo $n "[$TEST] -> $c"
 	read cc
