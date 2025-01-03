@@ -366,6 +366,7 @@ int charsys_config_posttest(int *errs)
 void charsys_free_mblist(void)
 {
 	MBList *m, *m_next;
+	UList *u, *u_next;
 	for (m=mblist; m; m=m_next)
 	{
 		m_next = m->next;
@@ -385,13 +386,11 @@ void charsys_free_mblist(void)
 void charsys_reset(void)
 {
 	int i;
-	MBList *m, *m_next;
-	UList *u, *u_next;
 
 	/* First, reset everything */
 	for (i=0; i < 256; i++)
 		char_atribs[i] &= ~ALLOWN;
-
+	
 	charsys_free_mblist();
 	/* Then add the default which will always be allowed */
 	charsys_addallowed("0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyzy{|}");
