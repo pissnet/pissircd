@@ -52,6 +52,7 @@ fi
 
 mkdir -p $TMPDIR
 mkdir -p $PRIVATELIBDIR
+mkdir -p $CONFDIR
 
 # Do this even if we're not in advanced mode
 if [ "$ADVANCED" = "1" ] ; then
@@ -151,6 +152,31 @@ $CONF || exit 1
 cd "$UNREALCWD"
 
 if [ "$QUICK" != "1" ] ; then
+	if [ ! -f "$CONFDIR/unrealircd.conf" ]; then
+		echo ""
+		echo "You don't have an 'unrealircd.conf' yet in $CONFDIR"
+		echo "Shall I put the example configuration file there?"
+		echo "If so, enter the two letter language code that you want, or just press ENTER for English. Answer 'none' to skip."
+		AVLANGS="en"
+		cd doc/conf/examples 1>/dev/null 2>&1
+		for lang in example.??.conf
+		do
+			ADDTHIS=$(echo "$lang"|sed 's/example.//g'|sed 's/.conf//g')
+			AVLANGS="$AVLANGS $ADDTHIS"
+		done
+		cd - 1>/dev/null 2>&1
+		echo "The available options are: $AVLANGS none"
+		echo $n "[en] -> $c"
+		read cc
+		if [ "$cc" = "none" ]; then
+			echo "Example config not copied."
+		elif [ "$cc" = "en" -o "$cc" = "" ]; then
+			cp doc/conf/examples/example.conf $CONFDIR/unrealircd.conf
+		else
+			cp doc/conf/examples/example.$cc.conf $CONFDIR/unrealircd.conf
+		fi
+	fi
+
 	if [ ! -f $CONFDIR/tls/server.cert.pem -a ! -f $CONFDIR/ssl/server.cert.pem ]; then
 		export OPENSSLPATH
 		if [ "$GENCERTIFICATE" = 1 ]; then
@@ -350,7 +376,7 @@ echo "We will now ask you a number of questions. You can just press ENTER to acc
 echo ""
 
 # This needs to be updated each release so auto-upgrading works for settings, modules, etc!!:
-UNREALRELEASES="unrealircd-6.1.7-rc1 unrealircd-6.1.6 unrealircd-6.1.6-rc1 unrealircd-6.1.5 unrealircd-6.1.4 unrealircd-6.1.3 unrealircd-6.1.3-rc1 unrealircd-6.1.2.3 unrealircd-6.1.2.2 unrealircd-6.1.2.1 unrealircd-6.1.2 unrealircd-6.1.2-rc2 unrealircd-6.1.2-rc1 unrealircd-6.1.1.1 unrealircd-6.1.1 unrealircd-6.1.0 unrealircd-6.1.0-rc2 unrealircd-6.1.0-rc1 unrealircd-6.0.7 unrealircd-6.0.6 unrealircd-6.0.5 unrealircd-6.0.5-rc2 unrealircd-6.0.5-rc1 unrealircd-6.0.4.2 unrealircd-6.0.4.1 unrealircd-6.0.4 unrealircd-6.0.4-rc2 unrealircd-6.0.4-rc1 unrealircd-6.0.3 unrealircd-6.0.2 unrealircd-6.0.1.1 unrealircd-6.0.1 unrealircd-6.0.0 unrealircd-6.0.0-rc2 unrealircd-6.0.0-rc1 unrealircd-6.0.0-beta4 unrealircd-6.0.0-beta3 unrealircd-6.0.0-beta2 unrealircd-6.0.0-beta1 unrealircd-5.2.3 unrealircd-5.2.2 unrealircd-5.2.1.1 unrealircd-5.2.1 unrealircd-5.2.1-rc1 unrealircd-5.2.0.2 unrealircd-5.2.0.1 unrealircd-5.2.0 unrealircd-5.2.0-rc1 unrealircd-5.0.9.1 unrealircd-5.0.9"
+UNREALRELEASES="unrealircd-6.1.8 unrealircd-6.1.8.1 unrealircd-6.1.8 unrealircd-6.1.8-rc1 unrealircd-6.1.7 unrealircd-6.1.7-rc1 unrealircd-6.1.6 unrealircd-6.1.6-rc1 unrealircd-6.1.5 unrealircd-6.1.4 unrealircd-6.1.3 unrealircd-6.1.3-rc1 unrealircd-6.1.2.3 unrealircd-6.1.2.2 unrealircd-6.1.2.1 unrealircd-6.1.2 unrealircd-6.1.2-rc2 unrealircd-6.1.2-rc1 unrealircd-6.1.1.1 unrealircd-6.1.1 unrealircd-6.1.0 unrealircd-6.1.0-rc2 unrealircd-6.1.0-rc1 unrealircd-6.0.7 unrealircd-6.0.6 unrealircd-6.0.5 unrealircd-6.0.5-rc2 unrealircd-6.0.5-rc1 unrealircd-6.0.4.2 unrealircd-6.0.4.1 unrealircd-6.0.4 unrealircd-6.0.4-rc2 unrealircd-6.0.4-rc1 unrealircd-6.0.3 unrealircd-6.0.2 unrealircd-6.0.1.1 unrealircd-6.0.1 unrealircd-6.0.0 unrealircd-5.2.3 unrealircd-5.2.2 unrealircd-5.2.1.1 unrealircd-5.2.1 unrealircd-5.2.0.2 unrealircd-5.2.0.1 unrealircd-5.2.0 unrealircd-5.0.9.1 unrealircd-5.0.9"
 if [ -f "config.settings" ]; then
 	. ./config.settings
 else
@@ -582,7 +608,7 @@ while [ -z "$TEST" ] ; do
 	echo "UnrealIRCd always supports 'remote includes' for https URLs like:"
 	echo "include \"https://www.example.org/files/opers.conf\";"
 	echo "Do you also need support for non-https, such as ftp, tftp, smb or insecure http?"
-	echo "Answer 'Yes' if you need such protocols."
+	echo "Answer 'Yes' if you need such protocols and want to use the cURL library."
 	echo "By default (answer 'No') we only support the https protocol, which is perfectly fine for most people."
 	echo $n "[$TEST] -> $c"
 	read cc
@@ -776,7 +802,6 @@ while [ -z "$TEST" ] ; do
 	esac
 done
 
-echo ""
 TEST=""
 while [ -z "$TEST" ] ; do
 	TEST="$MAXCONNECTIONS_REQUEST"

@@ -536,8 +536,109 @@ void hbm_duplicate_mtags(HistoryLogLine *l, MessageTag *m)
 		safe_strdup(n->value, buf);
 		AddListItem(n, l->mtags);
 	}
-	/* Now convert the "time" message tag to something we can use in l->t */
+	/* Now convert the "time" message tag to something we can use in l->t (quick access) */
 	l->t = server_time_to_unix_time(n->value);
+	/* And put the pointer in l->time (slightly less fast, but still quick string access) */
+	l->time = n->value;
+
+	/* And store the msgid in l->msgid */
+	n = find_mtag(l->mtags, "msgid");
+	if (n && n->value)
+	{
+		l->msgid = n->value;
+	} else {
+		/* This shouldn't happen. The privmsg/notice layer should always add a msgid.
+		 * So this shouldn't happen even for server/services messages that had no msgid,
+		 * as the first unrealircd server would have added a msgid to it.
+		 * How else could this happen? No idea, but let's not crash at least :D
+		 * Oh yeah, maybe it happens if you don't have message-id module loaded, pfff.
+		 */
+#ifdef DEBUGMODE
+		/* This is significant enough to log in debug mode. We hate this situation
+		 * because it means the message will not have an unique id across servers.
+		 */
+		unreal_log(ULOG_DEBUG, "history", "MESSAGE_MISSING_MSGID", NULL,
+		           "In hbm_duplicate_mtags a message with no msgid was encountered: $line",
+		           log_data_string("line", l->line));
+#endif
+		n = safe_alloc(sizeof(MessageTag));
+		safe_strdup(n->name, "msgid");
+		n->value = safe_alloc(MSGIDLEN+1);
+		gen_random_alnum(n->value, MSGIDLEN);
+		AddListItem(n, l->mtags);
+		l->msgid = n->value;
+	}
+}
+
+/** Append history log line 'n' after 'after' in object 'h'.
+ * @param h	History log object
+ * @param after	We want to place our 'n' object after this one (append 'n' after 'after').
+ *              If this is NULL then it means we want our 'n' placed at the beginning (h->head).
+ * @param n	The new object.
+ */
+void hbm_history_add_line_after_position(HistoryLogObject *h, HistoryLogLine *after, HistoryLogLine *n)
+{
+	if (after == NULL)
+	{
+		/* New head */
+		n->next = h->head;
+		h->head->prev = n;
+		h->head = n;
+	} else
+	if (after->next == NULL)
+	{
+		/* New tail */
+		if (after != h->tail)
+			abort();
+		h->tail->next = n;
+		n->prev = h->tail;
+		h->tail = n;
+	} else
+	{
+		/* Insert somewhere in-between (both 'after' and 'after->next' are non-NULL) */
+		after->next->prev = n;
+		n->next = after->next;
+		after->next = n;
+		n->prev = after;
+	}
+
+	// (note that h->oldest_t is updated by hbm_history_add_line() itself)
+}
+
+int hbm_history_add_line_in_time(HistoryLogObject *h, HistoryLogLine *l)
+{
+	HistoryLogLine *e;
+
+	/* Walk backwards, doing two things:
+	 * 1) Check if a message with this msgid & time already exists,
+	 *    if so then we return 0 so it doesn't get added.
+	 * 2) Insert the line at the right point in time (and not like
+	 *    previous versions always at the end)
+	 * Note that we use 't' for fast access and only fallback to 'time'
+	 * message tag if an entry has the same second.
+	 */
+
+	for (e = h->tail; e; e = e->prev)
+	{
+		if (e->t < l->t)
+			break; /* We can stop when we have reached the past */
+		if (!strcmp(e->msgid, l->msgid))
+			return 0; /* Log line already exists, don't add it */
+		if (e->t == l->t)
+		{
+			/* Same second, now compare the exact TS accurately, so to stop in the past. */
+			if (strcmp(e->time, l->time) <= 0)
+				break;
+		}
+	}
+
+	/* If we reached here, then 'e' is the entry which was BEFORE 'l',
+	 * or 'e' is NULL which means the beginning (head).
+	 */
+	hbm_history_add_line_after_position(h, e, l);
+
+	// (note that h->oldest_t is updated by hbm_history_add_line() itself)
+	return 1;
 }
 
 /** Add a line to a history object */
@@ -548,10 +649,22 @@ void hbm_history_add_line(HistoryLogObject *h, MessageTag *mtags, const char *li
 	hbm_duplicate_mtags(l, mtags);
 	if (h->tail)
 	{
-		/* append to tail */
-		h->tail->next = l;
-		l->prev = h->tail;
-		h->tail = l;
+		if (l->t > h->tail->t)
+		{
+			/* append to tail */
+			h->tail->next = l;
+			l->prev = h->tail;
+			h->tail = l;
+		} else {
+			/* message has same (rounded) time as tail or is from before */
+			if (!hbm_history_add_line_in_time(h, l))
+			{
+				/* Already exists (uncommon) */
+				free_message_tags(l->mtags);
+				safe_free(l);
+				return;
+			}
+		}
 	} else {
 		/* no tail, no head */
 		h->head = h->tail = l;
@@ -670,11 +783,11 @@ static int hbm_return_after(HistoryResult *r, HistoryLogObject *h, HistoryFilter
 		/* Not started yet? Check if this is the starting point... */
 		if (!started)
 		{
-			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) > 0))
+			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) > 0))
 			{
 				started = 1;
 			} else
-			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 				continue;
@@ -683,11 +796,11 @@ static int hbm_return_after(HistoryResult *r, HistoryLogObject *h, HistoryFilter
 		if (started)
 		{
 			/* Check if we need to stop */
-			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) >= 0))
+			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				break;
 			} else
-			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
@@ -723,11 +836,11 @@ static int hbm_return_before(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 		/* Not started yet? Check if this is the starting point... */
 		if (!started)
 		{
-			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) < 0))
+			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) < 0))
 			{
 				started = 1;
 			} else
-			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 				continue;
@@ -736,11 +849,11 @@ static int hbm_return_before(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 		if (started)
 		{
 			/* Check if we need to stop */
-			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) < 0))
+			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) < 0))
 			{
 				break;
 			} else
-			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
@@ -771,10 +884,10 @@ static int hbm_return_latest(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 
 	for (l = h->tail; l; l = l->prev)
 	{
-		if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) <= 0))
+		if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) <= 0))
 			break; /* Stop now */
 		else
-		if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+		if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			break; /* Stop now */
 
 		n = duplicate_log_line(l);
@@ -854,11 +967,11 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 		/* Not started yet? Check if this is the starting point... */
 		if (!started)
 		{
-			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) < 0))
+			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) < 0))
 			{
 				started = l->next;
 			} else
-			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = l;
 				continue;
@@ -867,11 +980,11 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 		if (started)
 		{
 			/* Check if we need to stop */
-			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) < 0))
+			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) < 0))
 			{
 				break;
 			} else
-			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
@@ -905,19 +1018,13 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 	{
 		time_t requested_ts;
 		time_t oldest_we_have_ts;
-		char *tail_timestamp;
-		m = find_mtag(h->tail->mtags, "time");
-		tail_timestamp = m ? m->value : NULL;
-		if (tail_timestamp)
+		requested_ts = server_time_to_unix_time(filter->timestamp_a);
+		oldest_we_have_ts = server_time_to_unix_time(h->tail->time);
+		if (oldest_we_have_ts - requested_ts < 3600)
 		{
-			requested_ts = server_time_to_unix_time(filter->timestamp_a);
-			oldest_we_have_ts = server_time_to_unix_time(tail_timestamp);
-			if (oldest_we_have_ts - requested_ts < 3600)
-			{
-				/* Just return the oldest # messages */
-				started = h->head;
-				/* we (mis)use the loop further down to achieve this ;) */
-			}
+			/* Just return the oldest # messages */
+			started = h->head;
+			/* we (mis)use the loop further down to achieve this ;) */
 		}
 	}
 
@@ -957,11 +1064,11 @@ static int hbm_return_between_figure_out_direction(HistoryLogObject *h, HistoryF
 	{
 		if (!found_a)
 		{
-			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) >= 0))
+			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) >= 0))
 			{
 				found_a = 1;
 			} else
-			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				found_a = 1;
 			}
@@ -972,21 +1079,21 @@ static int hbm_return_between_figure_out_direction(HistoryLogObject *h, HistoryF
 					/* B was found before A? Then the result is: backwards */
 					return 0;
 				}
-				if (filter->timestamp_b && (m = find_mtag(l->mtags, "time")) && m->value)
+				if (filter->timestamp_b)
 				{
 					/* We can already resolve the direction now: */
-					char *timestamp_a = m->value;
+					char *timestamp_a = l->time;
 					return (strcmp(timestamp_a, filter->timestamp_b) <= 0) ? 1 : 0;
 				}
 			}
 		}
 		if (!found_b)
 		{
-			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) >= 0))
+			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				found_b = 1;
 			} else
-			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				found_b = 1;
 			}
@@ -997,10 +1104,10 @@ static int hbm_return_between_figure_out_direction(HistoryLogObject *h, HistoryF
 					/* A was found before B? Then the result is: forwards */
 					return 1;
 				}
-				if (filter->timestamp_a && (m = find_mtag(l->mtags, "time")) && m->value)
+				if (filter->timestamp_a)
 				{
 					/* We can already resolve the direction now: */
-					char *timestamp_b = m->value;
+					char *timestamp_b = l->time;
 					return (strcmp(filter->timestamp_a, timestamp_b) <= 0) ? 1 : 0;
 				}
 			}
@@ -1125,11 +1232,11 @@ int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_
 		/* Not started yet? Check if this is the starting point... */
 		if (!started)
 		{
-			if (filter->timestamp_a && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_a) > 0))
+			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) > 0))
 			{
 				started = 1;
 			} else
-			if (filter->msgid_a && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_a))
+			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 			}
@@ -1137,11 +1244,11 @@ int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_
 		if (started)
 		{
 			/* Check if we need to stop */
-			if (filter->timestamp_b && ((m = find_mtag(l->mtags, "time"))) && (strcmp(m->value, filter->timestamp_b) >= 0))
+			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				break;
 			} else
-			if (filter->msgid_b && ((m = find_mtag(l->mtags, "msgid"))) && !strcmp(m->value, filter->msgid_b))
+			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}

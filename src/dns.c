@@ -309,7 +309,7 @@ struct hostent *unrealdns_doclient(Client *client)
 	/* Create a request */
 	r = safe_alloc(sizeof(DNSReq));
 	r->client = client;
-	r->ipv6 = IsIPV6(client);
+	r->ipv6 = IsIPV6(client) ? 1 : 0;
 	unrealdns_addreqtolist(r);
 
 	/* Execute it */

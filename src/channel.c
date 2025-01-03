@@ -1001,13 +1001,13 @@ Channel *make_channel(const char *name)
 	}
 
 	/* Exists? Return it. */
-	if ((channel = find_channel(name)))
+	if ((channel = find_channel(namebuf)))
 		return channel;
 
 	channel = mp_pool_get(channel_pool);
 	memset(channel, 0, sizeof(Channel));
 
-	strlcpy(channel->name, name, sizeof(channel->name));
+	strlcpy(channel->name, namebuf, sizeof(channel->name));
 
 	if (channels)
 		channels->prevch = channel;

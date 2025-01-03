@@ -193,6 +193,8 @@ void free_client(Client *client)
 			safe_free(client->local->sni_servername);
 			if (client->local->hostp)
 				unreal_free_hostent(client->local->hostp);
+			dbuf_delete(&client->local->recvQ, DBufLength(&client->local->recvQ));
+			dbuf_delete(&client->local->sendQ, DBufLength(&client->local->sendQ));
 			free_all_tags(client);
 			
 			mp_pool_release(client->local);

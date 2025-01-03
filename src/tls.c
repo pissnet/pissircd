@@ -412,15 +412,35 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		 * do anything then, since auto ecdh is the default.
 		 */
 #endif
-		/* Let's see if we need to (and can) set specific curves */
-		if (tlsoptions->ecdh_curves)
-		{
 #ifdef HAS_SSL_CTX_SET1_CURVES_LIST
+		/* Let's see if we need to (and can) set specific curves */
+		if (tlsoptions->ecdh_curves == NULL)
+		{
+			/* This means try the defaults.. */
+			if (!SSL_CTX_set1_curves_list(ctx, UNREALIRCD_DEFAULT_ECDH_CURVES_PRIMARY))
+			{
+				if (!SSL_CTX_set1_curves_list(ctx, UNREALIRCD_DEFAULT_ECDH_CURVES_SECONDARY))
+				{
+					unreal_log(ULOG_ERROR, "config", "TLS_INVALID_ECDH_CURVES_LIST", NULL,
+						   "Failed to set ecdh-curves to either "
+						   "'$ecdh_curves_list_primary' or '$ecdh_curves_list_secondary'.\n"
+						   "$tls_error.all\n"
+						   "It's strange that neither curves list worked. "
+						   "Please report at https://bugs.unrealircd.org/ !",
+						   log_data_string("ecdh_curves_list_primary", UNREALIRCD_DEFAULT_ECDH_CURVES_PRIMARY),
+						   log_data_string("ecdh_curves_list_secondary", UNREALIRCD_DEFAULT_ECDH_CURVES_SECONDARY),
+						   log_data_tls_error());
+					goto fail;
+				}
+			}
+		} else
+		{
+			/* Config-specified curves */
 			if (!SSL_CTX_set1_curves_list(ctx, tlsoptions->ecdh_curves))
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_INVALID_ECDH_CURVES_LIST", NULL,
 					   "Failed to set ecdh-curves '$ecdh_curves_list'\n$tls_error.all\n"
-					   "HINT: o get a list of supported curves with the appropriate names, "
+					   "HINT: To get a list of supported curves with the appropriate names, "
 					   "run 'openssl ecparam -list_curves' on the server. "
 					   "Separate multiple curves by colon, for example: "
 					   "ecdh-curves \"secp521r1:secp384r1\".",
@@ -428,15 +448,18 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 					   log_data_tls_error());
 				goto fail;
 			}
+		}
 #else
+		if (tlsoptions->ecdh_curves)
+		{
 			/* We try to avoid this in the config code, but better have
 			 * it here too than be sorry if someone screws up:
 			 */
 			unreal_log(ULOG_ERROR, "config", "BUG_ECDH_CURVES", NULL,
 			           "ecdh-curves specified but not supported by library -- BAD!");
 			goto fail;
-#endif
 		}
+#endif
 		/* We really want the ECDHE/ECDHE to be generated per-session.
 		 * Added in 2015 for safety. Seems OpenSSL was smart enough
 		 * to make this the default in 2016 after a security advisory.
@@ -871,6 +894,10 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 	char buf[512];
 	const char *one, *two;
 
+	/* deregister I/O notification since we don't care anymore. the actual closing of socket will happen later. */
+	if (client->local->fd >= 0)
+		fd_unnotify(client->local->fd);
+
 	if (IsDeadSocket(client))
 		return -1;
 
@@ -953,10 +980,6 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 		SET_ERRNO(P_EIO);
 		safe_strdup(client->local->error_str, ssl_errstr);
 	}
-
-	/* deregister I/O notification since we don't care anymore. the actual closing of socket will happen later. */
-	if (client->local->fd >= 0)
-		fd_unnotify(client->local->fd);
 
 	return -1;
 }

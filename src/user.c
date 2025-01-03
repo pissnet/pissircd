@@ -636,7 +636,7 @@ static char uid_int_to_char(int v)
 const char *uid_get(void)
 {
 	Client *acptr;
-	static char uid[IDLEN];
+	static char uid[IDLEN+1];
 	static int uidcounter = 0;
 
 	uidcounter++;

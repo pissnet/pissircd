@@ -217,7 +217,7 @@ CMD_FUNC(cmd_protoctl)
 
 			if (*client->id)
 				del_from_id_hash_table(client->id, client); /* delete old UID entry (created on connect) */
-			strlcpy(client->id, sid, IDLEN);
+			strlcpy(client->id, sid, sizeof(client->id));
 			add_to_id_hash_table(client->id, client); /* add SID */
 		}
 		else if (!strcmp(name, "EAUTH") && value)

@@ -105,7 +105,6 @@ typedef struct ConfigItem_allow ConfigItem_allow;
 typedef struct ConfigFlag_allow ConfigFlag_allow;
 typedef struct ConfigItem_allow_channel ConfigItem_allow_channel;
 typedef struct ConfigItem_allow_dcc ConfigItem_allow_dcc;
-typedef struct ConfigItem_vhost ConfigItem_vhost;
 typedef struct ConfigItem_link	ConfigItem_link;
 typedef struct ConfigItem_ban ConfigItem_ban;
 typedef struct ConfigItem_deny_dcc ConfigItem_deny_dcc;
@@ -225,7 +224,8 @@ typedef enum LogFieldType {
 	LOG_FIELD_STRING,
 	LOG_FIELD_CLIENT,
 	LOG_FIELD_CHANNEL,
-	LOG_FIELD_OBJECT
+	LOG_FIELD_OBJECT,
+	LOG_FIELD_OBJECT_NOFREE
 } LogFieldType;
 
 typedef struct LogData {
@@ -2015,15 +2015,6 @@ struct ConfigItem_sni {
 	TLSOptions *tls_options;
 };
 
-struct ConfigItem_vhost {
-	ConfigItem_vhost 	*prev, *next;
-	ConfigFlag 	flag;
-	SecurityGroup	*match;
-	char		*login, *virthost, *virtuser;
-	SWhois *swhois;
-	AuthConfig	*auth;
-};
-
 struct ConfigItem_link {
 	ConfigItem_link	*prev, *next;
 	ConfigFlag	flag;
@@ -2208,6 +2199,7 @@ struct SecurityGroup {
 	SecurityGroup *prev, *next;
 	int priority;
 	char name[SECURITYGROUPLEN+1];
+	int public;
 	NameValuePrioList *printable_list;
 	int printable_list_counter;
 	/* Include */

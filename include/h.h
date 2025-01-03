@@ -100,7 +100,6 @@ extern MODVAR ConfigItem_tld		*conf_tld;
 extern MODVAR ConfigItem_oper		*conf_oper;
 extern MODVAR ConfigItem_listen	*conf_listen;
 extern MODVAR ConfigItem_allow		*conf_allow;
-extern MODVAR ConfigItem_vhost		*conf_vhost;
 extern MODVAR ConfigItem_link		*conf_link;
 extern MODVAR ConfigItem_sni		*conf_sni;
 extern MODVAR ConfigItem_ban		*conf_ban;
@@ -150,7 +149,6 @@ extern ConfigItem_tld		*find_tld(Client *cptr);
 extern ConfigItem_link		*find_link(const char *servername);
 extern ConfigItem_ban 		*find_ban(Client *, const char *host, short type);
 extern ConfigItem_ban 		*find_banEx(Client *,const char *host, short type, short type2);
-extern ConfigItem_vhost	*find_vhost(const char *name);
 extern ConfigItem_deny_channel *find_channel_allowed(Client *cptr, const char *name);
 extern ConfigItem_alias	*find_alias(const char *name);
 extern ConfigItem_help 	*find_Help(const char *command);
@@ -698,6 +696,7 @@ extern void verify_opercount(Client *, const char *);
 extern int valid_host(const char *host, int strict);
 extern int valid_username(const char *username);
 extern int valid_vhost(const char *userhost);
+extern int potentially_valid_vhost(const char *userhost);
 extern int count_oper_sessions(const char *);
 extern char *unreal_mktemp(const char *dir, const char *suffix);
 extern char *unreal_getpathname(const char *filepath, char *path);
@@ -932,6 +931,7 @@ extern MODVAR void (*exit_client)(Client *client, MessageTag *recv_mtags, const 
 extern MODVAR void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 3, 4)));
 extern MODVAR void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
 extern MODVAR void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
+extern MODVAR char (*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
 /* /Efuncs */
 
 /* TLS functions */
@@ -1008,6 +1008,7 @@ extern char *md5hash(char *dst, const char *src, unsigned long n);
 extern char *sha256hash(char *dst, const char *src, unsigned long n);
 extern void sha256hash_binary(char *dst, const char *src, unsigned long n);
 extern void sha1hash_binary(char *dst, const char *src, unsigned long n);
+extern void binarytohex(void *data, size_t len, char *str);
 extern MODVAR TKL *tklines[TKLISTLEN];
 extern MODVAR TKL *tklines_ip_hash[TKLIPHASHLEN1][TKLIPHASHLEN2];
 extern const char *cmdname_by_spamftarget(int target);
@@ -1353,8 +1354,16 @@ extern const char *log_level_terminal_color(LogLevel loglevel);
 extern LogType log_type_stringtoval(const char *str);
 extern const char *log_type_valtostring(LogType v);
 #ifdef DEBUGMODE
-#define unreal_log(...) do_unreal_log(__VA_ARGS__, log_data_source(__FILE__, __LINE__, __FUNCTION__), NULL)
-#define unreal_log_raw(...) do_unreal_log_raw(__VA_ARGS__, log_data_source(__FILE__, __LINE__, __FUNCTION__), NULL)
+/* In debug mode we include file/linenumber. We put this arg at the end, however
+ * there is an issue if unreal_log() is used with a parameter like xyz ? log_data_string("zzz") : NULL,
+ * since then our log_data_source() would be beyond NULL and thus would never be freed,
+ * so we allocate and handle that differently. File/line would still be lost but at
+ * least there is no memory leak. Alternative solution is to specify first couple of
+ * parameters explicitly, put log_data_source() at the beginning of the argument list
+ * and then use non-portable ## __VA_ARGS__ for the remainder.
+ */
+#define unreal_log(...) do { LogData *lds = log_data_source(__FILE__, __LINE__, __FUNCTION__); do_unreal_log(__VA_ARGS__, lds, NULL); log_data_free(lds); } while(0)
+#define unreal_log_raw(...) do { LogData *lds = log_data_source(__FILE__, __LINE__, __FUNCTION__); do_unreal_log_raw(__VA_ARGS__, lds, NULL); log_data_free(lds); } while(0)
 #else
 #define unreal_log(...) do_unreal_log(__VA_ARGS__, NULL)
 #define unreal_log_raw(...) do_unreal_log_raw(__VA_ARGS__, NULL)
@@ -1373,6 +1382,7 @@ extern LogData *log_data_socket_error(int fd);
 extern LogData *log_data_link_block(ConfigItem_link *link);
 extern LogData *log_data_tkl(const char *key, TKL *tkl);
 extern LogData *log_data_tls_error(void);
+extern void log_data_free(LogData *d);
 extern void log_pre_rehash(void);
 extern int log_tests(void);
 extern void config_pre_run_log(void);

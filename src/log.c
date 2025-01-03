@@ -599,7 +599,7 @@ LogData *log_data_source(const char *file, int line, const char *function)
 	LogData *d = safe_alloc(sizeof(LogData));
 	json_t *j;
 
-	d->type = LOG_FIELD_OBJECT;
+	d->type = LOG_FIELD_OBJECT_NOFREE;
 	safe_strdup(d->key, "source");
 	d->value.object = j = json_object();
 	json_object_set_new(j, "file", json_string_unreal(file));
@@ -1427,7 +1427,8 @@ void do_unreal_log_free_args(va_list vl)
 
 	while ((d = va_arg(vl, LogData *)))
 	{
-		log_data_free(d);
+		if (d->type != LOG_FIELD_OBJECT_NOFREE)
+			log_data_free(d);
 	}
 }
 
@@ -1571,13 +1572,23 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 				json_object_set_new(j_details, d->key, d->value.object);
 				d->value.object = NULL; /* don't let log_data_free() free it */
 				break;
+			case LOG_FIELD_OBJECT_NOFREE:
+				/* Same as LOG_FIELD_OBJECT but don't steal the reference,
+				 * is freed outside of logging routines by caller.
+				 * Only used by log_data_source().
+				 */
+				json_object_set(j_details, d->key, d->value.object);
+				break;
 			default:
 #ifdef DEBUGMODE
 				abort();
 #endif
 				break;
 		}
-		log_data_free(d);
+		if (d->type == LOG_FIELD_OBJECT_NOFREE)
+			json_decref(d->value.object);
+		else
+			log_data_free(d);
 	}
 
 	if (expand_msg)

@@ -582,9 +582,11 @@ struct HistoryFilter {
 typedef struct HistoryLogLine HistoryLogLine;
 struct HistoryLogLine {
 	HistoryLogLine *prev, *next;
-	time_t t;
-	MessageTag *mtags;
-	char line[1];
+	time_t t;		/**< Rounded time on seconds, for quick access. */
+	char *msgid;		/**< Pointer to 'msgid' mtag. Do NOT free this, it is freed by freeing 'mtags'. */
+	char *time;		/**< Pointer to 'time' mtag. Do NOT free this, it is freed by freeing 'mtags'. */
+	MessageTag *mtags;	/**< Message tags associated with this message */
+	char line[1];		/**< The full (old-skool) IRC protocol line */
 };
 
 typedef struct HistoryResult HistoryResult;
@@ -2735,6 +2737,7 @@ enum EfunctionType {
 	EFUNC_EXIT_CLIENT_FMT,
 	EFUNC_EXIT_CLIENT_EX,
 	EFUNC_BANNED_CLIENT,
+	EFUNC_UNREAL_EXPAND_STRING,
 };
 
 /* Module flags */

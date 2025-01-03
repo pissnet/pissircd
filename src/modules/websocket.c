@@ -296,7 +296,12 @@ int websocket_handle_body_websocket(Client *client, WebRequest *web, const char 
  */
 int websocket_packet_out(Client *from, Client *to, Client *intended_to, char **msg, int *length)
 {
-	static char utf8buf[510];
+	/* 8192 = MessageTag max length
+ 	 * 512 = IRC line length
+   	 * 1 = the space between them
+	 * 1 = NULL terminator?
+ 	*/
+	static char utf8buf[8192+512+1+1];
 
 	if (MyConnect(to) && !IsRPC(to) && websocket_md && WSU(to) && WSU(to)->handshake_completed)
 	{
@@ -305,7 +310,7 @@ int websocket_packet_out(Client *from, Client *to, Client *intended_to, char **m
 		else if (WEBSOCKET_TYPE(to) == WEBSOCKET_TYPE_TEXT)
 		{
 			/* Some more conversions are needed */
-			char *safe_msg = unrl_utf8_make_valid(*msg, utf8buf, sizeof(utf8buf), 1);
+			char *safe_msg = unrl_utf8_make_valid(*msg, utf8buf, sizeof(utf8buf), 2);
 			*msg = safe_msg;
 			*length = *msg ? strlen(safe_msg) : 0;
 			websocket_create_packet(WSOP_TEXT, msg, length);

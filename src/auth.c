@@ -389,11 +389,13 @@ static int authcheck_tls_clientcert_fingerprint(Client *client, AuthConfig *as, 
 	if (!fp)
 		return 0;
 
-	/* Make a colon version so that we keep in line with
+	if (!strcmp(as->data, fp))
+		return 1;
+
+	/* Check colon version, so that we keep in line with
 	 * previous versions, based on Nath's patch -dboyz
 	 */
-	k=0;
-	for (i=0; i<strlen(fp); i++)
+	for (i=0, k=0; i<strlen(fp); i++)
 	{
 		if (i != 0 && i % 2 == 0)
 			hexcolon[k++] = ':';
@@ -401,10 +403,10 @@ static int authcheck_tls_clientcert_fingerprint(Client *client, AuthConfig *as, 
 	}
 	hexcolon[k] = '\0';
 
-	if (strcasecmp(as->data, hexcolon) && strcasecmp(as->data, fp))
-		return 0;
+	if (!strcasecmp(as->data, hexcolon))
+		return 1;
 
-	return 1;
+	return 0;
 }
 
 static int authcheck_spkifp(Client *client, AuthConfig *as, const char *para)

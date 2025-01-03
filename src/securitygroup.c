@@ -243,7 +243,7 @@ int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 			}
 		}
 	} else
-	if (!strcmp(cep->name, "ip"))
+	if (!strcmp(cep->name, "ip") || !strcmp(cep->name, "exclude-ip"))
 	{
 	} else
 	if (!strcmp(cep->name, "security-group") || !strcmp(cep->name, "exclude-security-group"))
@@ -368,6 +368,14 @@ int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 
 	for (cep = ce->items; cep; cep = cep->next)
 	{
+		if (!strcmp(cep->name, "public"))
+		{
+			CheckNull(cep);
+		} else
+		if (!strcmp(cep->name, "priority"))
+		{
+			CheckNull(cep);
+		} else
 		if (!test_match_item(conf, cep, &errors))
 		{
 			config_error_unknown(cep->file->filename, cep->line_number,
@@ -461,6 +469,10 @@ int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
 	{
 		unreal_add_masks(&s->exclude_mask, cep);
 	}
+	else if (!strcmp(cep->name, "exclude-ip"))
+	{
+		unreal_add_names(&s->exclude_ip, cep);
+	}
 	else if (!strcmp(cep->name, "exclude-security-group"))
 	{
 		unreal_add_names(&s->exclude_security_group, cep);
@@ -551,7 +563,12 @@ int _conf_security_group(ConfigFile *conf, ConfigEntry *ce)
 			DelListItem(s, securitygroups);
 			AddListItemPrio(s, securitygroups, s->priority);
 		} else
+		if (!strcmp(cep->name, "public"))
+		{
+			s->public = config_checkval(cep->value, CFG_YESNO);
+		} else {
 			conf_match_item(conf, cep, &s);
+		}
 	}
 	return 1;
 }
@@ -672,7 +689,8 @@ SecurityGroup *duplicate_security_group(SecurityGroup *s)
 		safe_strdup(n->exclude_prettyrule, s->exclude_prettyrule);
 		n->exclude_rule = crule_parse(n->exclude_prettyrule);
 	}
-	n->ip = duplicate_name_list(s->exclude_ip);
+	n->ip = duplicate_name_list(s->ip);
+	n->exclude_ip = duplicate_name_list(s->exclude_ip);
 	n->extended = duplicate_nvplist(s->extended);
 	n->exclude_extended = duplicate_nvplist(s->exclude_extended);
 	n->printable_list = duplicate_nvplist(s->printable_list);
@@ -695,20 +713,24 @@ void set_security_group_defaults(void)
 
 	/* Default group: webirc */
 	s = add_security_group("webirc-users", 50);
+	s->public = 1;
 	s->webirc = 1;
 
 	/* Default group: websocket */
 	s = add_security_group("websocket-users", 51);
+	s->public = 1;
 	s->websocket = 1;
 
 	/* Default group: known-users */
 	s = add_security_group("known-users", 100);
+	s->public = 1;
 	s->identified = 1;
 	s->reputation_score = 25;
 	s->webirc = 0;
 
 	/* Default group: tls-users */
 	s = add_security_group("tls-users", 300);
+	s->public = 1;
 	s->tls = 1;
 }
 

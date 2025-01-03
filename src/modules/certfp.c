@@ -77,7 +77,6 @@ char *get_fingerprint_for_client(Client *client)
 	unsigned int l;
 	unsigned char md[EVP_MAX_MD_SIZE];
 	static char hex[EVP_MAX_MD_SIZE * 2 + 1];
-	char hexchars[16] = "0123456789abcdef";
 	const EVP_MD *digest = EVP_sha256();
 	X509 *x509_clientcert = NULL;
 
@@ -89,12 +88,7 @@ char *get_fingerprint_for_client(Client *client)
 	if (x509_clientcert)
 	{
 		if (X509_digest(x509_clientcert, digest, md, &n)) {
-			int j = 0;
-			for	(l=0; l<n; l++) {
-				hex[j++] = hexchars[(md[l] >> 4) & 0xF];
-				hex[j++] = hexchars[md[l] & 0xF];
-			}
-			hex[j] = '\0';
+			binarytohex(md, n, hex);
 			X509_free(x509_clientcert);
 			return hex;
 		}

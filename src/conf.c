@@ -47,7 +47,6 @@ static int	_conf_tld		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_listen		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_allow		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_except		(ConfigFile *conf, ConfigEntry *ce);
-static int	_conf_vhost		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_link		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_ban		(ConfigFile *conf, ConfigEntry *ce);
 static int	_conf_set		(ConfigFile *conf, ConfigEntry *ce);
@@ -82,7 +81,6 @@ static int	_test_tld		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_listen		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_allow		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_except		(ConfigFile *conf, ConfigEntry *ce);
-static int	_test_vhost		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_link		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_ban		(ConfigFile *conf, ConfigEntry *ce);
 static int	_test_require		(ConfigFile *conf, ConfigEntry *ce);
@@ -129,7 +127,6 @@ static ConfigCommand _ConfigCommands[] = {
 	{ "sni",		_conf_sni,		_test_sni	},
 	{ "tld",		_conf_tld,		_test_tld	},
 	{ "ulines",		_conf_ulines,		_test_ulines	},
-	{ "vhost", 		_conf_vhost,		_test_vhost	},
 	{ "webirc", 		_conf_proxy,		_test_proxy	},
 };
 
@@ -227,7 +224,6 @@ ConfigItem_operclass	*conf_operclass = NULL;
 ConfigItem_listen	*conf_listen = NULL;
 ConfigItem_sni		*conf_sni = NULL;
 ConfigItem_allow	*conf_allow = NULL;
-ConfigItem_vhost	*conf_vhost = NULL;
 ConfigItem_link		*conf_link = NULL;
 ConfigItem_ban		*conf_ban = NULL;
 ConfigItem_deny_channel *conf_deny_channel = NULL;
@@ -1659,6 +1655,7 @@ void free_iConf(Configuration *i)
 	safe_free(i->gline_address);
 	safe_free(i->oper_snomask);
 	safe_free(i->oper_auto_join_chans);
+	safe_free(i->oper_vhost);
 	safe_free(i->allow_user_stats);
 	// allow_user_stats_ext is freed elsewhere
 	free_tls_options(i->tls_options);
@@ -1795,9 +1792,6 @@ void config_setdefaultsettings(Configuration *i)
 	safe_strdup(i->tls_options->ciphers, UNREALIRCD_DEFAULT_CIPHERS);
 	safe_strdup(i->tls_options->ciphersuites, UNREALIRCD_DEFAULT_CIPHERSUITES);
 	i->tls_options->protocols = TLS_PROTOCOL_TLSV1_2|TLS_PROTOCOL_TLSV1_3; /* TLSv1.2 & TLSv1.3 */
-#ifdef HAS_SSL_CTX_SET1_CURVES_LIST
-	safe_strdup(i->tls_options->ecdh_curves, UNREALIRCD_DEFAULT_ECDH_CURVES);
-#endif
 	safe_strdup(i->tls_options->outdated_protocols, "TLSv1,TLSv1.1");
 	/* the following may look strange but "AES*" matches all
 	 * AES ciphersuites that do not have Forward Secrecy.
@@ -2454,7 +2448,6 @@ void config_rehash()
 	ConfigItem_link 		*link_ptr;
 	ConfigItem_listen	 	*listen_ptr;
 	ConfigItem_tld			*tld_ptr;
-	ConfigItem_vhost		*vhost_ptr;
 	ConfigItem_deny_channel		*deny_channel_ptr;
 	ConfigItem_allow_channel	*allow_channel_ptr;
 	ConfigItem_admin		*admin_ptr;
@@ -2583,27 +2576,6 @@ void config_rehash()
 
 		DelListItem(tld_ptr, conf_tld);
 		safe_free(tld_ptr);
-	}
-	for (vhost_ptr = conf_vhost; vhost_ptr; vhost_ptr = (ConfigItem_vhost *) next)
-	{
-		SWhois *s, *s_next;
-
-		next = (ListStruct *)vhost_ptr->next;
-
-		safe_free(vhost_ptr->login);
-		Auth_FreeAuthConfig(vhost_ptr->auth);
-		safe_free(vhost_ptr->virthost);
-		safe_free(vhost_ptr->virtuser);
-		free_security_group(vhost_ptr->match);
-		for (s = vhost_ptr->swhois; s; s = s_next)
-		{
-			s_next = s->next;
-			safe_free(s->line);
-			safe_free(s->setby);
-			safe_free(s);
-		}
-		DelListItem(vhost_ptr, conf_vhost);
-		safe_free(vhost_ptr);
 	}
 
 	remove_config_tkls(TKL_FLAG_CONFIG);
@@ -3325,20 +3297,6 @@ ConfigItem_ban 	*find_banEx(Client *client, const char *host, short type, short 
 	}
 	return NULL;
 }
-
-ConfigItem_vhost *find_vhost(const char *name)
-{
-	ConfigItem_vhost *vhost;
-
-	for (vhost = conf_vhost; vhost; vhost = vhost->next)
-	{
-		if (!strcmp(name, vhost->login))
-			return vhost;
-	}
-
-	return NULL;
-}
-
 
 /** returns NULL if allowed and struct if denied */
 ConfigItem_deny_channel *find_channel_allowed(Client *client, const char *name)
@@ -4164,11 +4122,22 @@ int 	_test_operclass(ConfigFile *conf, ConfigEntry *ce)
 	{
 		if (!strcmp(cep->name, "parent"))
 		{
+			CheckNull(cep);
 			if (has_parent)
 			{
 				config_warn_duplicate(cep->file->filename,
 					cep->line_number, "operclass::parent");
 				continue;
+			}
+			/* A -direct- loop is easy to detect.
+			 * We also have code elsewhere to detect loops
+			 * like a->b->a->b->a->b.
+			 */
+			if (ce->value && !strcmp(cep->value, ce->value))
+			{
+				config_error("%s:%d: operclass %s has parent set to %s (same name).",
+				            cep->file->filename, cep->line_number, ce->name, cep->value);
+				errors++;
 			}
 			has_parent = 1;
 			continue;
@@ -4395,7 +4364,7 @@ int	_test_oper(ConfigFile *conf, ConfigEntry *ce)
 						cep->line_number, "oper::vhost");
 					continue;
 				}
-				if (!valid_vhost(cep->value))
+				if (!potentially_valid_vhost(cep->value))
 				{
 					config_error("%s:%i: oper::vhost contains illegal characters or is too long: '%s'",
 					             cep->file->filename, cep->line_number, cep->value);
@@ -6401,187 +6370,6 @@ int _test_except(ConfigFile *conf, ConfigEntry *ce)
 	return errors;
 }
 
-/*
- * vhost {} block parser
-*/
-int	_conf_vhost(ConfigFile *conf, ConfigEntry *ce)
-{
-	ConfigItem_vhost *vhost;
-	ConfigEntry *cep, *cepp;
-	vhost = safe_alloc(sizeof(ConfigItem_vhost));
-	vhost->match = safe_alloc(sizeof(SecurityGroup));
-
-	for (cep = ce->items; cep; cep = cep->next)
-	{
-		if (!strcmp(cep->name, "vhost"))
-		{
-			char *user, *host;
-			user = strtok(cep->value, "@");
-			host = strtok(NULL, "");
-			if (!host)
-				safe_strdup(vhost->virthost, user);
-			else
-			{
-				safe_strdup(vhost->virtuser, user);
-				safe_strdup(vhost->virthost, host);
-			}
-		}
-		else if (!strcmp(cep->name, "login"))
-			safe_strdup(vhost->login, cep->value);
-		else if (!strcmp(cep->name, "password"))
-			vhost->auth = AuthBlockToAuthConfig(cep);
-		else if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
-		{
-			conf_match_block(conf, cep, &vhost->match);
-		}
-		else if (!strcmp(cep->name, "swhois"))
-		{
-			SWhois *s;
-			if (cep->items)
-			{
-				for (cepp = cep->items; cepp; cepp = cepp->next)
-				{
-					s = safe_alloc(sizeof(SWhois));
-					safe_strdup(s->line, cepp->name);
-					safe_strdup(s->setby, "vhost");
-					AddListItem(s, vhost->swhois);
-				}
-			} else
-			if (cep->value)
-			{
-				s = safe_alloc(sizeof(SWhois));
-				safe_strdup(s->line, cep->value);
-				safe_strdup(s->setby, "vhost");
-				AddListItem(s, vhost->swhois);
-			}
-		}
-	}
-	AddListItem(vhost, conf_vhost);
-	return 1;
-}
-
-int	_test_vhost(ConfigFile *conf, ConfigEntry *ce)
-{
-	int errors = 0;
-	ConfigEntry *cep;
-	char has_vhost = 0, has_login = 0, has_password = 0, has_mask = 0, has_match = 0;
-
-	for (cep = ce->items; cep; cep = cep->next)
-	{
-		if (!strcmp(cep->name, "vhost"))
-		{
-			char *at, *tmp, *host;
-			if (has_vhost)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::vhost");
-				continue;
-			}
-			has_vhost = 1;
-			if (!cep->value)
-			{
-				config_error_empty(cep->file->filename,
-					cep->line_number, "vhost", "vhost");
-				errors++;
-				continue;
-			}
-			if (!valid_vhost(cep->value))
-			{
-				config_error("%s:%i: oper::vhost contains illegal characters or is too long: '%s'",
-					     cep->file->filename, cep->line_number, cep->value);
-				errors++;
-			}
-		}
-		else if (!strcmp(cep->name, "login"))
-		{
-			if (has_login)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::login");
-			}
-			has_login = 1;
-			if (!cep->value)
-			{
-				config_error_empty(cep->file->filename,
-					cep->line_number, "vhost", "login");
-				errors++;
-				continue;
-			}
-		}
-		else if (!strcmp(cep->name, "password"))
-		{
-			if (has_password)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::password");
-			}
-			has_password = 1;
-			if (!cep->value)
-			{
-				config_error_empty(cep->file->filename,
-					cep->line_number, "vhost", "password");
-				errors++;
-				continue;
-			}
-			if (Auth_CheckError(cep, 0) < 0)
-				errors++;
-		}
-		else if (!strcmp(cep->name, "mask"))
-		{
-			has_mask = 1;
-			test_match_block(conf, cep, &errors);
-		}
-		else if (!strcmp(cep->name, "match"))
-		{
-			has_match = 1;
-			test_match_block(conf, cep, &errors);
-		}
-		else if (!strcmp(cep->name, "swhois"))
-		{
-			/* multiple is ok */
-		}
-		else
-		{
-			config_error_unknown(cep->file->filename, cep->line_number,
-				"vhost", cep->name);
-			errors++;
-		}
-	}
-	if (!has_vhost)
-	{
-		config_error_missing(ce->file->filename, ce->line_number,
-			"vhost::vhost");
-		errors++;
-	}
-	if (!has_login)
-	{
-		config_error_missing(ce->file->filename, ce->line_number,
-			"vhost::login");
-		errors++;
-
-	}
-	if (!has_password)
-	{
-		config_error_missing(ce->file->filename, ce->line_number,
-			"vhost::password");
-		errors++;
-	}
-	if (!has_mask && !has_match)
-	{
-		config_error_missing(ce->file->filename, ce->line_number,
-			"vhost::match");
-		errors++;
-	}
-	if (has_mask && has_match)
-	{
-		config_error("%s:%d: You cannot have both ::mask and ::match. "
-		             "You should only use %s::match.",
-		             ce->file->filename, ce->line_number, ce->name);
-		errors++;
-	}
-	return errors;
-}
-
 int	_test_sni(ConfigFile *conf, ConfigEntry *ce)
 {
 	int errors = 0;
@@ -7897,6 +7685,9 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "oper-auto-join")) {
 			safe_strdup(tempiConf.oper_auto_join_chans, cep->value);
 		}
+		else if (!strcmp(cep->name, "oper-vhost")) {
+			safe_strdup(tempiConf.oper_vhost, cep->value);
+		}
 		else if (!strcmp(cep->name, "check-target-nick-bans")) {
 			tempiConf.check_target_nick_bans = config_checkval(cep->value, CFG_YESNO);
 		}
@@ -8636,6 +8427,15 @@ int	_test_set(ConfigFile *conf, ConfigEntry *ce)
 		else if (!strcmp(cep->name, "oper-auto-join")) {
 			CheckNull(cep);
 			CheckDuplicate(cep, oper_auto_join, "oper-auto-join");
+		}
+		else if (!strcmp(cep->name, "oper-vhost")) {
+			CheckNull(cep);
+			if (!potentially_valid_vhost(cep->value))
+			{
+				config_error("%s:%i: set::oper-vhost contains illegal characters or is too long: '%s'",
+					     cep->file->filename, cep->line_number, cep->value);
+				errors++;
+			}
 		}
 		else if (!strcmp(cep->name, "check-target-nick-bans")) {
 			CheckNull(cep);

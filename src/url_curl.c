@@ -101,6 +101,22 @@ static void set_curl_tls_options(CURL *curl)
 		snprintf(buf, sizeof(buf), "%s/doc/conf/tls/curl-ca-bundle.crt", BUILDDIR);
 #endif
 	curl_easy_setopt(curl, CURLOPT_CAINFO, buf);
+#if LIBCURL_VERSION_NUM >= 0x073601
+	/* Set minimum TLS version to TLSv1.2. cURL 7.1.0 intoruced this but the
+	 * implementation is only correct in 7.54.0+ to mean "or a later TLS version".
+	 * Just for reference, 7.54.0 was released in April 2017, so you having an
+	 * older library version on your system that would be... odd.
+	 */
+	curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+#endif
+#if LIBCURL_VERSION_NUM >= 0x070900
+	/* Set cipher list for TLSv1.2 (cURL 7.9.0+) */
+	curl_easy_setopt(curl, CURLOPT_SSL_CIPHER_LIST, UNREALIRCD_DEFAULT_CIPHERS);
+#endif
+#if LIBCURL_VERSION_NUM >= 0x073d00
+	/* Set cipher list for TLSv1.3 (cURL 7.61.0+) */
+	curl_easy_setopt(curl, CURLOPT_TLS13_CIPHERS, UNREALIRCD_DEFAULT_CIPHERSUITES);
+#endif
 }
 
 /*

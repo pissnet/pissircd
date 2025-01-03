@@ -65,9 +65,21 @@ void set_oper_host(Client *client, const char *host)
 {
 	char uhost[HOSTLEN + USERLEN + 1];
 	char *p;
+	char newhost[HOSTLEN+1];
 
-	if (!valid_vhost(host))
+	*newhost = '\0';
+	unreal_expand_string(host, newhost, sizeof(newhost), NULL, 0, client);
+	if (!valid_vhost(newhost))
+	{
+		sendnotice(client, "*** Unable to set vhost");
+		unreal_log(ULOG_WARNING, "oper", "OPER_VHOST_FAILED", client,
+		           "Unable to set vhost on oper $client.details. "
+		           "Vhost '$vhost_format' expanded to '$newhost' but is invalid.",
+		           log_data_string("vhost_format", host),
+		           log_data_string("newhost", newhost));
 		return;
+	}
+	host = newhost; /* Shadow... */
 
 	strlcpy(uhost, host, sizeof(uhost));
 
@@ -114,6 +126,10 @@ int _make_oper(Client *client, const char *operblock_name, const char *operclass
 	if (vhost)
 	{
 		set_oper_host(client, vhost);
+	} else
+	if (iConf.oper_vhost)
+	{
+		set_oper_host(client, iConf.oper_vhost);
 	} else
 	if (IsHidden(client) && !client->user->virthost)
 	{

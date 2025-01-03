@@ -1,8 +1,93 @@
-UnrealIRCd 6.1.8-git
+UnrealIRCd 6.1.10-git
 ===============
 
-This is the git version (development version) for future 6.1.8. This is work
+This is the git version (development version). This is work
 in progress and may not always be a stable version.
+
+### Enhancements:
+* TODO
+
+### Changes:
+* TODO
+
+### Fixes:
+* TODO
+
+### Developers and protocol:
+* TODO
+
+UnrealIRCd 6.1.9.1
+-------------------
+(UnrealIRCd 6.1.9.1 fixes a bug in the TLS ciphers of 6.1.9. The original
+ 6.1.9 release notes are below)
+
+This 6.1.9 release fixes a number of bugs such as IPv6 hosts not resolving
+in UnrealIRCd 6.1.8/6.1.8.1 and 100% CPU usage in some circumstances.
+It also changes the SSL/TLS defaults to make things a little safer/better.
+
+### Enhancements:
+* SSL/TLS:
+  * Change [default TLS ciphers](https://www.unrealircd.org/docs/TLS_Ciphers_and_protocols)
+    to only allow AES in GCM mode and no longer in CBC mode.
+  * When using cURL for [remote includes](https://www.unrealircd.org/docs/Remote_includes)
+    we now explicitly set the minimum required version to TLSv1.2 and set our
+    default ciphers and ciphersuites.
+    Note that by default in UnrealIRCd 6 the built-in (non-cURL) implementation
+    is used for remote includes, which already used these defaults.
+    Also note that most distros, like Ubuntu and Debian, already required
+    TLSv1.2 or later effectively in cURL.
+  * Regarding default ecdh-curves: we now try to set the curves list to
+    `x25519:secp521r1:secp384r1:prime256v1` first, and if that fails then
+    we try `secp521r1:secp384r1:prime256v1`. The former could fail due to
+    SSL library restrictions (old library or when in FIPS mode).
+    Previously we were also supposed to do it like that, but due to a bug
+    always had X25519 turned off.
+
+### Fixes:
+* IPv6 hosts not resolving in UnrealIRCd 6.1.8 and 6.1.8.1.
+* 100% CPU usage in some (rare) circumstances. The IRCd is still fully
+  responsive, but of course high CPU usage is never good.
+* Crash in `STATS S` (IRCOp-only) if having vhosts with autologin
+  (and no vhost::login).
+* The Windows version did not allow tweaking of set::tls::ecdh-curves.
+
+### Changes:
+* Update shipped libraries: c-ares to 1.34.3
+* Update Windows libraries: c-ares to 1.34.3, curl to 8.11.0 and
+  LibreSSL to 4.0.0.
+* Added `HELPOP EXTSERVERBANS` to explain
+  [Extended server bans](https://www.unrealircd.org/docs/Extended_server_bans)
+* Added
+  [new UnrealIRCd PGP release signing key](https://forums.unrealircd.org/viewtopic.php?p=40832)
+
+### Developers and protocol:
+* No changes, other than the SSL/TLS changes mentioned earlier.
+
+UnrealIRCd 6.1.8.1
+-------------------
+UnrealIRCd 6.1.8.1 is a dot release, it fixes:
+* If you have a vhost block without vhost::login, because you use the
+  new auto-vhost functionality, then the IRCd will crash upon
+  processing regular VHOST requests.
+* Strings were accidentally being lowercased in vhost::vhost,
+  blacklist::reason and some other places.
+
+The 6.1.8.1 release is mostly for new installs. Existing 6.1.8 users
+can fix the two bugs without needing to restart by running:  
+`./unrealircd hot-patch auto-vhost-618`
+
+For all the other fixes and new functionality, see the 6.1.8 release notes
+below.
+
+UnrealIRCd 6.1.8
+-----------------
+
+This release fixes a number of bugs. It also adds a new extban `~inherit` and
+auto-login support for vhosts.
+
+Do you like UnrealIRCd?
+Consider [making a donation](https://www.unrealircd.org/index/donations) or
+order something from the [shop](https://shop.unrealircd.org/).
 
 ### Enhancements:
 * New [Extended ban](https://www.unrealircd.org/docs/Extended_bans#Group_4:_special)
@@ -14,28 +99,80 @@ in progress and may not always be a stable version.
   * If the other channel (`#main` in this example) also has `~inherit` bans
     then we do not follow these (no nesting).
   * The maximum number of ~inherit bans in a channel is limited to only
-    1 by default, see 
+    1 by default, see
     [set::max-inherit-extended-bans](https://www.unrealircd.org/docs/Set_block#set::max-inherit-extended-bans)
   * This can also be used in `+I`, which entries are counted separately and
-    have their own limit. (TODO: `+e` still needs to be done)
-
-### Changes:
-* When retrieving cold or hot patches we now do proper GPG/PGP checks.
-  Just like we do on `./unrealircd upgrade`
-* Update shipped libraries: c-ares to 1.33.1
+    have their own limit.
+* [Vhosts](https://www.unrealircd.org/docs/Vhost_block):
+  We now support vhost::auto-login, which means you can set vhosts on users
+  automatically and we support variables in vhost::vhost (this works similar
+  to Gottem's autovhost module).
+  * An example would be:  
+    ```
+    /* Give users who identify to Services using SASL a nice vhost */
+    vhost {
+        auto-login yes;
+        vhost $account.users.example.net;
+        mask { identified yes; }
+    }
+    ```
+  * On-connect we will go through all vhost blocks that have auto-login
+    set to yes. Blocks are processed in the same order as they are in
+    the config (top-down). The first match wins.
+  * Note that you could already use Services to do this task.
+    This is just an extra feature so you can also do it in UnrealIRCd itself.
+  * The variables that are supported now use a generic framework called
+    [Standard variables](https://www.unrealircd.org/docs/Standard_variables)
+  * At the moment these can be used in vhost::vhost, oper::vhost,
+    blacklist::reason and set::oper-vhost
+* New option [set::oper-vhost](https://www.unrealircd.org/docs/Set_block#set::oper-vhost)
+  which sets a default oper::vhost. For example:
+  `set { oper-vhost $operclass.admin.example.net; }`
+  * If both set::oper-vhost and oper::vhost are present, the oper::vhost
+    takes precedence.
+* In the [ban ip { }](https://www.unrealircd.org/docs/Ban_IP_block)
+  and the [ban nick { }](https://www.unrealircd.org/docs/Ban_nick_block)
+  blocks you can now have multiple masks.
+* [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC):
+  * New call [`log.send`](https://www.unrealircd.org/docs/JSON-RPC:Log#log.send)
+    to send a log message / server notice.
 
 ### Fixes:
-* The [require authentication { }](https://www.unrealircd.org/docs/Require_authentication_block)
+* In some circumstances users could hang during the handshake when
+  their DNS lookup result was cached and using c-ares 1.31.0 or later
+  (which was released on June 18 2024 and shipped with UnrealIRCd 6.1.7
+  to be used as a fallback for systems which don't have the c-ares
+  library installed).
+* Websockets of type 'text' had IRC messages from server to client cut off
+  too early when message tags were in use. Type 'binary' was unaffected.
+* The [require authentication { } block](https://www.unrealircd.org/docs/Require_authentication_block)
   was broken in 6.1.7.*.
 * [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC) call `spamfilter.get`
   could not retrieve information about config-based spamfilters.
+* The `decode_authenticate_plain()` was reading OOB. This function is not
+  used by UnrealIRCd itself but could affect third party modules.
+* Crash on invalid server-to-server command regarding `REHASH`
+  (This only affected trusted linked servers)
+
+### Changes:
+* [Security group blocks](https://www.unrealircd.org/docs/Security-group_block)
+  are now hidden in lists by default. If you want the security group to be shown
+  in things like `MODE #channel +b ~security-group:x` (which shows a list)
+  then you need to use `public yes;`. The default security groups
+  like known-users, webirc-users, etc. are public by default.
+* When retrieving cold or hot patches we now do proper GPG/PGP checks.
+  Just like we do on `./unrealircd upgrade`
+* Update shipped libraries: c-ares to 1.33.1
+* Move +/- 1000 lines of code from core to modules (regarding
+  throttling, maxperip, vhost, exit_client).
 
 ### Developers and protocol:
 * The `MD` S2S command now supports `BIGLINES`, allowing synching of 16K
   serialized moddata per entry. We don't plan to use this anytime soon,
   this is mostly so all UnrealIRCd servers support this in a year or
-  two. However, if you do plan to serialize big moddata results then be
-  sure all UnrealIRCd servers are on 6.1.8 or higher to prevent cut-off.
+  two. However, if you do plan to serialize big moddata results in your
+  third party module then be sure all UnrealIRCd servers are on 6.1.8
+  or higher to prevent cut-off.
 
 UnrealIRCd 6.1.7.2
 -------------------
