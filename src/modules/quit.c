@@ -56,7 +56,7 @@ MOD_TEST()
 MOD_INIT()
 {
 	MARK_AS_OFFICIAL_MODULE(modinfo);
-	CommandAdd(modinfo->handle, MSG_QUIT, cmd_quit, 1, CMD_UNREGISTERED|CMD_USER|CMD_VIRUS);
+	CommandAdd(modinfo->handle, MSG_QUIT, cmd_quit, 1, CMD_UNREGISTERED|CMD_USER|CMD_VIRUS|CMD_TEXTANALYSIS);
 	return MOD_SUCCESS;
 }
 
@@ -106,7 +106,7 @@ CMD_FUNC(cmd_quit)
 			return;
 		}
 
-		if (match_spamfilter(client, comment, SPAMF_QUIT, "QUIT", NULL, 0, NULL))
+		if (match_spamfilter(client, comment, SPAMF_QUIT, "QUIT", NULL, 0, clictx, NULL))
 		{
 			comment = client->name;
 			if (IsDead(client))

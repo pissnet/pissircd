@@ -752,7 +752,7 @@ int read_tkldb(void)
 				                   tkl->set_by, tkl->expire_at, tkl->set_at,
 				                   tkl->ptr.spamfilter->tkl_duration,
 				                   tkl->ptr.spamfilter->tkl_reason,
-				                   0);
+				                   INPUT_CONVERSION_DEFAULT, 0, 0);
 				/* Further down in the code we free fields of the TKL entry,
 				 * this is generally fine since almost all fields are copied
 				 * by tkl_add_spamfilter(), however some are not.

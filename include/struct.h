@@ -913,6 +913,23 @@ struct SWhois {
 	char *setby;
 };
 
+#define UNICODE_BLOCK_COUNT 339
+/** Text analysis by utf8_text_analysis() and other modules */
+typedef struct TextAnalysis {
+	int antimixedutf8_points;	/**< Points given by AntiMixedUTF8 */
+	int unicode_blocks;		/**< Number of different unicode blocks used in the text (low = normal, high = suspicious) */
+	int num_bytes;			/**< Number of bytes of the text */
+	int num_unicode_characters;	/**< Number of unicode characters (which is not the same as strlen) */
+	char unicode_blockmap[UNICODE_BLOCK_COUNT]; /**< Unicode block counts, eg unicode_blockmap[0] is the number of latin characters */
+	char deconfused[512];		/**< The string with accents removed, confusables handled. Not guaranteed to be 100% correct. */
+} TextAnalysis;
+
+/** Client context (passed in commands) */
+typedef struct ClientContext {
+	RealCommand *cmd; /**< Command handler (eg. cmd->command is the command name) */
+	TextAnalysis *textanalysis; /**< Analysis of text (can be NULL, eg for non-PRIVMSG/NOTICE or remote clients) */
+} ClientContext;
+
 /** The command API - used by modules and the core to add commands, overrides, etc.
  * See also https://www.unrealircd.org/docs/Dev:Command_API for a higher level overview and example.
  * @defgroup CommandAPI Command API
@@ -940,12 +957,15 @@ struct SWhois {
 #define CMD_CONTROL		0x0400
 /** Command is able to receive BIG lines */
 #define CMD_BIGLINES		0x0800
+/** The last parameter of the command should go through text analysis */
+#define CMD_TEXTANALYSIS	0x1000
 
 /** Command function - used by all command handlers.
  * This is used in the code like <pre>CMD_FUNC(cmd_yourcmd)</pre> as a function definition.
  * It allows UnrealIRCd devs to change the parameters in the function without
  * (necessarily) breaking your code.
- * @param client      The client
+ * @param clictx      The client context.
+ * @param client      The client.
  * @param recv_mtags  Received message tags for this command.
  * @param parc        Parameter count *plus* 1.
  * @param parv        Parameter values.
@@ -955,7 +975,7 @@ struct SWhois {
  *        Note that reading parv[parc] and beyond is OUT OF BOUNDS and will cause a crash.
  *        E.g. parv[3] in the above example is out of bounds.
  */
-#define CMD_FUNC(x) void (x) (Client *client, MessageTag *recv_mtags, int parc, const char *parv[])
+#define CMD_FUNC(x) void (x) (ClientContext *clictx, Client *client, MessageTag *recv_mtags, int parc, const char *parv[])
 
 /** Call a command function - can be useful if you are calling another command function in your own module.
  * For example in cmd_nick() we call cmd_nick_local() for local functions,
@@ -963,14 +983,14 @@ struct SWhois {
  * to bother with passing the right command arguments. Which is nice because
  * command arguments may change in future UnrealIRCd versions.
  */
-#define CALL_CMD_FUNC(x)	(x)(client, recv_mtags, parc, parv)
+#define CALL_CMD_FUNC(x)	(x)(clictx, client, recv_mtags, parc, parv)
 
 /** @} */
 
 /** Command override function - used by all command override handlers.
  * This is used in the code like <pre>CMD_OVERRIDE_FUNC(ovr_somecmd)</pre> as a function definition.
  * @param ovr         The command override structure.
- * @param cptr        The client direction pointer.
+ * @param clictx      The client context.
  * @param client        The source client pointer (you usually need this one).
  * @param recv_mtags  Received message tags for this command.
  * @param parc        Parameter count *plus* 1.
@@ -981,13 +1001,13 @@ struct SWhois {
  *        Note that reading parv[parc] and beyond is OUT OF BOUNDS and will cause a crash.
  *        E.g. parv[3] in the above example.
  */
-#define CMD_OVERRIDE_FUNC(x) void (x)(CommandOverride *ovr, Client *client, MessageTag *recv_mtags, int parc, const char *parv[])
+#define CMD_OVERRIDE_FUNC(x) void (x)(CommandOverride *ovr, ClientContext *clictx, Client *client, MessageTag *recv_mtags, int parc, const char *parv[])
 
 
 
-typedef void (*CmdFunc)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
-typedef void (*AliasCmdFunc)(Client *client, MessageTag *mtags, int parc, const char *parv[], const char *cmd);
-typedef void (*OverrideCmdFunc)(CommandOverride *ovr, Client *client, MessageTag *mtags, int parc, const char *parv[]);
+typedef void (*CmdFunc)(ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[]);
+typedef void (*AliasCmdFunc)(ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[], const char *cmd);
+typedef void (*OverrideCmdFunc)(CommandOverride *ovr, ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[]);
 
 #include <sodium.h>
 
@@ -1096,6 +1116,7 @@ struct crule_context
 	Client *client;			/**< Client that is being processed (can be NULL) */
 	const char *text;		/**< The input string, if any (can be NULL) */
 	const char *destination;	/**< Destination of the message, like '#xyz' for spamfilter (can be NULL, eg for 'u') */
+	ClientContext *clictx;		/**< Client context (can be NULL)  */
 };
 
 /** Evaluation function for a connection rule. */
@@ -1222,6 +1243,12 @@ struct BanAction {
 /** Don't ban/kill/block/etc, but do return value as if we did */
 #define TAKE_ACTION_SIMULATE_USER_ACTION	0x2
 
+typedef enum SpamfilterShowMessageContentOnHit {
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS = 1,
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY = 2,
+	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_NEVER = 3,
+} SpamfilterShowMessageContentOnHit;
+
 /** Server ban sub-struct of TKL entry (KLINE/GLINE/ZLINE/GZLINE/SHUN) */
 struct ServerBan {
 	char *usermask; /**< User mask (can be NULL if 'match' is non-NULL) */
@@ -1238,6 +1265,10 @@ struct NameBan {
 	char *reason; /**< Reason */
 };
 
+#define INPUT_CONVERSION_STRIP_CONTROL_CODES	0x1
+#define INPUT_CONVERSION_DEFAULT		(INPUT_CONVERSION_STRIP_CONTROL_CODES)
+#define INPUT_CONVERSION_CONFUSABLES		0x2
+
 /** Spamfilter sub-struct of TKL entry (Spamfilter) */
 struct Spamfilter {
 	unsigned short target;
@@ -1250,7 +1281,12 @@ struct Spamfilter {
 	char *id; /**< ID */
 	long long hits; /**< Spamfilter hits (except exempts) */
 	long long hits_except; /**< Spamfilter hits by exempt clients */
-	SecurityGroup *except; /**< Don't run this spamfitler at all for these users (not counting towards hits_except btw) */
+	SecurityGroup *except; /**< Don't run this spamfilter at all for these users (not counting towards hits_except btw) */
+	int input_conversion;	/**< How we should handle the input */
+	/** For overriding set::spamfilter::show-message-content-on-hit
+	 * (0 means use default, so iConf.spamfilter_show_message_content_on_hit)
+	 */
+	SpamfilterShowMessageContentOnHit show_message_content_on_hit;
 };
 
 /** Ban exception sub-struct of TKL entry (ELINE) */
@@ -1291,12 +1327,6 @@ struct SpamExcept {
 	SpamExcept *prev, *next;
 	char name[1];
 };
-
-typedef enum SpamfilterShowMessageContentOnHit {
-	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS = 1,
-	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY = 2,
-	SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_NEVER = 3,
-} SpamfilterShowMessageContentOnHit;
 
 /** IRC Counts, used for /LUSERS */
 typedef struct IRCCounts IRCCounts;

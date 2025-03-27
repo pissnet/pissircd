@@ -47,7 +47,7 @@ MOD_TEST()
 
 MOD_INIT()
 {
-	CommandAdd(modinfo->handle, MSG_TOPIC, cmd_topic, 4, CMD_USER|CMD_SERVER);
+	CommandAdd(modinfo->handle, MSG_TOPIC, cmd_topic, 4, CMD_USER|CMD_SERVER|CMD_TEXTANALYSIS);
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	return MOD_SUCCESS;
 }
@@ -267,7 +267,7 @@ CMD_FUNC(cmd_topic)
 			Hook *tmphook;
 			int n;
 
-			if (match_spamfilter(client, topic, SPAMF_TOPIC, "TOPIC", channel->name, 0, NULL))
+			if (match_spamfilter(client, topic, SPAMF_TOPIC, "TOPIC", channel->name, 0, clictx, NULL))
 				return;
 
 			for (tmphook = Hooks[HOOKTYPE_PRE_LOCAL_TOPIC]; tmphook; tmphook = tmphook->next) {

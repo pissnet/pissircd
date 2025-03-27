@@ -45,7 +45,7 @@ MultiLineMode *(*set_mode)(Channel *channel, Client *client, int parc, const cha
                            char pvar[MAXMODEPARAMS][MODEBUFLEN + 3]);
 void (*set_channel_mode)(Channel *channel, MessageTag *mtags, const char *modes, const char *parameters);
 void (*set_channel_topic)(Client *client, Channel *channel, MessageTag *recv_mtags, const char *topic, const char *set_by, time_t set_at);
-void (*cmd_umode)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
+void (*cmd_umode)(ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[]);
 int (*register_user)(Client *client);
 int (*tkl_hash)(unsigned int c);
 char (*tkl_typetochar)(int type);
@@ -64,6 +64,8 @@ TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanA
                            const char *setby,
                            time_t expire_at, time_t set_at,
                            time_t spamf_tkl_duration, const char *spamf_tkl_reason,
+                           int input_conversion,
+                           SpamfilterShowMessageContentOnHit show_message_content_on_hit,
                            int flags);
 TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
                              const char *reason, const char *set_by,
@@ -77,9 +79,9 @@ TKL *(*find_qline)(Client *client, const char *nick, int *ishold);
 TKL *(*find_tkline_match_zap)(Client *client);
 void (*tkl_stats)(Client *client, int type, const char *para, int *cnt);
 void (*tkl_sync)(Client *client);
-void (*cmd_tkl)(Client *client, MessageTag *mtags, int parc, const char *parv[]);
+void (*cmd_tkl)(ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[]);
 int (*take_action)(Client *client, BanAction *action, const char *reason, long duration, int take_action_flags, int *stopped);
-int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
+int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, ClientContext *clictx, TKL **rettk);
 int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 int (*join_viruschan)(Client *client, TKL *tk, int type);
 const char *(*StripColors)(const char *text);
@@ -115,7 +117,7 @@ void (*connect_server)(ConfigItem_link *aconf, Client *by, struct hostent *hp);
 int (*is_services_but_not_ulined)(Client *client);
 void (*parse_message_tags)(Client *client, char **str, MessageTag **mtag_list);
 const char *(*mtags_to_string)(MessageTag *m, Client *client);
-int (*can_send_to_channel)(Client *client, Channel *channel, const char **msgtext, const char **errmsg, int notice);
+int (*can_send_to_channel)(Client *client, Channel *channel, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx);
 void (*broadcast_md_globalvar)(ModDataInfo *mdi, ModData *md);
 void (*broadcast_md_globalvar_cmd)(Client *except, Client *sender, const char *varname, const char *value);
 int (*tkl_ip_hash)(const char *ip);
@@ -182,7 +184,10 @@ void (*exit_client)(Client *client, MessageTag *recv_mtags, const char *comment)
 void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...);
 void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
 void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
-char (*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
+char *(*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
+char *(*utf8_convert_confusables)(const char *i, char *obuf, int olen);
+const char *(*utf8_get_block_name)(int i);
+int (*utf8_get_block_number)(const char *name);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -510,4 +515,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_EXIT_CLIENT_EX, exit_client_ex, NULL, 0);
 	efunc_init_function(EFUNC_BANNED_CLIENT, banned_client, NULL, 0);
 	efunc_init_function(EFUNC_UNREAL_EXPAND_STRING, unreal_expand_string, NULL, 0);
+	efunc_init_function(EFUNC_UTF8_CONVERT_CONFUSABLES, utf8_convert_confusables, utf8_convert_confusables_default_handler, 0);
+	efunc_init_function(EFUNC_UTF8_GET_BLOCK_NAME, utf8_get_block_name, utf8_get_block_name, 0);
+	efunc_init_function(EFUNC_UTF8_GET_BLOCK_NUMBER, utf8_get_block_number, utf8_get_block_number, 0);
 }

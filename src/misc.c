@@ -988,6 +988,20 @@ const char *cmdname_by_spamftarget(int target)
 	return "???";
 }
 
+/** Convert the value for set::spamfilter::show-message-content-on-hit
+ * and spamfilter::show-message-content-on-hit.
+ */
+SpamfilterShowMessageContentOnHit spamfilter_show_message_content_on_hit_strtoval(const char *s)
+{
+	if (!strcmp(s, "always"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS;
+	if (!strcmp(s, "channel-only"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY;
+	if (!strcmp(s, "never"))
+		return SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_NEVER;
+	return 0;
+}
+
 /** Add name entries from config */
 void unreal_add_names(NameList **n, ConfigEntry *ce)
 {
@@ -1522,6 +1536,21 @@ int decode_authenticate_plain_default_handler(const char *param, char **authoriz
 	return 0;
 }
 
+char *utf8_convert_confusables_default_handler(const char *i, char *obuf, int olen)
+{
+	strlcpy(obuf, i, olen);
+	return obuf;
+}
+
+const char *utf8_get_block_name_default_handler(int i)
+{
+	return NULL;
+}
+
+int utf8_get_block_number_default_handler(const char *name)
+{
+	return -1;
+}
 
 /** my_timegm: mktime()-like function which will use GMT/UTC.
  * Strangely enough there is no standard function for this.

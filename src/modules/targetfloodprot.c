@@ -35,8 +35,8 @@ struct TargetFloodConfig {
 int targetfloodprot_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs);
 int targetfloodprot_config_run(ConfigFile *cf, ConfigEntry *ce, int type);
 void targetfloodprot_mdata_free(ModData *m);
-int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype);
-int targetfloodprot_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype);
+int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype, ClientContext *clictx);
+int targetfloodprot_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype, ClientContext *clictx);
 
 /* Global variables */
 ModDataInfo *targetfloodprot_client_md = NULL;
@@ -224,7 +224,7 @@ int sendtypetowhat(SendType sendtype)
 	return 0; /* otherwise, default to privmsg i guess */
 }
 
-int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype)
+int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype, ClientContext *clictx)
 {
 	TargetFlood *flood;
 	static char errbuf[256];
@@ -260,9 +260,10 @@ int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Member
 	{
 		/* Flood detected */
 		unreal_log(ULOG_INFO, "flood", "FLOOD_BLOCKED", client,
-			   "Flood blocked ($flood_type) from $client.details [$client.ip] to $channel",
+			   "Flood blocked ($flood_type) from $client.details [$client.ip] to $channel ($message_type)",
 			   log_data_string("flood_type", "target-flood-channel"),
-			   log_data_channel("channel", channel));
+			   log_data_channel("channel", channel),
+			   log_data_string("message_type", sendtype_to_cmd(sendtype)));
 		snprintf(errbuf, sizeof(errbuf), "Channel is being flooded. Message not delivered.");
 		*errmsg = errbuf;
 		return HOOK_DENY;
@@ -272,7 +273,7 @@ int targetfloodprot_can_send_to_channel(Client *client, Channel *channel, Member
 	return HOOK_CONTINUE;
 }
 
-int targetfloodprot_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype)
+int targetfloodprot_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype, ClientContext *clictx)
 {
 	TargetFlood *flood;
 	static char errbuf[256];
@@ -310,9 +311,10 @@ int targetfloodprot_can_send_to_user(Client *client, Client *target, const char 
 	{
 		/* Flood detected */
 		unreal_log(ULOG_INFO, "flood", "FLOOD_BLOCKED", client,
-			   "Flood blocked ($flood_type) from $client.details [$client.ip] to $target",
+			   "Flood blocked ($flood_type) from $client.details [$client.ip] to $target ($message_type)",
 			   log_data_string("flood_type", "target-flood-user"),
-			   log_data_client("target", target));
+			   log_data_client("target", target),
+			   log_data_string("message_type", sendtype_to_cmd(sendtype)));
 		snprintf(errbuf, sizeof(errbuf), "User is being flooded. Message not delivered.");
 		*errmsg = errbuf;
 		return HOOK_DENY;

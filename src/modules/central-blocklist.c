@@ -8,7 +8,7 @@
 ModuleHeader MOD_HEADER
   = {
 	"central-blocklist",
-	"1.0.7",
+	"1.0.8",
 	"Check users at central blocklist",
 	"UnrealIRCd Team",
 	"unrealircd-6",
@@ -21,6 +21,9 @@ Module *cbl_module = NULL;
 #define SPAMREPORT_URL	"https://spamreport.unrealircd-api.org/api/spamreport-v1"
 #define CBL_TRANSFER_TIMEOUT 10
 #define SPAMREPORT_NUM_REMEMBERED_CMDS 10
+
+#define WEB(client)		((WebRequest *)moddata_client(client, webserver_md).ptr)
+#define WSU(client)		((WebSocketUser *)moddata_client(client, websocket_md).ptr)
 
 typedef struct CBLUser CBLUser;
 struct CBLUser
@@ -70,6 +73,8 @@ struct reqstruct {
 static struct reqstruct req;
 
 CBLTransfer *cbltransfers = NULL;
+ModDataInfo *webserver_md = NULL; /* (external module, looked up) */
+ModDataInfo *websocket_md = NULL; /* (external module, looked up) */
 
 /* Forward declarations */
 int _central_spamreport(Client *client, Client *by, const char *url);
@@ -243,6 +248,9 @@ MOD_LOAD()
 	}
 
 	do_command_overrides(modinfo);
+
+	webserver_md = findmoddata_byname("web", MODDATATYPE_CLIENT);
+	websocket_md = findmoddata_byname("websocket", MODDATATYPE_CLIENT);
 
 	/* Enable gathering of "last 10 lines" for SPAMREPORT, only if SPAMREPORT is enabled: */
 	if (central_spamreport_enabled())
@@ -615,6 +623,28 @@ void cbl_add_client_info(Client *client)
 		if (!BadPtr(client->info))
 			json_object_set_new(user, "realname", json_string_unreal(client->info));
 		json_object_set_new(user, "reputation", json_integer(GetReputation(client)));
+	}
+
+	if (webserver_md && WEB(client))
+	{
+		json_t *web = json_object();
+		json_t *headers = json_object();
+		NameValuePrioList *nv;
+		json_object_set_new(child, "web", web);
+		json_object_set_new(web, "headers", headers);
+		for (nv = WEB(client)->headers; nv; nv = nv->next)
+			json_object_set_new(headers, nv->name, json_string_unreal(nv->value));
+	}
+
+	if (websocket_md && WSU(client))
+	{
+		json_t *websocket = json_object();
+		json_object_set_new(child, "websocket", websocket);
+
+		if (WSU(client)->type == WEBSOCKET_TYPE_TEXT)
+			json_object_set_new(websocket, "protocol", json_string_unreal("text"));
+		else if (WSU(client)->type == WEBSOCKET_TYPE_BINARY)
+			json_object_set_new(websocket, "protocol", json_string_unreal("binary"));
 	}
 
 	if ((str = moddata_client_get(client, "tls_cipher")))
@@ -1092,6 +1122,9 @@ int _central_spamreport(Client *client, Client *by, const char *url)
 	int i, start;
 	char number[16];
 	int cnt = 0;
+
+	if (!client)
+		return 0; /* We only support reporting clients, not clientless IP addresses */
 
 	if (!MyUser(client) || !CBL(client))
 		return 0; /* Only possible if hot-loading */

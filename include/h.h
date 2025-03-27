@@ -131,6 +131,7 @@ extern void config_error_unknownopt(const char *filename, int line, const char *
 extern void config_error_noname(const char *filename, int line, const char *block);
 extern void config_error_blank(const char *filename, int line, const char *block);
 extern void config_error_empty(const char *filename, int line, const char *block, const char *entry);
+extern int config_detect_duplicate(int *var, ConfigEntry *ce, int *errors);
 extern void config_warn_duplicate(const char *filename, int line, const char *entry);
 extern int config_is_blankorempty(ConfigEntry *cep, const char *block);
 extern MODVAR int config_verbose;
@@ -738,6 +739,7 @@ extern int has_actions_of_type(BanAction *actions, BanActionValue what);
 extern int only_soft_actions(BanAction *actions);
 extern const char *ban_actions_to_string(BanAction *actions);
 extern void lower_ban_action_to_maximum(BanAction *actions, BanActionValue limit_action);
+extern SpamfilterShowMessageContentOnHit spamfilter_show_message_content_on_hit_strtoval(const char *s);
 extern int spamfilter_gettargets(const char *s, Client *client);
 extern char *spamfilter_target_inttostring(int v);
 extern char *our_strcasestr(const char *haystack, const char *needle);
@@ -793,7 +795,7 @@ extern MODVAR MultiLineMode *(*set_mode)(Channel *channel, Client *cptr, int par
                             char pvar[MAXMODEPARAMS][MODEBUFLEN + 3]);
 extern MODVAR void (*set_channel_mode)(Channel *channel, MessageTag *mtags, const char *modes, const char *parameters);
 extern MODVAR void (*set_channel_topic)(Client *client, Channel *channel, MessageTag *recv_mtags, const char *topic, const char *set_by, time_t set_at);
-extern MODVAR void (*cmd_umode)(Client *, MessageTag *, int, const char **);
+extern MODVAR void (*cmd_umode)(ClientContext *, Client *, MessageTag *, int, const char **);
 extern MODVAR int (*register_user)(Client *client);
 extern MODVAR int (*tkl_hash)(unsigned int c);
 extern MODVAR char (*tkl_typetochar)(int type);
@@ -814,6 +816,8 @@ extern MODVAR TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned shor
                                          const char *setby,
                                          time_t expire_at, time_t set_at,
                                          time_t spamf_tkl_duration, const char *spamf_tkl_reason,
+                                         int input_conversion,
+                                         SpamfilterShowMessageContentOnHit show_message_content_on_hit,
                                          int flags);
 extern MODVAR TKL *(*find_tkl_serverban)(int type, const char *usermask, const char *hostmask, int softban);
 extern MODVAR TKL *(*find_tkl_banexception)(int type, const char *usermask, const char *hostmask, int softban);
@@ -831,9 +835,9 @@ extern MODVAR TKL *(*find_qline)(Client *cptr, const char *nick, int *ishold);
 extern MODVAR TKL *(*find_tkline_match_zap)(Client *cptr);
 extern MODVAR void (*tkl_stats)(Client *cptr, int type, const char *para, int *cnt);
 extern MODVAR void (*tkl_sync)(Client *client);
-extern MODVAR void (*cmd_tkl)(Client *client, MessageTag *recv_mtags, int parc, const char *parv[]);
+extern MODVAR void (*cmd_tkl)(ClientContext *clictx, Client *client, MessageTag *recv_mtags, int parc, const char *parv[]);
 extern MODVAR int (*take_action)(Client *client, BanAction *actions, const char *reason, long duration, int take_action_flags, int *stopped);
-extern MODVAR int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
+extern MODVAR int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, ClientContext *clictx, TKL **rettk);
 extern MODVAR int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
 extern MODVAR int (*join_viruschan)(Client *client, TKL *tk, int type);
 extern MODVAR const char *(*StripColors)(const char *text);
@@ -869,7 +873,7 @@ extern MODVAR void (*connect_server)(ConfigItem_link *aconf, Client *by, struct 
 extern MODVAR int (*is_services_but_not_ulined)(Client *client);
 extern MODVAR void (*parse_message_tags)(Client *cptr, char **str, MessageTag **mtag_list);
 extern MODVAR const char *(*mtags_to_string)(MessageTag *m, Client *acptr);
-extern MODVAR int (*can_send_to_channel)(Client *cptr, Channel *channel, const char **msgtext, const char **errmsg, int notice);
+extern MODVAR int (*can_send_to_channel)(Client *cptr, Channel *channel, const char **msgtext, const char **errmsg, SendType sendtyp, ClientContext *clictx);
 extern MODVAR void (*broadcast_md_globalvar)(ModDataInfo *mdi, ModData *md);
 extern MODVAR void (*broadcast_md_globalvar_cmd)(Client *except, Client *sender, const char *varname, const char *value);
 extern MODVAR int (*tkl_ip_hash)(const char *ip);
@@ -931,7 +935,10 @@ extern MODVAR void (*exit_client)(Client *client, MessageTag *recv_mtags, const 
 extern MODVAR void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 3, 4)));
 extern MODVAR void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
 extern MODVAR void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
-extern MODVAR char (*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
+extern MODVAR char *(*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
+extern MODVAR char *(*utf8_convert_confusables)(const char *i, char *obuf, int olen);
+extern MODVAR const char *(*utf8_get_block_name)(int i);
+extern MODVAR int (*utf8_get_block_number)(const char *name);
 /* /Efuncs */
 
 /* TLS functions */
@@ -992,6 +999,9 @@ extern int central_spamreport_enabled_default_handler(void);
 extern void sasl_succeeded_default_handler(Client *client);
 extern void sasl_failed_default_handler(Client *client);
 extern int decode_authenticate_plain_default_handler(const char *param, char **authorization_id, char **authentication_id, char **passwd);
+extern char *utf8_convert_confusables_default_handler(const char *i, char *obuf, int olen);
+extern const char *utf8_get_block_name_default_handler(int i);
+extern int utf8_get_block_number_default_handler(const char *name);
 /* End of default handlers for efunctions */
 
 extern MODVAR MOTDFile opermotd, svsmotd, motd, botmotd, smotd, rules;
@@ -1104,7 +1114,7 @@ extern CMD_FUNC(cmd_module);
 extern CMD_FUNC(cmd_rehash);
 extern CMD_FUNC(cmd_die);
 extern CMD_FUNC(cmd_restart);
-extern void cmd_alias(Client *client, MessageTag *recv_mtags, int parc, const char *parv[], const char *cmd); /* special! */
+extern void cmd_alias(ClientContext *clictx, Client *client, MessageTag *recv_mtags, int parc, const char *parv[], const char *cmd); /* special! */
 extern const char *pcre2_version(void);
 extern int get_terminal_width(void);
 extern int has_common_channels(Client *c1, Client *c2);

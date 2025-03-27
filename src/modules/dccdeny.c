@@ -45,8 +45,8 @@ int dccdeny_dcc_denied(Client *client, const char *target, const char *realfile,
 CMD_FUNC(cmd_dccdeny);
 CMD_FUNC(cmd_undccdeny);
 CMD_FUNC(cmd_svsfline);
-int dccdeny_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype);
-int dccdeny_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype);
+int dccdeny_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype, ClientContext *clictx);
+int dccdeny_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype, ClientContext *clictx);
 int dccdeny_server_sync(Client *client);
 static ConfigItem_deny_dcc *dcc_isforbidden(Client *client, const char *filename);
 static ConfigItem_deny_dcc *dcc_isdiscouraged(Client *client, const char *filename);
@@ -497,7 +497,7 @@ int dccdeny_server_sync(Client *client)
 }
 
 /** Check if a DCC should be blocked (user-to-user) */
-int dccdeny_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype)
+int dccdeny_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype, ClientContext *clictx)
 {
 	if (**text == '\001')
 	{
@@ -515,7 +515,7 @@ int dccdeny_can_send_to_user(Client *client, Client *target, const char **text, 
 }
 
 /** Check if a DCC should be blocked (user-to-channel, unusual) */
-int dccdeny_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype)
+int dccdeny_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype, ClientContext *clictx)
 {
 	static char errbuf[512];
 
@@ -645,7 +645,7 @@ static int can_dcc(Client *client, const char *target, Client *targetcli, const 
 		return 0;
 	}
 
-	if (match_spamfilter(client, filename, SPAMF_DCC, "PRIVMSG", target, 0, NULL))
+	if (match_spamfilter(client, filename, SPAMF_DCC, "PRIVMSG", target, 0, NULL, NULL))
 	{
 		/* Dirty hack, yeah spamfilter already sent the error message :( */
 		*errmsg = "";

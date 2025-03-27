@@ -798,9 +798,7 @@ void short_motd(Client *client)
 		sendnumeric(client, RPL_MOTD, "");
 	}
 
-	motdline = NULL;
-	if (themotd)
-		motdline = themotd->lines;
+	motdline = themotd->lines;
 	while (motdline)
 	{
 		sendnumeric(client, RPL_MOTD, motdline->line);

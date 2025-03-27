@@ -52,6 +52,7 @@ CMD_FUNC(cmd_kline);
 CMD_FUNC(cmd_zline);
 CMD_FUNC(cmd_spamfilter);
 CMD_FUNC(cmd_eline);
+CMD_FUNC(cmd_spaminfo);
 void cmd_tkl_line(Client *client, int parc, const char *parv[], char *type);
 int _tkl_hash(unsigned int c);
 char _tkl_typetochar(int type);
@@ -74,6 +75,8 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
                          const char *set_by,
                          time_t expire_at, time_t set_at,
                          time_t spamf_tkl_duration, const char *spamf_tkl_reason,
+                         int input_conversion,
+                         SpamfilterShowMessageContentOnHit show_message_content_on_hit,
                          int flags);
 void _sendnotice_tkl_del(char *removed_by, TKL *tkl);
 void _sendnotice_tkl_add(TKL *tkl);
@@ -92,7 +95,7 @@ void _tkl_stats(Client *client, int type, const char *para, int *cnt);
 void _tkl_sync(Client *client);
 CMD_FUNC(_cmd_tkl);
 int _take_action(Client *client, BanAction *action, char *reason, long duration, int take_action_flags, int *stopped);
-int _match_spamfilter(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, TKL **rettk);
+int _match_spamfilter(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, ClientContext *clictx, TKL **rettk);
 int _match_spamfilter_mtags(Client *client, MessageTag *mtags, char *cmd);
 int check_special_spamfilters_present(void);
 int _join_viruschan(Client *client, TKL *tk, int type);
@@ -168,6 +171,7 @@ TKLTypeTable tkl_types[] = {
 int max_stats_matches = 1000;
 int mtag_spamfilters_present = 0; /**< Are any spamfilters with type SPAMF_MTAG present? */
 int raw_spamfilters_present = 0; /**< Are any spamfilters with type SPAMF_RAW present? */
+int confusables_spamfilters_present = 0; /**< Are any spamfilters with input-conversion confusables present? */
 long previous_spamfilter_utf8 = 0;
 static int firstboot = 0;
 
@@ -251,6 +255,7 @@ MOD_INIT()
 	CommandAdd(modinfo->handle, "SPAMFILTER", cmd_spamfilter, 7, CMD_OPER);
 	CommandAdd(modinfo->handle, "ELINE", cmd_eline, 4, CMD_OPER);
 	CommandAdd(modinfo->handle, "TKL", _cmd_tkl, MAXPARA, CMD_OPER|CMD_SERVER);
+	CommandAdd(modinfo->handle, "SPAMINFO", cmd_spaminfo, 1, CMD_OPER|CMD_TEXTANALYSIS);
 	add_default_exempts();
 	return MOD_SUCCESS;
 }
@@ -269,13 +274,27 @@ MOD_UNLOAD()
 	return MOD_SUCCESS;
 }
 
+// Simple for now; will be improved later
+int input_conversion_strtoval(const char *name)
+{
+	if (!strcmp(name, "none"))
+		return 0;
+	if (!strcmp(name, "strip-control-codes"))
+		return INPUT_CONVERSION_STRIP_CONTROL_CODES;
+	if (!strcmp(name, "confusables"))
+		return INPUT_CONVERSION_CONFUSABLES;
+	return -1;
+}
+
 /** Test a spamfilter { } block in the configuration file */
 int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 {
 	ConfigEntry *cep, *cepp;
 	int errors = 0;
 	char *match = NULL, *reason = NULL;
-	char has_target = 0, has_id = 0, has_match = 0, has_rule = 0, has_action = 0, has_reason = 0, has_bantime = 0, has_match_type = 0;
+	char has_target = 0, has_id = 0, has_match = 0, has_rule = 0, has_action = 0, has_reason = 0;
+	char has_bantime = 0, has_match_type = 0, has_input_conversion = 0;
+	char has_show_message_content_on_hit = 0;
 	char central_spamfilter = 0;
 	int match_type = 0;
 
@@ -330,6 +349,45 @@ int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *e
 					if (!spamfilter_getconftargets(cepp->name))
 					{
 						config_error("%s:%i: unknown spamfiler target type '%s'",
+							cepp->file->filename,
+							cepp->line_number, cepp->name);
+						errors++;
+					}
+				}
+			}
+			else
+			{
+				config_error_empty(cep->file->filename,
+					cep->line_number, "spamfilter", cep->name);
+				errors++;
+			}
+			continue;
+		} else
+		if (!strcmp(cep->name, "input-conversion"))
+		{
+			if (has_input_conversion)
+			{
+				config_warn_duplicate(cep->file->filename,
+					cep->line_number, "spamfilter::input-conversion");
+				continue;
+			}
+			has_input_conversion = 1;
+			if (cep->value)
+			{
+				if (input_conversion_strtoval(cep->value)<0)
+				{
+					config_error("%s:%i: unknown input-conversion method '%s'",
+						cep->file->filename, cep->line_number, cep->value);
+					errors++;
+				}
+			}
+			else if (cep->items)
+			{
+				for (cepp = cep->items; cepp; cepp = cepp->next)
+				{
+					if (input_conversion_strtoval(cepp->name)<0)
+					{
+						config_error("%s:%i: unknown input-conversion method '%s'",
 							cepp->file->filename,
 							cepp->line_number, cepp->name);
 						errors++;
@@ -442,6 +500,22 @@ int tkl_config_test_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type, int *e
 				continue;
 			}
 			has_match_type = 1;
+		}
+		else if (!strcmp(cep->name, "show-message-content-on-hit"))
+		{
+			if (has_show_message_content_on_hit)
+			{
+				config_warn_duplicate(cep->file->filename,
+					cep->line_number, "spamfilter::show-message-content-on-hit");
+				continue;
+			}
+			has_show_message_content_on_hit = 1;
+			if (!spamfilter_show_message_content_on_hit_strtoval(cep->value))
+			{
+				config_error("%s:%i: spamfilter::show-message-content-on-hit: unknown value '%s'",
+				             cep->file->filename, cep->line_number, cep->value);
+				errors++;
+			}
 		}
 		else if (!strcmp(cep->name, "except"))
 		{
@@ -559,10 +633,12 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	char *banreason = tempiConf.spamfilter_ban_reason;
 	BanAction *action = NULL;
 	int target = 0;
+	int input_conversion = INPUT_CONVERSION_DEFAULT;
 	int match_type = 0;
 	Match *m = NULL;
 	int flag = TKL_FLAG_CONFIG;
 	SecurityGroup *except = NULL;
+	SpamfilterShowMessageContentOnHit show_message_content_on_hit = 0;
 
 	/* We are only interested in spamfilter { } blocks */
 	if ((type != CONFIG_MAIN) || strcmp(ce->name, "spamfilter"))
@@ -600,6 +676,21 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 					target |= spamfilter_getconftargets(cepp->name);
 			}
 		}
+		else if (!strcmp(cep->name, "input-conversion"))
+		{
+			if (cep->value)
+				input_conversion = input_conversion_strtoval(cep->value);
+			else
+			{
+				for (cepp = cep->items; cepp; cepp = cepp->next)
+				{
+					if (!strcmp(cepp->name, "none"))
+						input_conversion = 0;
+					else
+						input_conversion |= input_conversion_strtoval(cepp->name);
+				}
+			}
+		}
 		else if (!strcmp(cep->name, "action"))
 		{
 			parse_ban_action_config(cep, &action);
@@ -619,6 +710,10 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 		else if (!strcmp(cep->name, "except"))
 		{
 			conf_match_block(cf, cep, &except);
+		}
+		else if (!strcmp(cep->name, "show-message-content-on-hit"))
+		{
+			show_message_content_on_hit = spamfilter_show_message_content_on_hit_strtoval(cep->value);
 		}
 	}
 
@@ -666,6 +761,8 @@ int tkl_config_run_spamfilter(ConfigFile *cf, ConfigEntry *ce, int type)
 	                   TStime(),
 	                   bantime,
 	                   banreason,
+	                   input_conversion,
+	                   show_message_content_on_hit,
 	                   flag);
 	return 1;
 }
@@ -1910,12 +2007,12 @@ void cmd_tkl_line(Client *client, int parc, const char *parv[], char *type)
 		}
 
 		/* call the tkl layer .. */
-		cmd_tkl(&me, NULL, 9, tkllayer);
+		cmd_tkl(NULL, &me, NULL, 9, tkllayer);
 	}
 	else
 	{
 		/* call the tkl layer .. */
-		cmd_tkl(&me, NULL, 6, tkllayer);
+		cmd_tkl(NULL, &me, NULL, 6, tkllayer);
 
 	}
 }
@@ -2262,13 +2359,13 @@ CMD_FUNC(cmd_eline)
 		}
 		tkllayer[9] = reason;
 		/* call the tkl layer .. */
-		cmd_tkl(&me, NULL, 10, tkllayer);
+		cmd_tkl(NULL, &me, NULL, 10, tkllayer);
 	}
 	else
 	{
 		/* Remove ELINE */
 		/* call the tkl layer .. */
-		cmd_tkl(&me, NULL, 10, tkllayer);
+		cmd_tkl(NULL, &me, NULL, 10, tkllayer);
 
 	}
 }
@@ -2352,7 +2449,7 @@ void spamfilter_del_by_id(Client *client, const char *id)
 	ircsnprintf(mo2, sizeof(mo2), "%lld", (long long)TStime());
 	tkllayer[7] = mo2; /* deletion time */
 
-	cmd_tkl(&me, NULL, 12, tkllayer);
+	cmd_tkl(NULL, &me, NULL, 12, tkllayer);
 }
 
 /** Spamfilter to fight spam, advertising, worms and other bad things on IRC.
@@ -2545,7 +2642,7 @@ CMD_FUNC(cmd_spamfilter)
 		tkllayer[7] = mo2;
 	}
 
-	cmd_tkl(&me, NULL, 12, tkllayer);
+	cmd_tkl(NULL, &me, NULL, 12, tkllayer);
 }
 
 /** tkl hash method.
@@ -2817,6 +2914,7 @@ TKL *tkl_find_head(char type, char *hostmask, TKL *def)
  * @param set_at              When was the ban set
  * @param spamf_tkl_duration  When will the ban placed by spamfilter expire
  * @param spamf_tkl_reason    What is the reason for bans placed by spamfilter
+ * @param input_conversion    Input conversion(s) like stripping control codes
  * @param flags               Any TKL_FLAG_* (TKL_FLAG_CONFIG, etc..)
  * @returns                   The TKL entry, or NULL in case of a problem,
  *                            such as a regex failing to compile, memory problem, ..
@@ -2826,6 +2924,8 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
                          const char *set_by,
                          time_t expire_at, time_t set_at,
                          time_t tkl_duration, const char *tkl_reason,
+                         int input_conversion,
+                         SpamfilterShowMessageContentOnHit show_message_content_on_hit,
                          int flags)
 {
 	TKL *tkl;
@@ -2857,11 +2957,13 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
 	}
 	tkl->ptr.spamfilter->target = target;
 	tkl->ptr.spamfilter->action = action;
+	tkl->ptr.spamfilter->input_conversion = input_conversion;
 	tkl->ptr.spamfilter->match = match;
 	safe_strdup(tkl->ptr.spamfilter->tkl_reason, tkl_reason);
 	tkl->ptr.spamfilter->except = except;
 	tkl->ptr.spamfilter->tkl_duration = tkl_duration;
 	safe_strdup(tkl->ptr.spamfilter->id, id);
+	tkl->ptr.spamfilter->show_message_content_on_hit = show_message_content_on_hit;
 
 	if (tkl->ptr.spamfilter->target & SPAMF_USER)
 		loop.do_bancheck_spamf_user = 1;
@@ -2876,6 +2978,8 @@ TKL *_tkl_add_spamfilter(int type, const char *id, unsigned short target, BanAct
 		mtag_spamfilters_present = 1;
 	if (target & SPAMF_RAW)
 		raw_spamfilters_present = 1;
+	if (input_conversion & INPUT_CONVERSION_CONFUSABLES)
+		confusables_spamfilters_present = 1;
 
 	return tkl;
 }
@@ -3640,7 +3744,7 @@ int _find_spamfilter_user(Client *client, int flags)
 		return 0;
 
 	spamfilter_build_user_string(spamfilter_user, client->name, client);
-	return match_spamfilter(client, spamfilter_user, SPAMF_USER, NULL, NULL, flags, NULL);
+	return match_spamfilter(client, spamfilter_user, SPAMF_USER, NULL, NULL, flags, NULL, NULL);
 }
 
 /** Check a spamfilter against all local users and print a message.
@@ -4659,7 +4763,7 @@ CMD_FUNC(cmd_tkl_add)
 			}
 			tkl = tkl_add_spamfilter(type, NULL, target, banact_value_to_struct(action), m, NULL, NULL,
 			                         set_by, expire_at, set_at,
-			                         tkl_duration, tkl_reason, 0);
+			                         tkl_duration, tkl_reason, INPUT_CONVERSION_DEFAULT, 0, 0);
 		}
 	} else
 	{
@@ -5098,7 +5202,7 @@ int _take_action(Client *client, BanAction *actions, char *reason, long duration
 				tkllayer[6] = mo;
 				tkllayer[7] = mo2;
 				tkllayer[8] = reason;
-				cmd_tkl(&me, NULL, 9, tkllayer);
+				cmd_tkl(NULL, &me, NULL, 9, tkllayer);
 				RunHookReturnInt(HOOKTYPE_TAKE_ACTION, !=99, client, action->action, reason, duration);
 				if ((action->action == BAN_ACT_SHUN) || (action->action == BAN_ACT_SOFT_SHUN))
 				{
@@ -5257,18 +5361,18 @@ int match_spamfilter_exempt(TKL *tkl, char user_is_exempt_general, char user_is_
 }
 
 /** Tells if the message content should be hidden in the spamfilter hit log message. Helper function. */
-static int spamfilter_hide_content(int target)
+static int spamfilter_hide_content(int target, SpamfilterShowMessageContentOnHit setting)
 {
 	if ((target == SPAMF_USERMSG) || (target == SPAMF_USERNOTICE))
 	{
-		if (iConf.spamfilter_show_message_content_on_hit == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS)
+		if (setting == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS)
 			return 0;
 		return 1;
 	} else
 	if ((target == SPAMF_CHANMSG) || (target == SPAMF_CHANNOTICE))
 	{
-		if ((iConf.spamfilter_show_message_content_on_hit == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS) ||
-		    (iConf.spamfilter_show_message_content_on_hit == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY))
+		if ((setting == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_ALWAYS) ||
+		    (setting == SPAMFILTER_SHOW_MESSAGE_CONTENT_ON_HIT_CHANNEL_ONLY))
 		{
 			return 0;
 		}
@@ -5287,7 +5391,10 @@ static void match_spamfilter_hit(Client *client, const char *str_in, const char 
                                  int *content_revealed,
                                  char no_stop_first_match)
 {
-	int hide_content = spamfilter_hide_content(target);
+	int hide_content = spamfilter_hide_content(target,
+	                                           tkl->ptr.spamfilter->show_message_content_on_hit ?
+	                                           tkl->ptr.spamfilter->show_message_content_on_hit :
+	                                           iConf.spamfilter_show_message_content_on_hit);
 	int stopped;
 	int highest_action;
 
@@ -5359,11 +5466,13 @@ static void match_spamfilter_hit(Client *client, const char *str_in, const char 
  * @returns 0 if not matched, otherwise one of BAN_ACT_* (>=1) if spamfilter matched
  *          and it should be blocked or client exited. If >=1 then be sure to check IsDead(client)!!
  */
-int _match_spamfilter(Client *client, const char *str_in, int target, const char *cmd, const char *destination, int flags, TKL **rettkl)
+int _match_spamfilter(Client *client, const char *str_in, int target, const char *cmd, const char *destination, int flags, ClientContext *clictx, TKL **rettkl)
 {
 	TKL *tkl;
 	TKL *winner_tkl = NULL;
 	const char *str;
+	const char *str_deconfused = NULL;
+	char deconfused[512];
 	int ret = -1;
 	char *reason = NULL;
 #ifdef SPAMFILTER_DETECTSLOW
@@ -5389,6 +5498,14 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 	else
 		str = StripControlCodes(str_in);
 
+	if (confusables_spamfilters_present)
+	{
+		if (clictx && clictx->textanalysis && *clictx->textanalysis->deconfused)
+			str_deconfused = clictx->textanalysis->deconfused;
+		else
+			str_deconfused = utf8_convert_confusables(str, deconfused, sizeof(deconfused));
+	}
+
 	/* (note: using client->user check here instead of IsUser()
 	 * due to SPAMF_USER where user isn't marked as client/person yet.
 	 */
@@ -5399,6 +5516,7 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 	context.client = client;
 	context.text = str_in;
 	context.destination = destination;
+	context.clictx = clictx;
 
 	/* Client exempt from spamfilter checking?
 	 * Let's check that early: going through elines is likely faster than running the regex(es).
@@ -5463,7 +5581,12 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			}
 #endif
 
-			ret = unreal_match(tkl->ptr.spamfilter->match, str);
+			if (tkl->ptr.spamfilter->input_conversion == INPUT_CONVERSION_STRIP_CONTROL_CODES)
+				ret = unreal_match(tkl->ptr.spamfilter->match, str); /* StripControlCodes() */
+			else if (tkl->ptr.spamfilter->input_conversion == INPUT_CONVERSION_CONFUSABLES)
+				ret = unreal_match(tkl->ptr.spamfilter->match, str_deconfused ? str_deconfused : str); /* utf8_convert_confusables(), with fallback */
+			else
+				ret = unreal_match(tkl->ptr.spamfilter->match, str_in); /* raw */
 
 #ifdef SPAMFILTER_DETECTSLOW
 			if (tkl->ptr.spamfilter->match->type == MATCH_PCRE_REGEX)
@@ -5556,6 +5679,7 @@ int _match_spamfilter(Client *client, const char *str_in, int target, const char
 			context.client = client;
 			context.text = str_in;
 			context.destination = destination;
+			context.clictx = clictx;
 			if (!crule_eval(&context, tkl->ptr.spamfilter->rule))
 				continue;
 
@@ -5705,7 +5829,7 @@ int _match_spamfilter_mtags(Client *client, MessageTag *mtags, char *cmd)
 		} else {
 			str = m->name;
 		}
-		if (match_spamfilter(client, str, SPAMF_MTAG, cmd, NULL, 0, NULL))
+		if (match_spamfilter(client, str, SPAMF_MTAG, cmd, NULL, 0, NULL, NULL))
 			return 1;
 	}
 	return 0;
@@ -5727,6 +5851,8 @@ int check_special_spamfilters_present(void)
 			mtag_spamfilters_present = 1;
 		if (tkl->ptr.spamfilter->target & SPAMF_RAW)
 			raw_spamfilters_present = 1;
+		if (tkl->ptr.spamfilter->input_conversion & INPUT_CONVERSION_CONFUSABLES)
+			confusables_spamfilters_present = 1;
 	}
 
 	return 0;
@@ -6065,9 +6191,60 @@ int spamfilter_pre_command(Client *from, MessageTag *mtags, const char *buf)
 		return 0;
 
 	cmd = getcmd(buf, cmdbuf, sizeof(cmdbuf));
-	ret = match_spamfilter(from, buf, SPAMF_RAW, cmd, NULL, 0, NULL);
+	ret = match_spamfilter(from, buf, SPAMF_RAW, cmd, NULL, 0, NULL, NULL);
 	if (ret > 0)
 		return HOOK_DENY;
 
 	return 0;
+}
+
+CMD_FUNC(cmd_spaminfo)
+{
+	const char *line;
+	int i, cnt;
+
+	if (!IsOper(client))
+	{
+		sendnumeric(client, ERR_NOPRIVILEGES);
+		return;
+	}
+
+	if ((parc < 2) || BadPtr(parv[1]))
+	{
+		sendnotice(client, "Use: /SPAMINFO <line with spam text>");
+		return;
+	}
+
+	if (!clictx->textanalysis)
+	{
+		sendnotice(client, "ERROR: Text analysis is not available. Maybe the utf8functions module is not loaded?");
+		return;
+	}
+
+	sendnotice(client, "*** SPAMINFO ***");
+	sendnotice(client, "This will show the original text and the deconfused text which can be used in a spamfilter block with input-conversion deconfused;");
+
+	line = parv[1];
+
+	sendnotice(client, "Original spam text: %s", line);
+	sendnotice(client, "Deconfused spam text: %s", clictx->textanalysis->deconfused);
+	sendnotice(client, "AntiMixedUTF8 points: %d", clictx->textanalysis->antimixedutf8_points);
+	sendnotice(client, "Number of Unicode characters in total: %d", clictx->textanalysis->num_unicode_characters);
+	sendnotice(client, "Number of different Unicode blocks used: %d", clictx->textanalysis->unicode_blocks);
+	sendnotice(client, "Unicode Block breakdown (name: bytes [capped at 255]):");
+	for (i = 0, cnt = 0; i < UNICODE_BLOCK_COUNT; i++)
+	{
+		if (clictx->textanalysis->unicode_blockmap[i])
+		{
+			cnt += clictx->textanalysis->unicode_blockmap[i];
+			sendnotice(client, "- %s: %d",
+			           utf8_get_block_name(i),
+			           (int)clictx->textanalysis->unicode_blockmap[i]);
+		}
+	}
+	if (clictx->textanalysis->num_unicode_characters != cnt)
+	{
+		sendnotice(client, "- Non-alpha ASCII characters (digits/spaces/etc.): %d",
+		                   clictx->textanalysis->num_unicode_characters - cnt);
+	}
 }

@@ -12,16 +12,11 @@ set -x
 # Kill old instances
 killall -9 unrealircd || true
 # Remove old junk
-rm -rf cipherscan/ unrealircd-tests/
+rm -rf testssl.sh/ cipherscan/ unrealircd-tests/
 
-if [ ! -d ~/cipherscan ]; then
-	# Install 'cipherscan'
-	git clone -q https://github.com/mozilla/cipherscan
-fi
-
-if [ "$HOSTNAME" = "deb8" ]; then
-	echo "Not running tests on Debian 8. It's LTS is EOL and trouble with running tests."
-	exit 0
+if [ ! -d ~/testssl.sh ]; then
+	# Install 'testssl.sh'
+	git clone -q https://github.com/testssl/testssl.sh
 fi
 
 # Install 'unrealircd-tests'
@@ -53,7 +48,7 @@ fi
 ./run -services none -include db_crypted.conf -boot tests/db/writing/* || exit 1
 ./run -services none -include db_crypted.conf -keepdbs -boot tests/db/reading/* || exit 1
 
-# Do cipherscan test at the end
+# Do SSL/TLS tests at the end
 # Has problems on non-Linux-64-bit, so we skip there:
 if [ "$FREEBSD" = 0 -a "$HOSTNAME" != "ub18-ia32" ]; then
 	sleep 2

@@ -46,7 +46,7 @@ MOD_INIT()
 	memset(&c, 0, sizeof(c));
 	c.name = "away-notify";
 	ClientCapabilityAdd(modinfo->handle, &c, &CAP_AWAY_NOTIFY);
-	CommandAdd(modinfo->handle, MSG_AWAY, cmd_away, 1, CMD_USER);
+	CommandAdd(modinfo->handle, MSG_AWAY, cmd_away, 1, CMD_USER|CMD_TEXTANALYSIS);
 	HookAdd(modinfo->handle, HOOKTYPE_LOCAL_JOIN, 0, away_join);
 	HookAdd(modinfo->handle, HOOKTYPE_REMOTE_JOIN, 0, away_join);
 
@@ -125,7 +125,7 @@ CMD_FUNC(cmd_away)
 	strlncpy(reason, parv[1], sizeof(reason), iConf.away_length);
 
 	/* Check spamfilters */
-	if (MyUser(client) && match_spamfilter(client, reason, SPAMF_AWAY, "AWAY", NULL, 0, NULL))
+	if (MyUser(client) && match_spamfilter(client, reason, SPAMF_AWAY, "AWAY", NULL, 0, clictx, NULL))
 		return;
 
 	/* Check away-flood */

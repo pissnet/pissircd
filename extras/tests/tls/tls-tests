@@ -7,83 +7,57 @@ function fail()
 	exit 1
 }
 
-CIPHERSCAN="cipherscan"
+TESTSSL="testssl.sh"
 OPENSSL="openssl"
-if [ -x ~/cipherscan ]; then
-	CIPHERSCAN="$HOME/cipherscan/cipherscan"
-	OPENSSL="$HOME/cipherscan/openssl"
-elif [ -x /home/travis/build/unrealircd/unrealircd/cipherscan/cipherscan ]; then
-	CIPHERSCAN="/home/travis/build/unrealircd/unrealircd/cipherscan/cipherscan"
-	OPENSSL="/home/travis/build/unrealircd/unrealircd/cipherscan/openssl"
-elif [ -x ../../../cipherscan/ ]; then
-	CIPHERSCAN="`readlink -f ../../../cipherscan/cipherscan`"
-	OPENSSL="`readlink -f ../../../cipherscan/openssl`"
+if [ -x ~/testssl.sh/testssl.sh ]; then
+	TESTSSL="$HOME/testssl.sh/testssl.sh"
+elif [ -x ../../../testssl.sh/ ]; then
+	TESTSSL="`readlink -f ../../../testssl.sh/testssl.sh`"
 fi
 
-$CIPHERSCAN --help >/dev/null || exit 1
+$TESTSSL --help >/dev/null || exit 1
 
 
-# This is the basic cipherscan test.
-# It compares the output against a reference .txt file and alarms us if there
-# are any changes. These changes may not always be harmful, but at least we
-# will get warned on any possible changes.
-$CIPHERSCAN --no-colors 127.0.0.1:5901|grep -vF '.....' >cipherscan.test.txt
+# This is the actual scan, later on we use the 'testssl.csv' result
+$TESTSSL --nodns none --color 0 --cipher-per-proto --std --fs --csvfile testssl.pre.csv --logfile testssl.log 127.0.0.1:5901
+
+# Filter this useless stuff out
+cat testssl.pre.csv|grep -vF "No engine or GOST support" >testssl.csv
 
 # Now check if profile matches, if so.. everything is ok.
-# We have 1 or more baseline profiles
-# And you can optionally add profile-specific, eg openssl-102.txt
-# Yeah that was a great idea but maintaining that is a bit of a hassle.
-# TODO: reintroduce it though, see below.
-##for f in cipherscan_profiles/baseline*txt cipherscan_profiles/$BUILDCONFIG.txt
 FAILED=1
-for f in cipherscan_profiles/*.txt
+for f in testssl_profiles/*.txt
 do
-	diff -uab $f cipherscan.test.txt 1>/dev/null 2>&1
+	diff -uab $f testssl.csv 1>/dev/null 2>&1
 	if [ "$?" -eq 0 ]; then
 		FAILED=0
-		echo "Cipherscan profile $f matched."
+		echo "Testssl profile $f matched."
 		break
 	fi
 done
 
 if [ "$FAILED" -eq 1 ]; then
-	echo "*** Differences found between cipherscan scan and expected output ***"
-	if [ -f cipherscan_profiles/$BUILDCONFIG.txt ]; then
-		COMPARE_PROFILE="cipherscan_profiles/$BUILDCONFIG.txt"
+	echo "*** Differences found between testssl scan and expected output ***"
+	if [ -f testssl_profiles/$BUILDCONFIG.txt ]; then
+		COMPARE_PROFILE="testssl_profiles/$BUILDCONFIG.txt"
 	else
-		COMPARE_PROFILE="cipherscan_profiles/baseline.txt"
+		COMPARE_PROFILE="testssl_profiles/baseline.txt"
 	fi
 	echo "== EXPECTED OUTPUT ($COMPARE_PROFILE) =="
 	cat $COMPARE_PROFILE
 	echo
 	echo "== ACTUAL TEST OUTPUT =="
-	cat cipherscan.test.txt
+	cat testssl.csv
 	echo
 	echo "== DIFF =="
-	diff -uab $COMPARE_PROFILE cipherscan.test.txt
+	diff -uab $COMPARE_PROFILE testssl.csv
 	echo
-	echo "cipherscan test failed."
+	echo "Testssl failed."
 	exit 1
 else
-	echo "*** Cipherscan output was good ***"
-	cat cipherscan.test.txt
+	echo "*** Testssl output was good ***"
+	cat testssl.csv
 fi
-
-# This checks for a couple of old ciphers that should never work:
-for cipher in 3DES RC4
-do
-	echo "Testing cipher $cipher (MUST FAIL!).."
-	(echo QUIT|$OPENSSL s_client -connect 127.0.0.1:5901 -cipher $cipher) &&
-	fail "UnrealIRCd allowed us to connect with cipher $cipher, BAD!"
-done
-
-# This checks older SSL/TLS versions that should not work:
-for protocol in ssl2 ssl3
-do
-	echo "Testing protocol $protocol (MUST FAIL!).."
-	(echo QUIT|$OPENSSL s_client -connect 127.0.0.1:5901 -$protocol) &&
-	fail "UnrealIRCd allowed us to connect with protocol $protocol, BAD!"
-done
 
 echo
 echo "TLS tests ended (no issues)."

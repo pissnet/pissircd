@@ -5,12 +5,21 @@
 #define USE_CURL
 
 [Setup]
+<<<<<<< HEAD
 AppName=PissIRCd 6
 AppVerName=PissIRCd 6.1.10-git
 AppPublisher=PissIRCd Team
 AppPublisherURL=https://piss.network
 AppSupportURL=https://wiki.letspiss.net
 AppUpdatesURL=https://wiki.letspiss.net
+=======
+AppName=UnrealIRCd 6
+AppVerName=UnrealIRCd 6.2.0-git
+AppPublisher=UnrealIRCd Team
+AppPublisherURL=https://www.unrealircd.org
+AppSupportURL=https://www.unrealircd.org
+AppUpdatesURL=https://www.unrealircd.org
+>>>>>>> 641413cfa92dd9be93aa1daa8ca526b56320a3f3
 AppMutex=UnrealMutex,Global\UnrealMutex
 DefaultDirName={pf}\PissIRCd 6
 DefaultGroupName=PissIRCd 6

@@ -314,6 +314,7 @@ DLL_FILES=\
  src/modules/lusers.dll \
  src/modules/map.dll \
  src/modules/max-unknown-connections-per-ip.dll \
+ src/modules/maxperip.dll \
  src/modules/md.dll \
  src/modules/message.dll \
  src/modules/message-ids.dll \
@@ -429,6 +430,7 @@ DLL_FILES=\
  src/modules/usermodes/servicebot.dll \
  src/modules/usermodes/showwhois.dll \
  src/modules/usermodes/wallops.dll \
+ src/modules/utf8functions.dll \
  src/modules/vhost.dll \
  src/modules/watch-backend.dll \
  src/modules/watch.dll \
@@ -1054,6 +1056,9 @@ src/modules/map.dll: src/modules/map.c $(INCLUDES)
 src/modules/max-unknown-connections-per-ip.dll: src/modules/max-unknown-connections-per-ip.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/max-unknown-connections-per-ip.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/max-unknown-connections-per-ip.pdb $(MODLFLAGS)
 
+src/modules/maxperip.dll: src/modules/maxperip.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/maxperip.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/maxperip.pdb $(MODLFLAGS)
+
 src/modules/md.dll: src/modules/md.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/md.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/md.pdb $(MODLFLAGS)
 
@@ -1398,6 +1403,9 @@ src/modules/usermodes/showwhois.dll: src/modules/usermodes/showwhois.c $(INCLUDE
 
 src/modules/usermodes/wallops.dll: src/modules/usermodes/wallops.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/usermodes/wallops.c /Fesrc/modules/usermodes/ /Fosrc/modules/usermodes/ /Fdsrc/modules/usermodes/wallops.pdb $(MODLFLAGS)
+
+src/modules/utf8functions.dll: src/modules/utf8functions.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/utf8functions.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/utf8functions.pdb $(MODLFLAGS)
 
 src/modules/vhost.dll: src/modules/vhost.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/vhost.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/vhost.pdb $(MODLFLAGS)

@@ -117,8 +117,8 @@ void free_vhost_config(void)
 int vhost_config_test(ConfigFile *conf, ConfigEntry *ce, int type, int *errs)
 {
 	ConfigEntry *cep;
-	char has_vhost = 0, has_login = 0, has_password = 0, has_mask = 0, has_match = 0;
-	char has_auto_login = 0;
+	int has_vhost = 0, has_login = 0, has_password = 0, has_mask = 0, has_match = 0;
+	int has_auto_login = 0;
 	int errors = 0;
 
 	/* We are only interested in vhost { } blocks */
@@ -134,13 +134,7 @@ int vhost_config_test(ConfigFile *conf, ConfigEntry *ce, int type, int *errs)
 		else if (!strcmp(cep->name, "vhost"))
 		{
 			char *at, *tmp, *host, *p;
-			if (has_vhost)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::vhost");
-				continue;
-			}
-			has_vhost = 1;
+			config_detect_duplicate(&has_vhost, cep, &errors);
 			if (!cep->value)
 			{
 				config_error_empty(cep->file->filename,
@@ -160,12 +154,7 @@ int vhost_config_test(ConfigFile *conf, ConfigEntry *ce, int type, int *errs)
 		}
 		else if (!strcmp(cep->name, "login"))
 		{
-			if (has_login)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::login");
-			}
-			has_login = 1;
+			config_detect_duplicate(&has_login, cep, &errors);
 			if (!cep->value)
 			{
 				config_error_empty(cep->file->filename,
@@ -176,12 +165,7 @@ int vhost_config_test(ConfigFile *conf, ConfigEntry *ce, int type, int *errs)
 		}
 		else if (!strcmp(cep->name, "password"))
 		{
-			if (has_password)
-			{
-				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "vhost::password");
-			}
-			has_password = 1;
+			config_detect_duplicate(&has_password, cep, &errors);
 			if (!cep->value)
 			{
 				config_error_empty(cep->file->filename,

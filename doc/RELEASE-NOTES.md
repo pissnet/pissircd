@@ -1,8 +1,8 @@
-UnrealIRCd 6.1.10-git
-===============
+UnrealIRCd 6.2.0-git
+=====================
 
-This is the git version (development version). This is work
-in progress and may not always be a stable version.
+This is the git version (development version) for future UnrealIRCd 6.2.0.
+This is work in progress and may not always be a stable version.
 
 ### Enhancements:
 * TODO
@@ -14,13 +14,77 @@ in progress and may not always be a stable version.
 * TODO
 
 ### Developers and protocol:
-* TODO
+* Command handlers (and overrides) now have an extra argument
+  `ClientContext *clictx`. Right now it only has `clictx->cmd`
+  which points to the command handler, but in the future more
+  fields can easily be added to this struct. In your modules
+  you should normally use `CMD_FUNC(cmd_mycmd)` and
+  `CMD_OVERRIDE_FUNC(myoverridefunc)` and `CALL_NEXT_COMMAND_OVERRIDE()`
+  and then your module does not updating between 6.1.x and 6.2.x.
+
+UnrealIRCd 6.1.10
+==================
+
+This is mostly a maintenance release with a few small new features.
+
+### Enhancements:
+* In the [spamfilter { } ](https://www.unrealircd.org/docs/Spamfilter_block)
+  block two new options:
+  * `input-conversion`: This can be set to `none` to make the
+    spamfilter run against the original text. This in contrast to
+    how default spamfilter behaves where the text is matched against
+    text that has color and control codes removed. Can be useful if
+    you need to match against such a special character.
+  * `show-message-content-on-hit`: this works like
+    [set::show-message-content-on-hit](https://www.unrealircd.org/docs/Set_block#set::spamfilter::show-message-content-on-hit).
+    but on an individual spamfilter basis.
+* If `unrealircd.conf` doesn't exist then we now offer to copy
+  the example configuration (showing a list of languages
+  to pick from).
+* Ship with an offline copy of the wiki documentation
+  (`doc/unrealircd_wiki.zim`). This is really only meant for cases
+  where the wiki is unavailable, eg you don't have an internet
+  connection, some major outage, etc.
+  See
+  [ZIM](https://en.wikipedia.org/wiki/ZIM_(file_format))
+  and
+  [Kiwix](https://en.wikipedia.org/wiki/Kiwix)
+  for more information.
+
+### Changes:
+* Update the example configuration:
+  * Mark specific sections with "CHANGE THIS" for people who are in a hurry
+    and really only want to do the bare minimum to get the IRCd booted.
+  * More things are commented out by default, like example link blocks
+    and ulines.
+  * In addition to the the default ircd.log text file log block, also
+    add a
+    [JSON log block](https://www.unrealircd.org/docs/JSON_logging#Enabling_in_disk_logging).
+    JSON logging includes a lot of information about every event so is
+    great for auditing purposes and machine readable.
+* Error on some more duplicate config items, eg allow::password.
+* In target-flood log messages we now show the message type (eg PRIVMSG).
+* Make the `./Config` question about
+  [remote includes](https://www.unrealircd.org/docs/Remote_includes)
+  a bit more clear. The `https://` protocol is always supported and this
+  question is only about supporting *other* protocols and using the cURL
+  library.
+
+### Fixes:
+* Fix compile problems on (upcoming) GCC 15 as it assumes C23 by default.
+  This for future Fedora 42 and possibly Ubuntu 25.04, both scheduled
+  around April 2025.
+* Fix crash on `SPAMREPORT <ip>` (IRCOp-only command) if the
+  central-blocklist module is loaded.
+* Fix make_channel() not checking minimal validity of channel names.
+  Only an issue for (bad) trusted remote server traffic.
 
 UnrealIRCd 6.1.9.1
 -------------------
-(UnrealIRCd 6.1.9.1 fixes a bug in the TLS ciphers of 6.1.9. The original
- 6.1.9 release notes are below)
+UnrealIRCd 6.1.9.1 fixes a bug in the TLS ciphers of 6.1.9.
 
+UnrealIRCd 6.1.9
+-----------------
 This 6.1.9 release fixes a number of bugs such as IPv6 hosts not resolving
 in UnrealIRCd 6.1.8/6.1.8.1 and 100% CPU usage in some circumstances.
 It also changes the SSL/TLS defaults to make things a little safer/better.

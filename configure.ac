@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.1.10-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.2.0-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -30,11 +30,11 @@ UNREAL_VERSION_GENERATION=["6"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_GENERATION], [$UNREAL_VERSION_GENERATION], [Generation version number (e.g.: X for X.Y.Z)])
 
 # Major version number (e.g.: Y in X.Y.Z)
-UNREAL_VERSION_MAJOR=["1"]
+UNREAL_VERSION_MAJOR=["2"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["10"]
+UNREAL_VERSION_MINOR=["0"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
@@ -886,6 +886,25 @@ CHECK_GEOIP_CLASSIC
 CHECK_LIBMAXMINDDB
 
 UNRLINCDIR="`pwd`/include"
+
+dnl This is at the end so the (potential) -std=gnu17 is not used
+dnl when compiling libraries, as their requirements may be different.
+AC_MSG_CHECKING([if explicit -std=gnu17 is needed])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+	[[#include <sys/types.h>
+	  #include <stdlib.h>
+	  #include <sys/socket.h>
+	  #include <netinet/in.h>
+	  #include <netinet/tcp.h>
+	  #include <sys/socket.h>]],
+	[[
+	  void (*test)();
+	  test = exit;
+	  test(0);
+	]])],
+	[AC_MSG_RESULT(no)],
+	[CFLAGS="$CFLAGS -std=gnu17"
+	AC_MSG_RESULT(yes)])
 
 dnl Moved to the very end to ensure it doesn't affect any libs or tests.
 if test "$ac_cv_werror" = "yes" ; then
