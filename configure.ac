@@ -617,7 +617,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libpcre2*])],[has
 
 AS_IF([test "$has_system_pcre2" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW PCRE2 RELEASE!
-pcre2_version="10.44"
+pcre2_version="10.45"
 AC_MSG_RESULT(extracting PCRE2 regex library)
 cur_dir=`pwd`
 cd extras
@@ -758,7 +758,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libcares*])],[has
 
 AS_IF([test "$has_system_cares" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW C-ARES RELEASE!
-cares_version="1.34.3"
+cares_version="1.34.5"
 AC_MSG_RESULT(extracting c-ares resolver library)
 cur_dir=`pwd`
 cd extras
@@ -833,7 +833,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libjansson*])],[h
 
 AS_IF([test "$has_system_jansson" = "no"],[
 dnl REMEMBER TO CHANGE WITH A NEW JANSSON RELEASE!
-jansson_version="2.14"
+jansson_version="2.14.1"
 AC_MSG_RESULT(extracting jansson library)
 cur_dir=`pwd`
 cd extras
