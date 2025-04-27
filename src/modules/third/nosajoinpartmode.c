@@ -79,7 +79,7 @@ CMD_OVERRIDE_FUNC(override_sajoin)
 		return;
 	}
 
-	CallCommandOverride(ovr, client, recv_mtags, parc, parv);
+	CALL_NEXT_COMMAND_OVERRIDE();
 }
 
 CMD_OVERRIDE_FUNC(override_sapart)
@@ -102,5 +102,5 @@ CMD_OVERRIDE_FUNC(override_sapart)
 		return;
 	}
 
-	CallCommandOverride(ovr, client, recv_mtags, parc, parv);
+	CALL_NEXT_COMMAND_OVERRIDE();
 }

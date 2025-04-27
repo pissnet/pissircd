@@ -76,5 +76,5 @@ CMD_OVERRIDE_FUNC(override_sajp)
 		return;
 	}
 
-	CallCommandOverride(ovr, client, recv_mtags, parc, parv);
+	CALL_NEXT_COMMAND_OVERRIDE();
 }
