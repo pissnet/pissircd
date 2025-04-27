@@ -8209,10 +8209,10 @@ int	_conf_set(ConfigFile *conf, ConfigEntry *ce)
 			}
 		} else if (!strcmp(cep->name, "limit-svscmds"))
 		{
-			if (!strcmp(cep->value, "ulines"))
-				tempiConf.limit_svscmds = LIMIT_SVSCMDS_ULINES;
-			else
+			if (!strcmp(cep->value, "servers"))
 				tempiConf.limit_svscmds = LIMIT_SVSCMDS_SERVERS;
+			else
+				tempiConf.limit_svscmds = LIMIT_SVSCMDS_ULINES;
 		} else if (!strcmp(cep->name, "high-connection-rate"))
 		{
 			tempiConf.high_connection_rate = atoi(cep->value);
