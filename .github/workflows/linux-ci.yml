@@ -2,9 +2,9 @@ name: Linux CI
 
 on:
   push:
-    branches: [ "unreal60_dev" ]
+    branches: [ "piss60" ]
   pull_request:
-    branches: [ "unreal60_dev" ]
+    branches: [ "piss60" ]
 
 env:
   NOSERVICES: 1
