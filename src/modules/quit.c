@@ -451,7 +451,7 @@ static void exit_one_client(Client *client, MessageTag *mtags_i, const char *com
 		free_message_tags(mtags_o);
 
 		while ((mp = client->user->channel))
-			remove_user_from_channel(client, mp->channel, 1);
+			remove_user_from_channel_withmb(client, mp->channel, mp, 1);
 		/* again, this is all that is needed */
 
 		/* For remote clients, we need to check for any outstanding async
@@ -500,6 +500,8 @@ void _banned_client(Client *client, const char *bantype, const char *reason, int
 
 	if (!MyConnect(client))
 		abort();
+
+	RunHook(HOOKTYPE_BANNED_CLIENT, client, bantype, reason, global);
 
 	/* This was: "You are not welcome on this %s. %s: %s. %s" but is now dynamic: */
 	vars[0] = "bantype";

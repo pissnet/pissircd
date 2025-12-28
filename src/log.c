@@ -48,6 +48,8 @@ int memory_log_entries = 0; /**< Number of memory_log entries */
 int log_sources_match(LogSource *logsource, LogLevel loglevel, const char *subsystem, const char *event_id, int matched_already);
 void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char *event_id, Client *client, int expand_msg, const char *msg, va_list vl);
 void log_blocks_switchover(void);
+void do_unreal_log_webhook(LogLevel loglevel, const char *subsystem, const char *event_id, const char *json_serialized);
+void webhook_send_async(const char *url, const char *json_data);
 void memory_log_add_message(time_t t, LogLevel loglevel, const char *subsystem, const char *event_id, json_t *json);
 EVENT(memory_log_cleaner);
 
@@ -77,8 +79,8 @@ const char *log_type_valtostring(LogType v)
 int valid_loglevel(int v)
 {
 	if ((v == ULOG_DEBUG) || (v == ULOG_INFO) ||
-	    (v == ULOG_WARNING) || (v == ULOG_ERROR) ||
-	    (v == ULOG_FATAL))
+	    (v == ULOG_ADVICE) || (v == ULOG_WARNING) ||
+	    (v == ULOG_ERROR) || (v == ULOG_FATAL))
 	{
 		return 1;
 	}
@@ -336,6 +338,20 @@ int config_test_log(ConfigFile *conf, ConfigEntry *block)
 							errors++;
 						}
 					}
+				} else if (!strcmp(cep->name, "webhook"))
+				{
+					destinations++;
+					if (!cep->value)
+					{
+						config_error("%s:%i: webhook needs a url",
+							cep->file->filename, cep->line_number);
+						errors++;
+					} else if (strncmp(cep->value, "http://", 7) != 0 && strncmp(cep->value, "https://", 8) != 0)
+					{
+						config_error("%s:%i: webhook url must be a HTTP/HTTPS URL (%s)",
+							cep->file->filename, cep->line_number, cep->value);
+						errors++;
+					}
 				} else
 				{
 					config_error_unknownopt(cep->file->filename, cep->line_number, "log::destination", cep->name);
@@ -530,6 +546,13 @@ int config_run_log(ConfigFile *conf, ConfigEntry *block)
 						}
 					}
 					AddListItem(log, temp_logs[LOG_DEST_MEMORY]);
+				} else
+				if (!strcmp(cep->name, "webhook"))
+				{
+					Log *log = safe_alloc(sizeof(Log));
+					safe_strdup(log->url, cep->value);
+					log->sources = sources;
+					AddListItem(log, temp_logs[LOG_DEST_WEBHOOK]);
 				}
 			}
 		}
@@ -621,13 +644,11 @@ LogData *log_data_socket_error(int fd)
 	LogData *d;
 	json_t *j;
 
-#ifdef SO_ERROR
 	/* Try to get the "real" error from the underlying socket.
 	 * If we succeed then we will override "sockerr" with it.
 	 */
 	if ((fd >= 0) && !getsockopt(fd, SOL_SOCKET, SO_ERROR, (void *)&v, &len) && v)
 		sockerr = v;
-#endif
 
 	d = safe_alloc(sizeof(LogData));
 	d->type = LOG_FIELD_OBJECT;
@@ -728,11 +749,26 @@ LogData *log_data_tkl(const char *key, TKL *tkl)
 	return d;
 }
 
+LogData *log_data_textanalysis(const char *key, TextAnalysis *ta)
+{
+	char buf[BUFSIZE];
+	LogData *d = safe_alloc(sizeof(LogData));
+	json_t *j;
+
+	d->type = LOG_FIELD_OBJECT;
+	safe_strdup(d->key, key);
+	d->value.object = j = json_object();
+
+	json_expand_textanalysis(j, NULL, ta, 1);
+
+	return d;
+}
+
 void log_data_free(LogData *d)
 {
 	if (d->type == LOG_FIELD_STRING)
 		safe_free(d->value.string);
-	else if ((d->type == LOG_FIELD_OBJECT) && d->value.object)
+	else if (((d->type == LOG_FIELD_OBJECT) || (d->type == LOG_FIELD_OBJECT_NOFREE)) && d->value.object)
 		json_decref(d->value.object);
 
 	safe_free(d->key);
@@ -747,6 +783,8 @@ const char *log_level_valtostring(LogLevel loglevel)
 			return "debug";
 		case ULOG_INFO:
 			return "info";
+		case ULOG_ADVICE:
+			return "advice";
 		case ULOG_WARNING:
 			return "warn";
 		case ULOG_ERROR:
@@ -762,6 +800,7 @@ static NameValue log_colors_irc[] = {
 	{ ULOG_INVALID,	"\0030,01" },
 	{ ULOG_DEBUG,	"\0030,01" },
 	{ ULOG_INFO,	"\00303" },
+	{ ULOG_ADVICE,	"\00312" },
 	{ ULOG_WARNING,	"\00307" },
 	{ ULOG_ERROR,	"\00304" },
 	{ ULOG_FATAL,	"\00313" },
@@ -771,6 +810,7 @@ static NameValue log_colors_terminal[] = {
 	{ ULOG_INVALID,	"\033[90m" },
 	{ ULOG_DEBUG,	"\033[37m" },
 	{ ULOG_INFO,	"\033[92m" },
+	{ ULOG_ADVICE,	"\033[94m" },
 	{ ULOG_WARNING,	"\033[93m" },
 	{ ULOG_ERROR,	"\033[91m" },
 	{ ULOG_FATAL,	"\033[95m" },
@@ -790,6 +830,8 @@ LogLevel log_level_stringtoval(const char *str)
 {
 	if (!strcmp(str, "info"))
 		return ULOG_INFO;
+	if (!strcmp(str, "advice"))
+		return ULOG_ADVICE;
 	if (!strcmp(str, "warn"))
 		return ULOG_WARNING;
 	if (!strcmp(str, "error"))
@@ -1395,6 +1437,52 @@ void do_unreal_log_remote(LogLevel loglevel, const char *subsystem, const char *
 	do_unreal_log_remote_deliver(loglevel, subsystem, event_id, msg, json_serialized);
 }
 
+/** Send log events to webhook destinations */
+void do_unreal_log_webhook(LogLevel loglevel, const char *subsystem, const char *event_id, const char *json_serialized)
+{
+	Log *l;
+
+	/* Skip debug and rawtraffic like the RPC module does */
+	if (!strcmp(subsystem, "rawtraffic") || (loglevel == ULOG_DEBUG))
+		return;
+
+	for (l = logs[LOG_DEST_WEBHOOK]; l; l = l->next)
+	{
+		if (log_sources_match(l->sources, loglevel, subsystem, event_id, 0))
+		{
+			if (json_serialized && *json_serialized)
+			{
+				webhook_send_async(l->url, json_serialized);
+			}
+		}
+	}
+}
+
+void webhook_send_async(const char *url, const char *json_data)
+{
+	OutgoingWebRequest *request;
+	NameValuePrioList *headers = NULL;
+	
+	request = safe_alloc(sizeof(OutgoingWebRequest));
+	safe_strdup(request->url, url);
+	request->http_method = HTTP_METHOD_POST;
+
+	add_nvplist(&headers, 0, "Content-Type", "application/json");
+	add_nvplist(&headers, 0, "User-Agent", "UnrealIRCd-Webhook/1.0");
+	request->headers = headers;
+	
+	if (json_data && *json_data)
+	{
+		safe_strdup(request->body, json_data);
+	}
+	
+	/* Use default callback that doesn't care about response */
+	request->callback = download_complete_dontcare;
+	request->max_redirects = 3;
+	
+	url_start_async(request);
+}
+
 /** Send server notices to control channel */
 void do_unreal_log_control(LogLevel loglevel, const char *subsystem, const char *event_id, MultiLine *msg, json_t *j, const char *json_serialized, Client *from_server)
 {
@@ -1585,9 +1673,7 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 #endif
 				break;
 		}
-		if (d->type == LOG_FIELD_OBJECT_NOFREE)
-			json_decref(d->value.object);
-		else
+		if (d->type != LOG_FIELD_OBJECT_NOFREE)
 			log_data_free(d);
 	}
 
@@ -1625,6 +1711,8 @@ void do_unreal_log_internal(LogLevel loglevel, const char *subsystem, const char
 	do_unreal_log_channels(loglevel, subsystem, event_id, mmsg, json_serialized, from_server);
 
 	do_unreal_log_remote(loglevel, subsystem, event_id, mmsg, json_serialized);
+
+	do_unreal_log_webhook(loglevel, subsystem, event_id, json_serialized);
 
 	// NOTE: code duplication further down!
 
@@ -1693,6 +1781,7 @@ void free_log_block(Log *l)
 		free_log_sources(l->sources);
 		safe_free(l->file);
 		safe_free(l->filefmt);
+		safe_free(l->url);
 		safe_free(l);
 	}
 }

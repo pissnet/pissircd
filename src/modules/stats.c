@@ -408,8 +408,8 @@ int stats_links(Client *client, const char *para)
 			link_p->servername,
 			link_p->outgoing.port,
 			link_p->class->name,
-			(link_p->outgoing.options & CONNECT_AUTO) ? "a" : "",
-			(link_p->outgoing.options & CONNECT_TLS) ? "S" : "",
+			(link_p->outgoing.options & CONNECT_OUTGOING_AUTO) ? "a" : "",
+			(link_p->outgoing.options & CONNECT_OUTGOING_TLS) ? "S" : "",
 			(link_p->flag.temporary == 1) ? "T" : "");
 #ifdef DEBUGMODE
 		sendnotice(client, "%s (%p) has refcount %d",
@@ -549,19 +549,31 @@ int stats_port(Client *client, const char *para)
 			continue;
 		if (listener->socket_type == SOCKET_TYPE_UNIX)
 		{
-			sendnotice(client, "*** Listener on %s (UNIX): has %i client(s), options: %s %s",
+			sendtxtnumeric(client, "Listener on %s (UNIX): has %i client(s), options: %s %s",
 				   listener->file,
 				   listener->clients,
 				   stats_port_helper(listener),
 				   listener->flag.temporary ? "[TEMPORARY]" : "");
 		} else {
-			sendnotice(client, "*** Listener on %s:%i (%s): has %i client(s), options: %s %s",
+			sendtxtnumeric(client, "Listener on %s:%i (%s): has %i client(s), options: %s %s",
 				   listener->ip,
 				   listener->port,
 				   listener->socket_type == SOCKET_TYPE_IPV6 ? "IPv6" : "IPv4",
 				   listener->clients,
 				   stats_port_helper(listener),
 				   listener->flag.temporary ? "[TEMPORARY]" : "");
+		}
+		if (listener->options & LISTENER_TLS)
+		{
+			NameList *n, *n2;
+			if (listener->tls_options)
+			{
+				for (n = listener->tls_options->certificate_files, n2 = listener->tls_options->key_files; n && n2; n = n->next, n2 = n2->next)
+					sendtxtnumeric(client, "- using tls certificate %s + key %s", n->name, n2->name);
+			} else {
+				for (n = iConf.tls_options->certificate_files, n2 = iConf.tls_options->key_files; n && n2; n = n->next, n2 = n2->next)
+					sendtxtnumeric(client, "- using default tls certificate %s + key %s", n->name, n2->name);
+			}
 		}
 	}
 	return 0;
@@ -748,6 +760,7 @@ int stats_set(Client *client, const char *para)
 	char *uhallow;
 	SecurityGroup *s;
 	FloodSettings *f;
+	NameList *n;
 	char modebuf[BUFSIZE], parabuf[BUFSIZE];
 
 	if (!ValidatePermissionsForPath("server:info:stats",client,NULL,NULL,NULL))
@@ -818,8 +831,10 @@ int stats_set(Client *client, const char *para)
 	sendtxtnumeric(client, "hide-ban-reason: %d", HIDE_BAN_REASON);
 	sendtxtnumeric(client, "anti-spam-quit-message-time: %s", pretty_time_val(ANTI_SPAM_QUIT_MSG_TIME));
 	sendtxtnumeric(client, "channel-command-prefix: %s", CHANCMDPFX ? CHANCMDPFX : "`");
-	sendtxtnumeric(client, "tls::certificate: %s", SafePrint(iConf.tls_options->certificate_file));
-	sendtxtnumeric(client, "tls::key: %s", SafePrint(iConf.tls_options->key_file));
+	for (n = iConf.tls_options->certificate_files; n; n = n->next)
+		sendtxtnumeric(client, "tls::certificate: %s", n->name);
+	for (n = iConf.tls_options->key_files; n; n = n->next)
+		sendtxtnumeric(client, "tls::key: %s", n->name);
 	sendtxtnumeric(client, "tls::trusted-ca-file: %s", SafePrint(iConf.tls_options->trusted_ca_file));
 	sendtxtnumeric(client, "tls::options: %s", iConf.tls_options->options & TLSFLAG_FAILIFNOCERT ? "FAILIFNOCERT" : "");
 	sendtxtnumeric(client, "options::show-opermotd: %d", SHOWOPERMOTD);
@@ -892,7 +907,7 @@ int stats_tld(Client *client, const char *para)
 		for (m = tld->match->printable_list; m; m = m->next)
 		{
 			sendnumeric(client, RPL_STATSTLINE, namevalue_nospaces(m),
-			            tld->motd_file,
+			            tld->motd_file ? tld->motd_file : "none",
 			            tld->rules_file ? tld->rules_file : "none");
 		}
 	}

@@ -1,6 +1,6 @@
 /*
  *   IRC - Internet Relay Chat, src/modules/sjoin.c
- *   (C) 2004 The UnrealIRCd Team
+ *   (C) 2004-present The UnrealIRCd Team
  *
  *   See file AUTHORS in IRC package for additional names of
  *   the programmers.
@@ -39,7 +39,7 @@ char modebuf[BUFSIZE], parabuf[BUFSIZE];
 
 MOD_INIT()
 {
-	CommandAdd(modinfo->handle, MSG_SJOIN, cmd_sjoin, MAXPARA, CMD_SERVER);
+	CommandAdd(modinfo->handle, MSG_SJOIN, cmd_sjoin, MAXPARA, CMD_SERVER|CMD_BIGLINES);
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	return MOD_SUCCESS;
 }
@@ -160,8 +160,8 @@ CMD_FUNC(cmd_sjoin)
 	unsigned short removetheirs; /**< Remove their modes (or actually: do not ADD their modes, the MODE -... line will be sent later by the other side) */
 	unsigned short merge;	/**< same timestamp: merge their & our modes */
 	char pvar[MAXMODEPARAMS][MODEBUFLEN + 3];
-	char cbuf[1024];
-	char scratch_buf[1024]; /**< scratch buffer */
+	char cbuf[MAXLINELENGTH];
+	char scratch_buf[MAXLINELENGTH]; /**< scratch buffer */
 	char item[1024]; /**< nick or ban/invex/exempt being processed */
 	char item_modes[MEMBERMODESLEN]; /**< item modes, eg "b" or "vhoaq" */
 	char prefix[16]; /**< SJOIN prefix of item for server to server traffic (eg: @) */
@@ -452,7 +452,7 @@ CMD_FUNC(cmd_sjoin)
 				MessageTag *mtags = NULL;
 
 				add_user_to_channel(channel, acptr, item_modes);
-				if (!(acptr->uplink && !IsSynched(acptr->uplink)))
+				if (IsSynched(acptr->uplink))
 				{
 					unreal_log(ULOG_INFO, "join", "REMOTE_CLIENT_JOIN", acptr,
 						   "User $client joined $channel",

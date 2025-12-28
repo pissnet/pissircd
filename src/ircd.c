@@ -288,8 +288,8 @@ static int bad_command(const char *argv0)
 	if (!argv0)
 		argv0 = "unrealircd";
 
-	printf("ERROR: Incorrect command line argument encountered.\n"
-	       "This is the unrealircd BINARY. End-users should NOT call this binary directly.\n"
+	printf("ERROR: Incorrect command line argument encountered (if you are looking for foreground mode, it is -F).\n"
+	       "IMPORTANT: This is the unrealircd BINARY. End-users should NOT call this binary directly.\n"
 	       "Please run the SCRIPT instead: %s/unrealircd\n", SCRIPTDIR);
 	printf("Server not started\n\n");
 #else
@@ -839,14 +839,6 @@ int InitUnrealIRCd(int argc, char *argv[])
 		exit(-4);
 	}
 
-	if (!init_tls())
-	{
-		config_error("Failed to load TLS (see errors above). UnrealIRCd can not start.");
-#ifdef _WIN32
-		win_error(); /* display error dialog box */
-#endif
-		exit(9);
-	}
 	if (loop.config_test)
 	{
 		unreal_log(ULOG_INFO, "config", "CONFIG_PASSED", NULL, "Configuration test passed OK");
@@ -856,7 +848,6 @@ int InitUnrealIRCd(int argc, char *argv[])
 	if (loop.boot_function)
 		loop.boot_function();
 	open_debugfile();
-	me.local->port = 6667; /* pointless? */
 	applymeblock();
 #ifdef HAVE_SYSLOG
 	openlog("ircd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -914,7 +905,8 @@ int InitUnrealIRCd(int argc, char *argv[])
 #endif
 
 	fix_timers();
-	write_pidfile();
+	if (!(bootopt & BOOT_NOFORK))
+		write_pidfile();
 	loop.booted = 1;
 #if defined(HAVE_SETPROCTITLE)
 	setproctitle("%s", me.name);
@@ -1011,7 +1003,6 @@ static void open_debugfile(void)
 		client = make_client(NULL, NULL);
 		client->local->fd = 2;
 		SetLog(client);
-		client->local->port = debuglevel;
 		client->flags = 0;
 
 		strlcpy(client->local->sockhost, me.local->sockhost, sizeof client->local->sockhost);

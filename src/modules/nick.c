@@ -90,14 +90,39 @@ void set_user_modes_dont_spread(Client *client, const char *umode)
 {
 	const char *args[4];
 
-	args[0] = client->name;
-	args[1] = client->name;
+	args[0] = NULL;
+	args[1] = client->id;
 	args[2] = umode;
 	args[3] = NULL;
 
 	dontspread = 1;
-	do_cmd(client, NULL, "MODE", 3, args);
+	cmd_umode(NULL, client, NULL, 3, args);
 	dontspread = 0;
+}
+
+/** Can user use this nick?
+ * This is only 1 part of many checks you would need to do.
+ * You should also run the nick through do_nick_name before this,
+ * and after this also check with find_qline() and find_client().
+ */
+int can_use_nick(Client *client, const char *nick)
+{
+	Hook *h;
+
+	for (h = Hooks[HOOKTYPE_CAN_USE_NICK]; h; h = h->next)
+	{
+		char *change_nick_error_from_hook = NULL;
+		int ret = (*(h->func.intfunc))(client, nick, &change_nick_error_from_hook);
+		if (ret == HOOK_DENY)
+		{
+			if (change_nick_error_from_hook)
+				sendnumeric(client, ERR_ERRONEUSNICKNAME, nick, change_nick_error_from_hook);
+			else
+				sendnumeric(client, ERR_ERRONEUSNICKNAME, nick, "Denied by hook");
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /** Remote client (already fully registered) changing their nick */
@@ -275,6 +300,9 @@ CMD_FUNC(cmd_nick_local)
 		if (match_spamfilter(client, spamfilter_user, SPAMF_USER, "NICK", NULL, 0, clictx, NULL))
 			return;
 	}
+
+	if (!can_use_nick(client, nick))
+		return;
 
 	/* Check Q-lines / ban nick */
 	if (!IsULine(client) && (tklban = find_qline(client, nick, &ishold)))
@@ -806,8 +834,7 @@ void welcome_user(Client *client, TKL *viruschan_tkl)
 	sendnumeric(client, RPL_MYINFO, me.name, version, umodestring, cmodestring);
 
 	RunHook(HOOKTYPE_WELCOME, client, 4);
-	for (i = 0; ISupportStrings[i]; i++)
-		sendnumeric(client, RPL_ISUPPORT, ISupportStrings[i]);
+	send_isupport(client);
 
 	RunHook(HOOKTYPE_WELCOME, client, 5);
 

@@ -35,7 +35,7 @@ void _send_moddata_channel(Client *srv, Channel *channel);
 void _send_moddata_members(Client *srv);
 void _broadcast_moddata_client(Client *client);
 
-extern MODVAR ModDataInfo *MDInfo;
+extern MODVAR ModDataInfo *MDInfo[HIGHESTMODDATATYPE+1];
 
 MOD_TEST()
 {
@@ -108,6 +108,13 @@ int md_access_check(Client *client, ModDataInfo *md, Client *target)
  * https://www.unrealircd.org/docs/Server_protocol:MD_command
  * Module API documentation (if writing an UnrealIRCd module):
  * https://www.unrealircd.org/docs/Dev:Module_Storage
+ *
+ * Note that this MD command has the CMD_BIGLINES flag set,
+ * which means the IRC S2S protocol line can be up to 16k of data.
+ * In particular, the value (parv[4]) can be near 16k.
+ * This is supported since UnrealIRCd 6.1.1. No effort is made to
+ * deal with non-BIGLINES servers. As of 2025 (6.2.1) we don't ship
+ * with modules that have serializers that return so many bytes, anyway.
  */
 CMD_FUNC(cmd_md)
 {
@@ -164,6 +171,7 @@ CMD_FUNC(cmd_md)
 	{
 		Client *target;
 		Channel *channel;
+		Membership *ms;
 		Member *m;
 		char *p;
 
@@ -181,9 +189,13 @@ CMD_FUNC(cmd_md)
 		if (!target)
 			return;
 
-		m = find_member_link(channel->members, target);
-		if (!m)
+		//m = find_member_link(channel->members, target);
+		// the following is typically faster, since there can be hundreds of channel
+		// and the user is typically only in like 10 channels max
+		ms = find_membership_link(target->user->channel, channel);
+		if (!ms)
 			return;
+		m = ms->related;
 
 		md = findmoddata_byname(varname, MODDATATYPE_MEMBER);
 		if (!md || !md->unserialize)
@@ -377,9 +389,9 @@ void _send_moddata_client(Client *srv, Client *client)
 {
 	ModDataInfo *mdi;
 
-	for (mdi = MDInfo; mdi; mdi = mdi->next)
+	for (mdi = MDInfo[MODDATATYPE_CLIENT]; mdi; mdi = mdi->next)
 	{
-		if ((mdi->type == MODDATATYPE_CLIENT) && mdi->sync && mdi->serialize)
+		if (mdi->sync && mdi->serialize)
 		{
 			const char *value = mdi->serialize(&moddata_client(client, mdi));
 			if (value)
@@ -397,9 +409,9 @@ void _moddata_add_s2s_mtags(Client *client, MessageTag **mtags_list)
 	ModDataInfo *mdi;
 	char name[128];
 
-	for (mdi = MDInfo; mdi; mdi = mdi->next)
+	for (mdi = MDInfo[MODDATATYPE_CLIENT]; mdi; mdi = mdi->next)
 	{
-		if ((mdi->type == MODDATATYPE_CLIENT) && (mdi->sync == MODDATA_SYNC_EARLY) && mdi->serialize)
+		if ((mdi->sync == MODDATA_SYNC_EARLY) && mdi->serialize)
 		{
 			MessageTag *m;
 			const char *value = mdi->serialize(&moddata_client(client, mdi));
@@ -450,9 +462,9 @@ void _send_moddata_channel(Client *srv, Channel *channel)
 {
 	ModDataInfo *mdi;
 
-	for (mdi = MDInfo; mdi; mdi = mdi->next)
+	for (mdi = MDInfo[MODDATATYPE_CHANNEL]; mdi; mdi = mdi->next)
 	{
-		if ((mdi->type == MODDATATYPE_CHANNEL) && mdi->sync && mdi->serialize)
+		if (mdi->sync && mdi->serialize)
 		{
 			const char *value = mdi->serialize(&moddata_channel(channel, mdi));
 			if (value)
@@ -477,9 +489,9 @@ void _send_moddata_members(Client *srv)
 			client = m->client;
 			if (client->direction == srv)
 				continue; /* from srv's direction */
-			for (mdi = MDInfo; mdi; mdi = mdi->next)
+			for (mdi = MDInfo[MODDATATYPE_MEMBER]; mdi; mdi = mdi->next)
 			{
-				if ((mdi->type == MODDATATYPE_MEMBER) && mdi->sync && mdi->serialize)
+				if (mdi->sync && mdi->serialize)
 				{
 					const char *value = mdi->serialize(&moddata_member(m, mdi));
 					if (value)
@@ -501,9 +513,9 @@ void _send_moddata_members(Client *srv)
 
 		for (m = client->user->channel; m; m = m->next)
 		{
-			for (mdi = MDInfo; mdi; mdi = mdi->next)
+			for (mdi = MDInfo[MODDATATYPE_MEMBERSHIP]; mdi; mdi = mdi->next)
 			{
-				if ((mdi->type == MODDATATYPE_MEMBERSHIP) && mdi->sync && mdi->serialize)
+				if (mdi->sync && mdi->serialize)
 				{
 					const char *value = mdi->serialize(&moddata_membership(m, mdi));
 					if (value)

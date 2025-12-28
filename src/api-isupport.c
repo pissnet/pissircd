@@ -22,7 +22,10 @@
 
 #include "unrealircd.h"
 
-ISupport *ISupports; /* List of ISUPPORT (005) tokens */
+extern struct SetCheck settings;
+
+ISupport *ISupports = NULL; /* List of ISUPPORT (005) tokens */
+ISupport *ISupports_old = NULL; /* see isupport_snapshot() and isupport_check_for_changes() */
 #define MAXISUPPORTLINES 10
 
 MODVAR char *ISupportStrings[MAXISUPPORTLINES+1];
@@ -118,6 +121,11 @@ void isupport_init(void)
 	else
 		ISupportDelByName("UHNAMES");
 	ISupportSet(NULL, "DEAF", "d");
+	if (settings.has_network_icon)
+		ISupportSet(NULL, "draft/ICON", iConf.network_icon);
+	else
+		ISupportDelByName("draft/ICON");
+	
 	set_isupport_extban(); /* EXTBAN=xyz */
 	set_isupport_targmax(); /* TARGMAX=... */
 }
@@ -177,10 +185,16 @@ ISupport *ISupportAdd(Module *module, const char *token, const char *value)
 	/* draft-brocklesby-irc-isupport:
 	 * token = a-zA-Z0-9 and 20 or less characters
 	 * value = ASCII 0x21 - 0x7E
+	 *
+	 * Nov 2025:
+	 * Allow also including '/' as per "modern irc"
+	 * https://modern.ircdocs.horse/#rplisupport-005
+	 * https://github.com/ircdocs/modern-irc/issues/250
+	 * - Valware
 	 */
 	for (c = token; c && *c; c++)
 	{
-		if (!isalnum(*c))
+		if (!isalnum(*c) && *c != '/')
 		{
 			if (module)
 				module->errorcode = MODERR_INVALID;
@@ -255,7 +269,6 @@ void ISupportDel(ISupport *isupport)
 void make_isupportstrings(void)
 {
 	int i;
-#define ISUPPORTLEN BUFSIZE-HOSTLEN-NICKLEN-39
 	int bufsize = ISUPPORTLEN;
 	int tokcnt = 0;
 	ISupport *isupport;
@@ -323,5 +336,31 @@ void isupport_add_sorted(ISupport *n)
 			n->prev = e;
 			return;
 		}
+	}
+}
+
+void isupport_snapshot(void)
+{
+	ISupport *e, *f;
+
+	if (ISupports_old)
+	{
+		for (e = ISupports_old; e; e = f)
+		{
+			f = e->next;
+			safe_free(e->token);
+			safe_free(e->value);
+			safe_free(e);
+		}
+		ISupports_old = NULL;
+	}
+
+	/* Duplicate all ISupports into ISupports_old... */
+	for (e = ISupports; e; e = e->next)
+	{
+		f = safe_alloc(sizeof(ISupport));
+		safe_strdup(f->token, e->token);
+		safe_strdup(f->value, e->value);
+		AppendListItem(f, ISupports_old);
 	}
 }

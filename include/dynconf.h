@@ -187,16 +187,30 @@ struct Configuration {
 	int dns_client_retry;
 	int dns_dnsbl_timeout;
 	int dns_dnsbl_retry;
+	int send_isupport_updates;
+	int utf8_only;
+	char *network_icon;
 };
 
 extern MODVAR Configuration iConf;
 extern MODVAR Configuration tempiConf;
 extern MODVAR int ipv6_disabled;
 
+/** The best practices block.
+ * Note that the *_hits stuff is dynamically set and used for 'checks'.
+ * The rest is config... oh except for listen_nontls_port.. sigh.
+ */
 typedef struct BestPractices BestPractices;
 struct BestPractices {
-	int hashed_passwords;		/**< Use hashed passwords */
-	int hashed_passwords_hits;	/**< How many times advice has been given (like 'warnings' but it is advice) */
+	int hashed_passwords;			/**< Use hashed passwords */
+	int hashed_passwords_hits;		/**< - How many times advice has been given (like 'warnings' but it is advice) */
+	int trusted_cert;			/**< Uses a SSL cert issued by a CA */
+	int trusted_cert_hits;			/**< - How many times advice has been given (like 'warnings' but it is advice) */
+	int trusted_cert_valid_hostname;	/**< Uses a SSL cert issued by a CA that is valid for me::name */
+	int trusted_cert_valid_hostname_hits;	/**< - How many times advice has been given (like 'warnings' but it is advice) */
+	int listen_tls_only;			/**< listen { } blocks only with tls */
+	int listen_nontls_port;			/**< first non-tls port found */
+	int listen_nontls_port_hits;		/**< - How many times advice has been given (like 'warnings' but it is advice) */
 };
 extern MODVAR BestPractices bestpractices;
 
@@ -277,6 +291,10 @@ extern MODVAR BestPractices bestpractices;
 
 #define UHNAMES_ENABLED	iConf.uhnames
 
+#define UTF8ONLY	iConf.utf8_only
+
+#define NETWORK_ICON iConf.network_icon
+
 /** Used for testing the set { } block configuration.
  * It tests if a setting is present and is also used for duplicate checking.
  */
@@ -329,6 +347,7 @@ struct SetCheck {
 	unsigned has_spamfilter_virus_help_channel_deny:1;
 	unsigned has_spamfilter_except:1;
 	unsigned has_network_name:1;
+	unsigned has_network_icon:1;
 	unsigned has_default_server:1;
 	unsigned has_services_server:1;
 	unsigned has_sasl_server:1;

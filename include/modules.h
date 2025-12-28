@@ -123,6 +123,7 @@ struct Umode {
 	Module *owner; /**< Module that owns this user mode */
 };
 
+#define HIGHESTMODDATATYPE 7
 typedef enum ModDataType {
 	MODDATATYPE_LOCAL_VARIABLE	= 1,
 	MODDATATYPE_GLOBAL_VARIABLE	= 2,
@@ -131,6 +132,10 @@ typedef enum ModDataType {
 	MODDATATYPE_CHANNEL		= 5,
 	MODDATATYPE_MEMBER		= 6,
 	MODDATATYPE_MEMBERSHIP		= 7,
+	/* If you add more here, then 1) increase MODDATATYPES,
+	 * 2) in src/api-moddata.c update moddatatypelimits[],
+	 * 3) add a lot of code at other places in src/api-moddata.c.
+	 */
 } ModDataType;
 
 typedef enum ModDataSync {
@@ -142,6 +147,7 @@ typedef struct ModDataInfo ModDataInfo;
 
 struct ModDataInfo {
 	ModDataInfo *prev, *next;
+	int priority; /**< For sorting purposes (ones with most key lookups should go first) */
 	char *name; /**< Name for this moddata */
 	Module *owner; /**< Owner of this moddata */
 	ModDataType type; /**< Type of module data (eg: for client, channel, etc..) */
@@ -1214,8 +1220,6 @@ extern APICallback *APICallbackAdd(Module *module, APICallback *mreq);
 #define HOOKTYPE_FREE_USER	74
 /** See hooktype_can_join_limitexceeded() */
 #define HOOKTYPE_CAN_JOIN_LIMITEXCEEDED	75
-/** See hooktype_visible_in_channel() */
-#define HOOKTYPE_VISIBLE_IN_CHANNEL	76
 /** See hooktype_see_channel_in_whois() */
 #define HOOKTYPE_SEE_CHANNEL_IN_WHOIS	77
 /** See hooktype_join_data() */
@@ -1314,6 +1318,13 @@ extern APICallback *APICallbackAdd(Module *module, APICallback *mreq);
 #define HOOKTYPE_ALLOW_CLIENT	126
 /** See hooktype_analyze_text */
 #define HOOKTYPE_ANALYZE_TEXT	127
+/** See hooktype_can_use_nick */
+#define HOOKTYPE_CAN_USE_NICK	128
+/** See hooktype_banned_client */
+#define HOOKTYPE_BANNED_CLIENT 129
+/** See hooktype_motd */
+#define HOOKTYPE_MOTD 130
+
 
 /** Used by third/centralblocklist; defined to avoid conflicts with pissnet-specific hook */
 #define HOOKTYPE_GET_CENTRAL_API_KEY 198
@@ -2018,16 +2029,6 @@ int hooktype_free_user(Client *client);
  */
 int hooktype_can_join_limitexceeded(Client *client, Channel *channel, const char *key, char **errmsg);
 
-/** Called to check if the user is visible in the channel (function prototype for HOOKTYPE_VISIBLE_IN_CHANNEL).
- * For example, the delayjoin module (+d/+D) will 'return 0' here if the user is hidden due to delayed join.
- * @param client		The client
- * @param channel		The channel
- * @param client_member		The client Member * struct in the channel
- * @retval 0 The user is NOT visible
- * @retval 1 The user is visible
- */
-int hooktype_visible_in_channel(Client *client, Channel *channel, Member *client_member);
-
 /** Called to check if the channel of a user should be shown in WHOIS/WHO (function prototype for HOOKTYPE_SEE_CHANNEL_IN_WHOIS).
  * @param client		The client ASKING, eg doing the /WHOIS.
  * @param target		The client who is being interrogated
@@ -2472,6 +2473,31 @@ const char *hooktype_allow_client(Client *client, ConfigItem_allow *aconf);
  * @return The return value is ignored (use return 0)
  */
 int hooktype_analyze_text(Client *client, const char *text, TextAnalysis *e);
+
+/** Called when a user wants to change their nick
+ * @param client		The client
+ * @param newnick		The new nick the user wants to change to
+ * @param reject_reason		The error string, sent to the client why the nick change is rejected.
+ * @retval HOOK_DENY		Deny the nick change, set *reject_reason to a reason why it is denied.
+ * @retval HOOK_CONTINUE 	Allow the nick change, unless blocked by something else.
+*/
+int hooktype_can_use_nick(Client *client, const char *newnick, const char **reject_reason);
+
+/** Called when a local user is banned, e.g. G-Lined.
+ * @param client	The client
+ * @param bantype	The ban type, such as: "K-Lined", "G-Lined" or "realname"
+ * @param reason	The specified reason
+ * @param global	Whether the ban is global (1) or for this server only (0)
+ * @notes This function is not called on /KILL (which is not a ban).
+ * @return The return value is ignored (use return 0)
+ */
+int hooktype_banned_client(Client *client, const char *bantype, const char *reason, int global);
+
+/** Called when a local user calls /MOTD, including on connect
+  * @param client	The client
+ */
+int hooktype_motd(Client *client);
+
 /** @} */
 
 #ifdef GCC_TYPECHECKING
@@ -2544,7 +2570,6 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_MODECHAR_ADD) && !ValidateHook(hooktype_modechar_add, func)) || \
         ((hooktype == HOOKTYPE_MODECHAR_DEL) && !ValidateHook(hooktype_modechar_del, func)) || \
         ((hooktype == HOOKTYPE_CAN_JOIN_LIMITEXCEEDED) && !ValidateHook(hooktype_can_join_limitexceeded, func)) || \
-        ((hooktype == HOOKTYPE_VISIBLE_IN_CHANNEL) && !ValidateHook(hooktype_visible_in_channel, func)) || \
         ((hooktype == HOOKTYPE_PRE_LOCAL_CHANMODE) && !ValidateHook(hooktype_pre_local_chanmode, func)) || \
         ((hooktype == HOOKTYPE_PRE_REMOTE_CHANMODE) && !ValidateHook(hooktype_pre_remote_chanmode, func)) || \
         ((hooktype == HOOKTYPE_JOIN_DATA) && !ValidateHook(hooktype_join_data, func)) || \
@@ -2602,7 +2627,10 @@ _UNREAL_ERROR(_hook_error_incompatible, "Incompatible hook function. Check argum
         ((hooktype == HOOKTYPE_SASL_AUTHENTICATE) && !ValidateHook(hooktype_sasl_authenticate, func)) || \
         ((hooktype == HOOKTYPE_SASL_MECHS) && !ValidateHook(hooktype_sasl_mechs, func)) || \
         ((hooktype == HOOKTYPE_ALLOW_CLIENT) && !ValidateHook(hooktype_allow_client, func)) || \
-        ((hooktype == HOOKTYPE_ANALYZE_TEXT) && !ValidateHook(hooktype_analyze_text, func))) \
+        ((hooktype == HOOKTYPE_ANALYZE_TEXT) && !ValidateHook(hooktype_analyze_text, func)) || \
+        ((hooktype == HOOKTYPE_CAN_USE_NICK) && !ValidateHook(hooktype_can_use_nick, func)) || \
+        ((hooktype == HOOKTYPE_BANNED_CLIENT) && !ValidateHook(hooktype_banned_client, func)) || \
+        ((hooktype == HOOKTYPE_MOTD) && !ValidateHook(hooktype_motd, func))) \
         _hook_error_incompatible();
 #endif /* GCC_TYPECHECKING */
 
@@ -2772,6 +2800,8 @@ enum EfunctionType {
 	EFUNC_UTF8_ANALYZE_TEXT,
 	EFUNC_UTF8_GET_BLOCK_NAME,
 	EFUNC_UTF8_GET_BLOCK_NUMBER,
+	EFUNC_SEND_ISUPPORT,
+	EFUNC_ISUPPORT_CHECK_FOR_CHANGES,
 };
 
 /* Module flags */

@@ -193,6 +193,7 @@ extern RealCommand *find_command_simple(const char *cmd);
 extern Membership *find_membership_link(Membership *lp, Channel *ptr);
 extern Member *find_member_link(Member *, Client *);
 extern int remove_user_from_channel(Client *client, Channel *channel, int dont_log);
+int remove_user_from_channel_withmb(Client *client, Channel *channel, Membership *mb, int dont_log);
 extern void add_server_to_table(Client *);
 extern void remove_server_from_table(Client *);
 extern void iNAH_host(Client *client, const char *host);
@@ -381,6 +382,10 @@ extern const char *pretty_date(time_t t);
 extern time_t server_time_to_unix_time(const char *tbuf);
 extern time_t rfc2616_time_to_unix_time(const char *tbuf);
 extern const char *rfc2616_time(time_t clock);
+extern int get_server_port(Client *client);
+extern int get_client_port(Client *client);
+extern void set_client_port(Client *client, int port);
+extern void set_server_port(Client *client, int port);
 extern void initstats();
 extern const char *check_string(const char *);
 extern char *make_nick_user_host(const char *, const char *, const char *);
@@ -534,7 +539,7 @@ extern int b64_encode(unsigned char const *src, size_t srclength, char *target, 
 extern int b64_decode(char const *src, unsigned char *target, size_t targsize);
 
 extern AuthenticationType Auth_FindType(const char *hash, const char *type);
-extern AuthConfig	*AuthBlockToAuthConfig(ConfigEntry *ce);
+extern void AuthBlockToAuthConfig(ConfigEntry *ce, AuthConfig **list);
 extern void		Auth_FreeAuthConfig(AuthConfig *as);
 extern int		Auth_Check(Client *cptr, AuthConfig *as, const char *para);
 extern const char	*Auth_Hash(AuthenticationType type, const char *text);
@@ -822,11 +827,11 @@ extern MODVAR TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned shor
 extern MODVAR TKL *(*find_tkl_serverban)(int type, const char *usermask, const char *hostmask, int softban);
 extern MODVAR TKL *(*find_tkl_banexception)(int type, const char *usermask, const char *hostmask, int softban);
 extern MODVAR TKL *(*find_tkl_nameban)(int type, const char *name, int hold);
-extern MODVAR TKL *(*find_tkl_spamfilter)(int type, const char *match_string, unsigned short action, unsigned short target);
+extern MODVAR TKL *(*find_tkl_spamfilter)(int type, const char *match_string, BanActionValue action, unsigned short target);
 extern MODVAR void (*sendnotice_tkl_del)(const char *removed_by, TKL *tkl);
 extern MODVAR void (*sendnotice_tkl_add)(TKL *tkl);
 extern MODVAR void (*free_tkl)(TKL *tkl);
-extern MODVAR TKL *(*tkl_del_line)(TKL *tkl);
+extern MODVAR void (*tkl_del_line)(TKL *tkl);
 extern MODVAR void (*tkl_check_local_remove_shun)(TKL *tmp);
 extern MODVAR int (*find_tkline_match)(Client *cptr, int skip_soft);
 extern MODVAR int (*find_shun)(Client *cptr);
@@ -939,6 +944,8 @@ extern MODVAR char *(*unreal_expand_string)(const char *str, char *buf, size_t b
 extern MODVAR char *(*utf8_convert_confusables)(const char *i, char *obuf, int olen);
 extern MODVAR const char *(*utf8_get_block_name)(int i);
 extern MODVAR int (*utf8_get_block_number)(const char *name);
+extern MODVAR void (*send_isupport)(Client *client);
+extern MODVAR void (*isupport_check_for_changes)(void);
 /* /Efuncs */
 
 /* TLS functions */
@@ -959,9 +966,13 @@ extern int outdated_tls_client(Client *acptr);
 extern const char *outdated_tls_client_build_string(const char *pattern, Client *acptr);
 extern int check_certificate_expiry_ctx(SSL_CTX *ctx, char **errstr);
 extern EVENT(tls_check_expiry);
+extern int has_any_trusted_cert(void);
+extern int has_any_trusted_cert_with_correct_hostname(void);
 extern MODVAR EVP_MD *sha256_function;
 extern MODVAR EVP_MD *sha1_function;
 extern MODVAR EVP_MD *md5_function;
+extern int unrealircd_set_tls_groups(SSL_CTX *ctx, const char *groups);
+extern SSL_CTX *https_new_ctx(void);
 /* End of TLS functions */
 
 /* Default handlers for efunctions */
@@ -1052,6 +1063,9 @@ extern PendingNet *find_pending_net_by_sid_butone(const char *sid, Client *exemp
 extern Client *find_pending_net_duplicates(Client *cptr, Client **srv, char **sid);
 extern MODVAR char serveropts[];
 extern MODVAR char *ISupportStrings[];
+extern MODVAR ISupport *ISupports;
+extern MODVAR ISupport *ISupports_old;
+extern void isupport_snapshot(void);
 extern void read_packet(int fd, int revents, void *data);
 extern int process_packet(Client *cptr, char *readbuf, int length, int killsafely);
 extern int parse_chanmode(ParseMode *pm, const char *modebuf_in, const char *parabuf_in);
@@ -1121,6 +1135,8 @@ extern int has_common_channels(Client *c1, Client *c2);
 extern int user_can_see_member(Client *user, Client *target, Channel *channel);
 extern int user_can_see_member_fast(Client *user, Client *target, Channel *channel, Member *target_member, const char *user_member_modes);
 extern int invisible_user_in_channel(Client *target, Channel *channel);
+extern void set_user_invisible(Client *client, Channel *channel, int invisible);
+extern int channel_has_invisible_users(Channel *channel);
 extern MODVAR int tls_client_index;
 extern TLSOptions *FindTLSOptionsForUser(Client *acptr);
 extern int IsWebsocket(Client *acptr);
@@ -1130,6 +1146,7 @@ extern char policy_valtochar(Policy policy);
 extern int verify_certificate(SSL *ssl, const char *hostname, char **errstr);
 extern const char *certificate_name(SSL *ssl);
 extern void start_of_normal_client_handshake(Client *acptr);
+extern int is_loopback_ip(char *ip);
 extern void clicap_pre_rehash(void);
 extern void clicap_check_for_changes(void);
 extern void unload_all_unused_mtag_handlers(void);
@@ -1199,9 +1216,11 @@ extern void _del_name_list(NameList **list, const char *name);
 extern NameList *duplicate_name_list(NameList *e);
 extern NameList *find_name_list(NameList *list, const char *name);
 extern NameList *find_name_list_match(NameList *list, const char *name);
+extern NameList *find_name_list_integer(NameList *list, int v);
 extern int minimum_msec_since_last_run(struct timeval *tv_old, long minimum);
 extern int unrl_utf8_validate(const char *str, const char **end);
 extern char *unrl_utf8_make_valid(const char *str, char *outputbuf, size_t outputbuflen, int strict_length_check);
+extern void utf8_valid_cutoff(char *msg, int *len);
 extern void utf8_test(void);
 extern MODVAR int non_utf8_nick_chars_in_use;
 extern void short_motd(Client *client);
@@ -1288,6 +1307,11 @@ extern void json_expand_client(json_t *j, const char *key, Client *client, int d
 extern void json_expand_client_security_groups(json_t *parent, Client *client);
 extern void json_expand_channel(json_t *j, const char *key, Channel *channel, int detail);
 extern void json_expand_tkl(json_t *j, const char *key, TKL *tkl, int detail);
+extern void json_expand_textanalysis(json_t *root, const char *key, TextAnalysis *ta, int detail);
+extern void json_expand_mask_list(json_t *parent, const char *key, ConfigItem_mask *mask);
+extern void json_expand_name_list(json_t *parent, const char *key, NameList *list);
+extern void json_expand_nvplist(json_t *parent, const char *key, NameValuePrioList *list);
+extern void json_expand_security_group(json_t *j, const char *key, SecurityGroup *s, int detail);
 /* end of json.c */
 /* securitygroup.c start */
 extern MODVAR SecurityGroup *securitygroups;
@@ -1391,6 +1415,7 @@ extern LogData *log_data_source(const char *file, int line, const char *function
 extern LogData *log_data_socket_error(int fd);
 extern LogData *log_data_link_block(ConfigItem_link *link);
 extern LogData *log_data_tkl(const char *key, TKL *tkl);
+extern LogData *log_data_textanalysis(const char *key, TextAnalysis *ta);
 extern LogData *log_data_tls_error(void);
 extern void log_data_free(LogData *d);
 extern void log_pre_rehash(void);
@@ -1469,6 +1494,8 @@ extern long get_connected_time(Client *client);
 extern time_t get_creationtime(Client *client);
 extern const char *StripControlCodes(const char *text);
 extern const char *StripControlCodesEx(const char *text, char *output, size_t outputlen, int strip_flags);
+extern int valid_text(const char *str);
+extern int valid_text_nospaces(const char *str);
 extern MODVAR Module *Modules;
 extern const char *command_issued_by_rpc(MessageTag *mtags);
 extern MODVAR int quick_close;

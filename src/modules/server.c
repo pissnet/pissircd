@@ -60,7 +60,7 @@ ConfigItem_link *_verify_link(Client *client);
 void _send_protoctl_servers(Client *client, int response);
 void _send_server_message(Client *client);
 void _introduce_user(Client *to, Client *acptr);
-int _check_deny_version(Client *cptr, char *software, int protocol, char *flags);
+int _check_deny_version(Client *cptr, const char *software, int protocol, const char *flags);
 void _broadcast_sinfo(Client *acptr, Client *to, Client *except);
 int server_sync(Client *cptr, ConfigItem_link *conf, int incoming);
 void tls_link_notification_verify(Client *acptr, ConfigItem_link *aconf);
@@ -72,6 +72,7 @@ int _is_services_but_not_ulined(Client *client);
 const char *_check_deny_link(ConfigItem_link *link, int auto_connect);
 int server_stats_denylink_all(Client *client, const char *para);
 int server_stats_denylink_auto(Client *client, const char *para);
+int server_quit_reset_autoconnect_time(Client *client, MessageTag *mtags);
 
 /* Global variables */
 static cfgstruct cfg;
@@ -112,6 +113,7 @@ MOD_INIT()
 	HookAdd(modinfo->handle, HOOKTYPE_POST_SERVER_CONNECT, 0, server_post_connect);
 	HookAdd(modinfo->handle, HOOKTYPE_STATS, 0, server_stats_denylink_all);
 	HookAdd(modinfo->handle, HOOKTYPE_STATS, 0, server_stats_denylink_auto);
+	HookAdd(modinfo->handle, HOOKTYPE_SERVER_QUIT, 0, server_quit_reset_autoconnect_time);
 	CommandAdd(modinfo->handle, "SERVER", cmd_server, MAXPARA, CMD_UNREGISTERED|CMD_SERVER);
 	CommandAdd(modinfo->handle, "SID", cmd_sid, MAXPARA, CMD_SERVER);
 
@@ -446,10 +448,12 @@ int server_needs_linking(ConfigItem_link *aconf)
 	 * a valid link::outgoing configuration. We also ignore
 	 * temporary link blocks (not that they should exist...).
 	 */
-	if (!(aconf->outgoing.options & CONNECT_AUTO) ||
+	if (!(aconf->outgoing.options & CONNECT_OUTGOING_AUTO) ||
 	    (!aconf->outgoing.hostname && !aconf->outgoing.file) ||
 	    (aconf->flag.temporary == 1))
+	{
 		return 0;
+	}
 
 	class = aconf->class;
 
@@ -457,7 +461,14 @@ int server_needs_linking(ConfigItem_link *aconf)
 	if ((aconf->hold > TStime()))
 		return 0;
 
-	aconf->hold = TStime() + class->connfreq;
+	/* For parallel we maintain the old algorithm where the first
+	 * reconnect is somewhere between 0 and class::connfreq
+	 * For other strategies we don't, see comment in
+	 * server_quit_reset_autoconnect_time() for more info,
+	 * or the whole commit actually.
+	 */
+	if (cfg.autoconnect_strategy == AUTOCONNECT_PARALLEL)
+		aconf->hold = TStime() + class->connfreq;
 
 	client = find_client(aconf->servername, NULL);
 	if (client)
@@ -471,6 +482,9 @@ int server_needs_linking(ConfigItem_link *aconf)
 		return 0;
 
 	/* Yes, this server is a linking candidate */
+
+	/* Set the hold time. */
+	aconf->hold = TStime() + class->connfreq;
 	return 1;
 }
 
@@ -497,7 +511,7 @@ ConfigItem_link *find_first_autoconnect_server(void)
 
 	for (aconf = conf_link; aconf; aconf = aconf->next)
 	{
-		if (!server_needs_linking(aconf))
+		if (aconf->flag.temporary || !server_needs_linking(aconf))
 			continue;
 		return aconf; /* found! */
 	}
@@ -526,6 +540,8 @@ ConfigItem_link *find_next_autoconnect_server(char *current)
 	/* Otherwise, walk the list up to 'current' */
 	for (aconf = conf_link; aconf; aconf = aconf->next)
 	{
+		if (aconf->flag.temporary)
+			continue;
 		if (!strcmp(aconf->servername, current))
 			break;
 	}
@@ -536,6 +552,7 @@ ConfigItem_link *find_next_autoconnect_server(char *current)
 	 * removed of a server that we just happened to
 	 * try to link to before, so we can afford to do
 	 * it this way.
+	 * Oh and this could return NULL (no linking needed).
 	 */
 	if (!aconf)
 		return find_first_autoconnect_server();
@@ -546,6 +563,8 @@ ConfigItem_link *find_next_autoconnect_server(char *current)
 	 */
 	for (aconf = aconf->next; aconf; aconf = aconf->next)
 	{
+		if (aconf->flag.temporary)
+			continue;
 		if (!server_needs_linking(aconf))
 			continue;
 		return aconf; /* found! */
@@ -559,12 +578,10 @@ ConfigItem_link *find_next_autoconnect_server(char *current)
 	 */
 	for (aconf = conf_link; aconf; aconf = aconf->next)
 	{
-		if (!server_needs_linking(aconf))
-		{
-			if (!strcmp(aconf->servername, current))
-				break; /* need to stop here */
+		if (aconf->flag.temporary)
 			continue;
-		}
+		if (!server_needs_linking(aconf))
+			continue;
 		return aconf; /* found! */
 	}
 
@@ -685,7 +702,7 @@ EVENT(server_handshake_timeout)
  * @param flags		Server flags (hardly ever used, can be NULL)
  * @returns 1 if link is denied (client is already killed), 0 if not.
  */
-int _check_deny_version(Client *cptr, char *software, int protocol, char *flags)
+int _check_deny_version(Client *cptr, const char *software, int protocol, const char *flags)
 {
 	ConfigItem_deny_version *vlines;
 	
@@ -1034,7 +1051,28 @@ skip_host_check:
 			           log_data_link_block(link));
 			exit_client(client, NULL, "Server Exists (server trying to link with same name as myself)");
 			return NULL;
+		} else
+		if (IsULine(acptr->uplink))
+		{
+			/* Is behind a u-lined server: likely juped so we don't want to
+			 * allow it in with the new algo further below (bug #0006498).
+			 */
+			unreal_log(ULOG_ERROR, "link", "LINK_DENIED_SERVER_EXISTS", client,
+			           "Link with server $client.details denied: "
+			           "Server already exists (Juped)",
+			           log_data_link_block(link));
+			exit_client(client, NULL, "Server Exists (Juped)");
+			return NULL;
 		} else {
+			/* For all other cases: allow the NEW link in and kill the OLD.
+			 * Downside is if a user runs two irc servers (or two processes)
+			 * with the same server hostname (and has proper link auth etc)
+			 * then they will keep fighting each other, but that is an unusual
+			 * case. The UPSIDE is that a server does not have to wait until
+			 * the link goes "Ping timeout" on the other side and can
+			 * immediately reconnect when it feels like it.
+			 * This was added in Aug 2021 for UnrealIRCd 6.0.0.
+			 */
 			unreal_log(ULOG_ERROR, "link", "LINK_DROPPED_REINTRODUCED", client,
 				   "Link with server $client.details causes older link "
 				   "with same server via $existing_client.server.uplink to be dropped.",
@@ -1515,7 +1553,13 @@ void _introduce_user(Client *to, Client *acptr)
 	send_moddata_client(to, acptr);
 
 	if (acptr->user->away)
-		sendto_one(to, NULL, ":%s AWAY :%s", acptr->id, acptr->user->away);
+	{
+		MessageTag *mtag = safe_alloc(sizeof(MessageTag));
+		safe_strdup(mtag->name, "time");
+		safe_strdup(mtag->value, timestamp_iso8601(acptr->user->away_since));
+		sendto_one(to, mtag, ":%s AWAY :%s", acptr->id, acptr->user->away);
+		safe_free_message_tags(mtag);
+	}
 
 	if (acptr->user->swhois)
 	{
@@ -1694,7 +1738,10 @@ void tls_link_notification_verify(Client *client, ConfigItem_link *aconf)
 	char *errstr = NULL;
 	int verify_ok;
 
-	if (!MyConnect(client) || !client->local->ssl || !aconf)
+	if (!MyConnect(client) || !client->local->ssl || !aconf || IsLocalhost(client))
+		return;
+
+	if (aconf->options & CONNECT_NO_CERTIFICATE_VERIFICATION)
 		return;
 
 	if ((aconf->auth->type == AUTHTYPE_TLS_CLIENTCERT) ||
@@ -1716,18 +1763,12 @@ void tls_link_notification_verify(Client *client, ConfigItem_link *aconf)
 	if (!tls_fp || !spki_fp)
 		return; /* wtf ? */
 
-	/* Only bother the user if we are linking to UnrealIRCd 4.0.16+,
-	 * since only for these versions we can give precise instructions.
-	 */
-	if (!client->server || client->server->features.protocol < 4016)
-		return;
-
-
 	verify_ok = verify_certificate(client->local->ssl, aconf->servername, &errstr);
 	if (errstr && strstr(errstr, "not valid for hostname"))
 	{
-		unreal_log(ULOG_INFO, "link", "HINT_VERIFY_LINK", client,
-		          "You may want to consider verifying this server link.\n"
+		unreal_log(ULOG_WARNING, "link", "WARN_UNVERIFIED_LINK_CERTIFICATE", client,
+		          "This server link is not verified (and hence is suspectible to an active MITM attack). "
+		          "In future UnrealIRCd versions this will become a fatal error!\n"
 		          "More information about this can be found on https://www.unrealircd.org/Link_verification\n"
 		          "Unfortunately the certificate of server '$client' has a name mismatch:\n"
 		          "$tls_verify_error\n"
@@ -1737,8 +1778,9 @@ void tls_link_notification_verify(Client *client, ConfigItem_link *aconf)
 	} else
 	if (!verify_ok)
 	{
-		unreal_log(ULOG_INFO, "link", "HINT_VERIFY_LINK", client,
-		          "You may want to consider verifying this server link.\n"
+		unreal_log(ULOG_WARNING, "link", "WARN_UNVERIFIED_LINK_CERTIFICATE", client,
+		          "This server link is not verified (and hence is suspectible to an active MITM attack). "
+		          "In future UnrealIRCd versions this will become a fatal error!\n"
 		          "More information about this can be found on https://www.unrealircd.org/Link_verification\n"
 		          "In short: in the configuration file, change the 'link $client {' block to use this as a password:\n"
 		          "password \"$spki_fingerprint\" { spkifp; };\n"
@@ -1747,8 +1789,9 @@ void tls_link_notification_verify(Client *client, ConfigItem_link *aconf)
 		          log_data_string("spki_fingerprint", spki_fp));
 	} else
 	{
-		unreal_log(ULOG_INFO, "link", "HINT_VERIFY_LINK", client,
-		          "You may want to consider verifying this server link.\n"
+		unreal_log(ULOG_WARNING, "link", "WARN_UNVERIFIED_LINK_CERTIFICATE", client,
+		          "This server link is not verified (and hence is suspectible to an active MITM attack). "
+		          "In future UnrealIRCd versions this will become a fatal error!\n"
 		          "More information about this can be found on https://www.unrealircd.org/Link_verification\n"
 		          "In short: in the configuration file, add the following to your 'link $client {' block:\n"
 		          "verify-certificate yes;\n"
@@ -1978,6 +2021,32 @@ int server_post_connect(Client *client) {
 	return 0;
 }
 
+int server_quit_reset_autoconnect_time(Client *client, MessageTag *mtags)
+{
+	if ((cfg.autoconnect_strategy == AUTOCONNECT_SEQUENTIAL) ||
+	    (cfg.autoconnect_strategy == AUTOCONNECT_SEQUENTIAL_FALLBACK))
+	{
+		/* If the connect strategy is sequential or sequential-fallback,
+		 * because we don't reset aconf->hold in the loop in
+		 * server_needs_linking(), we reset the hold time of all servers
+		 * here. If we wouldn't do that then servers would (re)connect
+		 * immediately within like <2 seconds after a split.
+		 * Which can be nice, but also be hard for IRCOps to fight a bad
+		 * server link. Also, it feels like violating the connfreq
+		 * if we don't do this.
+		 * More importantly, this is overall change was needed because
+		 * otherwise the "try next server" or "try first server" aspect
+		 * with autoconnect strategy "sequential" and "sequential-fallback"
+		 * was not working properly (was rather inconsistent).
+		 */
+		ConfigItem_link *aconf;
+		for (aconf = conf_link; aconf; aconf = aconf->next)
+			aconf->hold = TStime() + aconf->class->connfreq;
+	}
+
+	return 0;
+}
+
 /** Start an outgoing connection to a server, for server linking.
  * @param aconf		Configuration attached to this server
  * @param by		The user initiating the connection (can be NULL)
@@ -2067,7 +2136,7 @@ void _connect_server(ConfigItem_link *aconf, Client *by, struct hostent *hp)
 	set_sockhost(client, aconf->outgoing.hostname ? aconf->outgoing.hostname : "127.0.0.1");
 	add_client_to_list(client);
 
-	if (aconf->outgoing.options & CONNECT_TLS)
+	if (aconf->outgoing.options & CONNECT_OUTGOING_TLS)
 	{
 		SetTLSConnectHandshake(client);
 		fd_setselect(client->local->fd, FD_SELECT_WRITE, unreal_tls_client_handshake, client);
@@ -2100,6 +2169,10 @@ static int connect_server_helper(ConfigItem_link *aconf, Client *client)
 		           log_data_link_block(aconf));
 		return 0; /* handled upstream or shouldn't happen */
 	}
+
+	/* Tag outgoing localhost connections as localhost as well */
+	if (aconf->connect_ip && is_loopback_ip(aconf->connect_ip))
+                SetLocalhost(client);
 
 	if (aconf->outgoing.file)
 		SetUnixSocket(client);

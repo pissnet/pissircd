@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.2.0-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.2.2], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -34,13 +34,13 @@ UNREAL_VERSION_MAJOR=["2"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["0"]
+UNREAL_VERSION_MINOR=["2"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
 # marker. (e.g.: -rcX for unrealircd-3.2.9-rcX). This macro is a
 # string instead of an integer because it contains arbitrary data.
-UNREAL_VERSION_SUFFIX=["-git"]
+UNREAL_VERSION_SUFFIX=[""]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_SUFFIX], ["$UNREAL_VERSION_SUFFIX"], [Version suffix such as a beta marker or release candidate marker. (e.g.: -rcX for unrealircd-3.2.9-rcX)])
 
 AC_PATH_PROG(RM,rm)
@@ -259,6 +259,9 @@ check_cc_flag([-Wempty-body], [CFLAGS="$CFLAGS -Wno-empty-body"])
 
 dnl This warns about all our hook calls - RunHook() and others
 check_cc_flag([-Wdeprecated-non-prototype], [CFLAGS="$CFLAGS -Wno-deprecated-non-prototype"])
+
+dnl This warns about const char hexchars[16] = "0123456789abcdef";
+check_cc_flag([-Wunterminated-string-initialization], [CFLAGS="$CFLAGS -Wno-unterminated-string-initialization"])
 
 dnl Yeah this old clang version is a bit problematic
 dnl (ships in Ubuntu 16.04 for example)
@@ -573,7 +576,10 @@ AC_ARG_WITH(system-sodium, [AS_HELP_STRING([--without-system-sodium], [Use bundl
 AC_ARG_WITH(system-cares, [AS_HELP_STRING([--without-system-cares], [Use bundled version instead of system c-ares. Normally autodetected via pkg-config.])], [], [with_system_cares=yes])
 AC_ARG_WITH(system-jansson, [AS_HELP_STRING([--without-system-jansson], [Use bundled version instead of system jansson. Normally autodetected via pkg-config.])], [], [with_system_jansson=yes])
 CHECK_SSL
+CHECK_SSL_CTX_SET1_SIGALGS_LIST
 CHECK_SSL_CTX_SET1_CURVES_LIST
+CHECK_SSL_CTX_SET1_GROUPS_LIST
+CHECK_SSL_GET_NEGOTIATED_GROUP
 CHECK_SSL_CTX_SET_MIN_PROTO_VERSION
 CHECK_SSL_CTX_SET_SECURITY_LEVEL
 CHECK_ASN1_TIME_diff
@@ -634,7 +640,11 @@ else
 fi
 AC_MSG_RESULT(configuring PCRE2 regex library)
 cd pcre2-$pcre2_version
+save_cflags="$CFLAGS"
+CFLAGS="$orig_cflags"
+export CFLAGS
 ./configure --enable-jit --enable-shared --prefix=$cur_dir/extras/pcre2 --libdir=$PRIVATELIBDIR || exit 1
+CFLAGS="$save_cflags"
 AC_MSG_RESULT(compiling PCRE2 regex library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing PCRE2 regex library)
@@ -758,7 +768,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libcares*])],[has
 
 AS_IF([test "$has_system_cares" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW C-ARES RELEASE!
-cares_version="1.34.5"
+cares_version="1.34.6"
 AC_MSG_RESULT(extracting c-ares resolver library)
 cur_dir=`pwd`
 cd extras
@@ -913,7 +923,7 @@ fi
 
 dnl Address sanitizer build
 if test "$ac_cv_asan" = "yes" ; then
-	CFLAGS="$CFLAGS -O2 -fno-inline -fsanitize=address -fno-omit-frame-pointer -DNOCLOSEFD"
+	CFLAGS="$CFLAGS -O2 -fno-inline -fsanitize=address,undefined -fno-omit-frame-pointer -DNOCLOSEFD"
 	IRCDLIBS="-fsanitize=address $IRCDLIBS"
 fi
 

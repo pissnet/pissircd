@@ -22,6 +22,10 @@
 
 #include "unrealircd.h"
 
+// https://ircv3.net/specs/extensions/message-tags#size-limit
+#define SERVER_TAG_SIZE_LIMIT 8191
+#define CLIENT_TAG_SIZE_LIMIT 4094
+
 ModuleHeader MOD_HEADER
   = {
 	"message-tags",
@@ -165,16 +169,20 @@ int message_tag_ok(Client *client, char *name, char *value)
 
 void _parse_message_tags(Client *client, char **str, MessageTag **mtag_list)
 {
+
 	char *remainder;
 	char *element, *p, *x;
-	static char name[8192], value[8192];
+	static char name[SERVER_TAG_SIZE_LIMIT+1], value[SERVER_TAG_SIZE_LIMIT+1];
 	MessageTag *m;
+	int lenstr;
 
 	remainder = strchr(*str, ' ');
 	if (remainder)
 		*remainder = '\0';
 
-	if (!IsServer(client) && (strlen(*str) > 4094))
+	lenstr = strlen(*str);
+	if ((IsServer(client) && (lenstr > SERVER_TAG_SIZE_LIMIT)) ||
+	    (!IsServer(client) && (lenstr > CLIENT_TAG_SIZE_LIMIT)))
 	{
 		sendnumeric(client, ERR_INPUTTOOLONG);
 		remainder = NULL; /* stop parsing */
@@ -249,7 +257,7 @@ int client_accepts_tag(const char *token, Client *client)
 	/* If the client has indicated 'message-tags' support then we can
 	 * send any message tag, regardless of other CAP's.
 	 */
-	if (HasCapability(client, "message-tags"))
+	if (HasCapabilityFast(client, CAP_MESSAGE_TAGS))
 		return 1;
 
 	/* We continue here if the client did not indicate 'message-tags' support... */

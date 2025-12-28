@@ -12,7 +12,7 @@
 ModuleHeader MOD_HEADER
 = {
 	"utf8functions",
-	"1.0.0",
+	"1.0.1",
 	"UTF8 helper functions",
 	"UnrealIRCd Team",
 	"unrealircd-6",
@@ -128,7 +128,7 @@ UnicodeBlocks unicode_blocks[UNICODE_BLOCK_COUNT] =
 	{0x1DC0, 0x1DFF, "Combining Diacritical Marks Supplement", 1},
 	{0x1E00, 0x1EFF, "Latin Extended Additional", 1},
 	{0x1F00, 0x1FFF, "Greek Extended", 1},
-	{0x2000, 0x206F, "General Punctuation", 1},
+	{0x2000, 0x206F, "General Punctuation", 0},
 	{0x2070, 0x209F, "Superscripts and Subscripts", 1},
 	{0x20A0, 0x20CF, "Currency Symbols", 1},
 	{0x20D0, 0x20FF, "Combining Diacritical Marks for Symbols", 1},
@@ -5852,6 +5852,16 @@ int utf8_text_analysis(Client *client, const char *text, TextAnalysis *e)
 				e->unicode_blocks++;
 			if (e->unicode_blockmap[current_script] < 255)
 				e->unicode_blockmap[current_script]++;
+
+			/* For antimixedutf8 scores (script changes) we do some
+			 * remapping. This so several blocks are treated as the same.
+			 * At the moment this is only:
+			 * * Latin-1 Supplement, Latin Extended-A, Latin Extended-B
+			 *   => Basic Latin
+			 */
+			if (current_script <= 3)
+				current_script = 0;
+
 			if ((current_script != last_script) && (last_script != SCRIPT_UNDEFINED))
 			{
 				/* Script change: add X point(s) */

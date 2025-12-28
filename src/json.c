@@ -209,6 +209,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 	json_t *child;
 	json_t *user = NULL;
 	time_t ts;
+	int i;
 
 	if (key)
 	{
@@ -286,10 +287,10 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		return;
 	}
 
-	if (client->local && client->local->listener)
-		json_object_set_new(child, "server_port", json_integer(client->local->listener->port));
-	if (client->local && client->local->port)
-		json_object_set_new(child, "client_port", json_integer(client->local->port));
+	if ((i = get_server_port(client)))
+		json_object_set_new(child, "server_port", json_integer(i));
+	if ((i = get_client_port(client)))
+		json_object_set_new(child, "client_port", json_integer(i));
 	if ((ts = get_creationtime(client)))
 		json_object_set_new(child, "connected_since", json_timestamp(ts));
 	if (client->local && client->local->idle_since)
@@ -316,6 +317,11 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			json_object_set_new(user, "account", json_string_unreal(client->user->account));
 		json_object_set_new(user, "reputation", json_integer(GetReputation(client)));
 		json_expand_client_security_groups(user, client);
+		if (client->user->away)
+		{
+			json_object_set_new(user, "away_reason", json_string_unreal(client->user->away));
+			json_object_set_new(user, "away_since", json_timestamp(client->user->away_since));
+		}
 
 		/* user modes and snomasks */
 		get_usermode_string_r(client, buf, sizeof(buf));
@@ -581,7 +587,10 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		json_object_set_new(j, "set_in_config", json_boolean(1));
 	if (TKLIsServerBan(tkl))
 	{
-		json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
+		if (tkl->ptr.serverban->match)
+			json_expand_security_group(j, "match", tkl->ptr.serverban->match, 1);
+		else
+			json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
 		json_object_set_new(j, "reason", json_string_unreal(tkl->ptr.serverban->reason));
 	} else
 	if (TKLIsNameBan(tkl))
@@ -591,7 +600,10 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 	} else
 	if (TKLIsBanException(tkl))
 	{
-		json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
+		if (tkl->ptr.banexception->match)
+			json_expand_security_group(j, "match", tkl->ptr.banexception->match, 1);
+		else
+			json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
 		json_object_set_new(j, "reason", json_string_unreal(tkl->ptr.banexception->reason));
 		json_object_set_new(j, "exception_types", json_string_unreal(tkl->ptr.banexception->bantypes));
 	} else
@@ -604,6 +616,8 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		}
 		if (tkl->ptr.spamfilter->prettyrule)
 			json_object_set_new(j, "rule", json_string_unreal(tkl->ptr.spamfilter->prettyrule));
+		if (tkl->ptr.spamfilter->except)
+			json_expand_security_group(j, "match", tkl->ptr.spamfilter->except, 1);
 		json_object_set_new(j, "ban_action", json_string_unreal(ban_actions_to_string(tkl->ptr.spamfilter->action)));
 		json_object_set_new(j, "ban_duration", json_integer(tkl->ptr.spamfilter->tkl_duration));
 		json_object_set_new(j, "ban_duration_string", json_string_unreal(pretty_time_val_r(buf, sizeof(buf), tkl->ptr.spamfilter->tkl_duration)));
@@ -612,4 +626,184 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		json_object_set_new(j, "hits", json_integer(tkl->ptr.spamfilter->hits));
 		json_object_set_new(j, "hits_except", json_integer(tkl->ptr.spamfilter->hits_except));
 	}
+}
+
+void json_expand_textanalysis(json_t *root, const char *key, TextAnalysis *ta, int detail)
+{
+	char buf[BUFSIZE];
+	json_t *j, *blk;
+	int i;
+
+	if (key)
+	{
+		j = json_object();
+		json_object_set_new(root, key, j);
+	} else {
+		j = root;
+	}
+
+	json_object_set_new(j, "antimixedutf8_points", json_integer(ta->antimixedutf8_points));
+	json_object_set_new(j, "unicode_blocks", json_integer(ta->unicode_blocks));
+	json_object_set_new(j, "num_bytes", json_integer(ta->num_bytes));
+	json_object_set_new(j, "num_unicode_characters", json_integer(ta->num_unicode_characters));
+	json_object_set_new(j, "deconfused", json_string_unreal(ta->deconfused));
+
+	blk = json_object();
+	json_object_set_new(j, "unicode_blockmap", blk);
+	for (i=0; i < UNICODE_BLOCK_COUNT; i++)
+	{
+		if (ta->unicode_blockmap[i])
+			json_object_set_new(blk, utf8_get_block_name(i), json_integer(ta->unicode_blockmap[i]));
+	}
+}
+
+/** Expand a ConfigItem_mask list to a JSON array.
+ * @param parent	The parent JSON object
+ * @param key		The key name for the array
+ * @param mask		The mask list to expand
+ */
+void json_expand_mask_list(json_t *parent, const char *key, ConfigItem_mask *mask)
+{
+	json_t *arr;
+	ConfigItem_mask *m;
+
+	if (!mask)
+		return;
+
+	arr = json_array();
+	json_object_set_new(parent, key, arr);
+
+	for (m = mask; m; m = m->next)
+		json_array_append_new(arr, json_string_unreal(m->mask));
+}
+
+/** Expand a NameList to a JSON array.
+ * @param parent	The parent JSON object
+ * @param key		The key name for the array
+ * @param list		The name list to expand
+ */
+void json_expand_name_list(json_t *parent, const char *key, NameList *list)
+{
+	json_t *arr;
+	NameList *n;
+
+	if (!list)
+		return;
+
+	arr = json_array();
+	json_object_set_new(parent, key, arr);
+
+	for (n = list; n; n = n->next)
+		json_array_append_new(arr, json_string_unreal(n->name));
+}
+
+/** Expand a NameValuePrioList to a JSON object.
+ * @param parent	The parent JSON object
+ * @param key		The key name for the object
+ * @param list		The name-value list to expand
+ */
+void json_expand_nvplist(json_t *parent, const char *key, NameValuePrioList *list)
+{
+	json_t *obj;
+	NameValuePrioList *n;
+
+	if (!list)
+		return;
+
+	obj = json_object();
+	json_object_set_new(parent, key, obj);
+
+	for (n = list; n; n = n->next)
+		json_object_set_new(obj, n->name, json_string_unreal(n->value));
+}
+
+/** Expand a NameValuePrioList to a JSON object.
+ * @param parent	The parent JSON object
+ * @param key		The key name for the object
+ * @param list		The name-value list to expand
+ */
+void json_expand_nvplist_prefix(json_t *parent, const char *prefix, NameValuePrioList *list)
+{
+	NameValuePrioList *n;
+
+	if (!list)
+		return;
+
+	for (n = list; n; n = n->next)
+	{
+		char buf[512];
+		snprintf(buf, sizeof(buf), "%s%s", prefix, n->name);
+		json_object_set_new(parent, buf, json_string_unreal(n->value));
+	}
+}
+
+/** Helper: Expand security group details to JSON */
+void json_expand_security_group(json_t *j, const char *key, SecurityGroup *s, int detail)
+{
+	json_t *child;
+
+	if (key)
+	{
+		child = json_object();
+		json_object_set_new(j, key, child);
+	}
+	else
+	{
+		child = j;
+	}
+
+	/* If it has a name, it is a security group. Otherwise it is a match item. */
+	if (*s->name)
+	{
+		json_object_set_new(child, "name", json_string_unreal(s->name));
+		json_object_set_new(child, "priority", json_integer(s->priority));
+		json_object_set_new(child, "public", json_boolean(s->public));
+	}
+
+	if (detail == 0)
+		return;
+
+	/* Inclusion criteria */
+	if (s->identified)
+		json_object_set_new(child, "identified", json_boolean(1));
+	if (s->reputation_score != 0)
+		json_object_set_new(child, "reputation_score", json_integer(s->reputation_score));
+	if (s->connect_time != 0)
+		json_object_set_new(child, "connect_time", json_integer(s->connect_time));
+	if (s->webirc)
+		json_object_set_new(child, "webirc", json_boolean(1));
+	if (s->websocket)
+		json_object_set_new(child, "websocket", json_boolean(1));
+	if (s->tls)
+		json_object_set_new(child, "tls", json_boolean(1));
+	json_expand_name_list(child, "ip", s->ip);
+	json_expand_mask_list(child, "mask", s->mask);
+	json_expand_name_list(child, "server_port", s->server_port);
+	json_expand_name_list(child, "security_group", s->security_group);
+	json_expand_name_list(child, "destination", s->destination);
+	json_expand_nvplist_prefix(child, "", s->extended);
+	if (s->prettyrule)
+		json_object_set_new(child, "rule", json_string_unreal(s->prettyrule));
+
+	/* Exclusion criteria */
+	if (s->exclude_identified)
+		json_object_set_new(child, "exclude_identified", json_boolean(1));
+	if (s->exclude_reputation_score != 0)
+		json_object_set_new(child, "exclude_reputation_score", json_integer(s->exclude_reputation_score));
+	if (s->exclude_connect_time != 0)
+		json_object_set_new(child, "exclude_connect_time", json_integer(s->exclude_connect_time));
+	if (s->exclude_webirc)
+		json_object_set_new(child, "exclude_webirc", json_boolean(1));
+	if (s->exclude_websocket)
+		json_object_set_new(child, "exclude_websocket", json_boolean(1));
+	if (s->exclude_tls)
+		json_object_set_new(child, "exclude_tls", json_boolean(1));
+	json_expand_name_list(child, "exclude_ip", s->exclude_ip);
+	json_expand_mask_list(child, "exclude_mask", s->exclude_mask);
+	json_expand_name_list(child, "exclude_server_port", s->exclude_server_port);
+	json_expand_name_list(child, "exclude_security_group", s->exclude_security_group);
+	json_expand_name_list(child, "exclude_destination", s->exclude_destination);
+	json_expand_nvplist_prefix(child, "exclude_", s->exclude_extended);
+	if (s->exclude_prettyrule)
+		json_object_set_new(child, "exclude_rule", json_string_unreal(s->exclude_prettyrule));
 }
