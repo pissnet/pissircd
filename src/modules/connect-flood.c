@@ -6,22 +6,20 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"connect-flood",
-	"6.0.0",
-	"set::anti-flood::connect-flood",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "connect-flood",
+    "6.0.0",
+    "set::anti-flood::connect-flood",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Defines */
 #define THROTTLING_HASH_TABLE_SIZE 8192
 
 /* Structs */
 typedef struct ThrottlingBucket ThrottlingBucket;
-struct ThrottlingBucket
-{
+struct ThrottlingBucket {
 	ThrottlingBucket *prev, *next;
 	char *ip;
 	time_t since;
@@ -100,9 +98,9 @@ int connect_flood_throttle(Client *client, int exitflags)
 	if (!(val = throttle_can_connect(client)))
 	{
 		ircsnprintf(zlinebuf, sizeof(zlinebuf),
-			    "Throttled: Reconnecting too fast - "
-			    "Email %s for more information.",
-			    KLINE_ADDRESS);
+		            "Throttled: Reconnecting too fast - "
+		            "Email %s for more information.",
+		            KLINE_ADDRESS);
 		/* There are two reasons why we can't use exit_client() here:
 		 * 1) Because the HOOKTYPE_IP_CHANGE call may be too deep.
 		 *    Eg: read_packet -> webserver_packet_in ->
@@ -114,8 +112,7 @@ int connect_flood_throttle(Client *client, int exitflags)
 		 */
 		dead_socket(client, zlinebuf);
 		return HOOK_DENY;
-	}
-	else if (val == 1)
+	} else if (val == 1)
 		add_throttling_bucket(client);
 
 	return 0;
@@ -153,10 +150,10 @@ void add_throttling_timeout_timer(ModuleInfo *modinfo)
 
 	if (!THROTTLING_PERIOD)
 	{
-		v = 120*1000;
+		v = 120 * 1000;
 	} else
 	{
-		v = (THROTTLING_PERIOD*1000)/2;
+		v = (THROTTLING_PERIOD * 1000) / 2;
 		if (v > 5000)
 			v = 5000; /* run at least every 5s */
 		if (v < 1000)
@@ -173,13 +170,21 @@ uint64_t hash_throttling(const char *ip)
 
 ThrottlingBucket *find_throttling_bucket(Client *client)
 {
-	int hash = 0;
+	int hash;
 	ThrottlingBucket *p;
-	hash = hash_throttling(client->ip);
+	char ip[HOSTLEN + 1];
+
+	/* Apply set::default-ipv6-clone-mask: bucket is keyed by the network
+	 * portion of the IP, so all addresses in the same /64 share one bucket.
+	 */
+	if (!get_clone_mask_ipstr(client, ip, sizeof(ip)))
+		return NULL;
+
+	hash = hash_throttling(ip);
 
 	for (p = ThrottlingHash[hash]; p; p = p->next)
 	{
-		if (!strcmp(p->ip, client->ip))
+		if (!strcmp(p->ip, ip))
 			return p;
 	}
 
@@ -210,13 +215,20 @@ void add_throttling_bucket(Client *client)
 {
 	int hash;
 	ThrottlingBucket *n;
+	char ip[HOSTLEN + 1];
+
+	/* Apply set::default-ipv6-clone-mask: bucket is keyed by the network
+	 * portion of the IP, so all addresses in the same /64 share one bucket.
+	 */
+	if (!get_clone_mask_ipstr(client, ip, sizeof(ip)))
+		return;
 
 	n = safe_alloc(sizeof(ThrottlingBucket));
 	n->next = n->prev = NULL;
-	safe_strdup(n->ip, client->ip);
+	safe_strdup(n->ip, ip);
 	n->since = TStime();
 	n->count = 1;
-	hash = hash_throttling(client->ip);
+	hash = hash_throttling(ip);
 	AddListItem(n, ThrottlingHash[hash]);
 	return;
 }
@@ -240,7 +252,7 @@ int throttle_can_connect(Client *client)
 	{
 		if (find_tkl_exception(TKL_CONNECT_FLOOD, client))
 			return 2;
-		if (b->count+1 > (THROTTLING_COUNT ? THROTTLING_COUNT : 3))
+		if (b->count + 1 > (THROTTLING_COUNT ? THROTTLING_COUNT : 3))
 			return 0;
 		b->count++;
 		return 2;

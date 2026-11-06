@@ -28,34 +28,34 @@ CMD_FUNC(cmd_notice);
 CMD_FUNC(cmd_tagmsg);
 void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, int parc, const char *parv[], SendType sendtype);
 int _can_send_to_channel(Client *client, Channel *channel, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx);
-int can_send_to_user(Client *client, Client *target, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx);
+int _can_send_to_user(Client *client, Client *target, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx, int flags);
 
 /* Variables */
 long CAP_MESSAGE_TAGS = 0; /**< Looked up at MOD_LOAD, may stay 0 if message-tags support is absent */
 
-ModuleHeader MOD_HEADER
-  = {
-	"message",	/* Name of module */
-	"6.0.2", /* Version */
-	"private message and notice", /* Short description of module */
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "message", /* Name of module */
+    "6.0.2", /* Version */
+    "private message and notice", /* Short description of module */
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 MOD_TEST()
 {
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	EfunctionAddConstString(modinfo->handle, EFUNC_STRIPCOLORS, _StripColors);
 	EfunctionAdd(modinfo->handle, EFUNC_CAN_SEND_TO_CHANNEL, _can_send_to_channel);
+	EfunctionAdd(modinfo->handle, EFUNC_CAN_SEND_TO_USER, _can_send_to_user);
 	return MOD_SUCCESS;
 }
 
 /* This is called on module init, before Server Ready */
 MOD_INIT()
 {
-	CommandAdd(modinfo->handle, "PRIVMSG", cmd_private, 2, CMD_USER|CMD_SERVER|CMD_RESETIDLE|CMD_VIRUS|CMD_TEXTANALYSIS);
-	CommandAdd(modinfo->handle, "NOTICE", cmd_notice, 2, CMD_USER|CMD_SERVER|CMD_TEXTANALYSIS);
-	CommandAdd(modinfo->handle, "TAGMSG", cmd_tagmsg, 1, CMD_USER|CMD_SERVER);
+	CommandAdd(modinfo->handle, "PRIVMSG", cmd_private, 2, CMD_USER | CMD_SERVER | CMD_RESETIDLE | CMD_VIRUS | CMD_TEXTANALYSIS);
+	CommandAdd(modinfo->handle, "NOTICE", cmd_notice, 2, CMD_USER | CMD_SERVER | CMD_TEXTANALYSIS);
+	CommandAdd(modinfo->handle, "TAGMSG", cmd_tagmsg, 1, CMD_USER | CMD_SERVER);
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	return MOD_SUCCESS;
 }
@@ -74,8 +74,8 @@ MOD_UNLOAD()
 	return MOD_SUCCESS;
 }
 
-#define CANPRIVMSG_CONTINUE		100
-#define CANPRIVMSG_SEND			101
+#define CANPRIVMSG_CONTINUE 100
+#define CANPRIVMSG_SEND     101
 /** Check if PRIVMSG's are permitted from a person to another person.
  * client:	source client
  * target:	target client
@@ -83,7 +83,7 @@ MOD_UNLOAD()
  * text:	Pointer to a pointer to a text [in, out]
  * cmd:		Pointer to a pointer which contains the command to use [in, out]
  */
-int can_send_to_user(Client *client, Client *target, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx)
+int _can_send_to_user(Client *client, Client *target, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx, int flags)
 {
 	int ret;
 	Hook *h;
@@ -114,12 +114,14 @@ int can_send_to_user(Client *client, Client *target, const char **msgtext, const
 		return 0;
 	}
 
-	// Possible FIXME: make match_spamfilter also use errmsg, or via a wrapper? or use same numeric?
-	if (MyUser(client) && (sendtype != SEND_TYPE_TAGMSG))
+	/* Spamfilter: run on original text, before hooks may transform it
+	 * (e.g. +G censor). This ensures spamfilter catches the actual
+	 * input even if a user mode would sanitize it for delivery.
+	 */
+	if (!(flags & CAN_SEND_SKIP_SPAMFILTER) && MyUser(client) && (sendtype != SEND_TYPE_TAGMSG))
 	{
 		int spamtype = (sendtype == SEND_TYPE_NOTICE ? SPAMF_USERNOTICE : SPAMF_USERMSG);
 		const char *cmd = sendtype_to_cmd(sendtype);
-
 		if (match_spamfilter(client, *msgtext, spamtype, cmd, target->name, 0, clictx, NULL))
 			return 0;
 	}
@@ -130,13 +132,6 @@ int can_send_to_user(Client *client, Client *target, const char **msgtext, const
 		n = (*(h->func.intfunc))(client, target, msgtext, errmsg, sendtype, clictx);
 		if (n == HOOK_DENY)
 		{
-			if (!*errmsg)
-			{
-				unreal_log(ULOG_ERROR, "main", "BUG_CAN_SEND_TO_USER_NO_ERRMSG", client,
-					   "[BUG] Module $module did not set errmsg!!!",
-					   log_data_string("module", h->owner->header->name));
-				abort();
-			}
 			return 0;
 		}
 		if (!*msgtext || !**msgtext)
@@ -160,7 +155,7 @@ int can_send_to_member_mode(Client *client, Channel *channel, char mode)
 {
 	Membership *lp;
 
-	if (op_can_override("channel:override:message:prefix",client,channel,NULL))
+	if (op_can_override("channel:override:message:prefix", client, channel, NULL))
 		return 1;
 
 	lp = find_membership_link(client->user->channel, channel);
@@ -298,12 +293,6 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 				targetstr = pfixchan;
 			}
 
-			if (IsVirus(client) && strcasecmp(channel->name, SPAMFILTER_VIRUSCHAN))
-			{
-				sendnotice(client, "You are only allowed to talk in '%s'", SPAMFILTER_VIRUSCHAN);
-				continue;
-			}
-
 			text = parv[2];
 			errmsg = NULL;
 			if (MyUser(client) && !IsULine(client))
@@ -324,19 +313,11 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 			mtags = NULL;
 			sendflags = SEND_ALL;
 
-			if (!strchr(CHANCMDPFX,parv[2][0]))
+			if (!strchr(CHANCMDPFX, parv[2][0]))
 				sendflags |= SKIP_DEAF;
 
 			if ((*parv[2] == '\001') && strncmp(&parv[2][1], "ACTION ", 7))
 				sendflags |= SKIP_CTCP;
-
-			if (MyUser(client) && (sendtype != SEND_TYPE_TAGMSG))
-			{
-				int spamtype = (sendtype == SEND_TYPE_NOTICE ? SPAMF_CHANNOTICE : SPAMF_CHANMSG);
-
-				if (match_spamfilter(client, text, spamtype, cmd, channel->name, 0, clictx, NULL))
-					return;
-			}
 
 			new_message(client, recv_mtags, &mtags);
 
@@ -352,10 +333,11 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 			{
 				/* PRIVMSG or NOTICE */
 				sendto_channel(channel, client, client->direction,
-					       member_modes, 0, sendflags, mtags,
-					       ":%s %s %s :%s",
-					       client->name, cmd, targetstr, text);
-			} else {
+				               member_modes, 0, sendflags, mtags,
+				               ":%s %s %s :%s",
+				               client->name, cmd, targetstr, text);
+			} else
+			{
 				/* TAGMSG:
 				 * Only send if the message includes any user message tags
 				 * and if the 'message-tags' module is loaded.
@@ -367,9 +349,9 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 					continue;
 				}
 				sendto_channel(channel, client, client->direction,
-					       member_modes, CAP_MESSAGE_TAGS, sendflags, mtags,
-					       ":%s TAGMSG %s",
-					       client->name, targetstr);
+				               member_modes, CAP_MESSAGE_TAGS, sendflags, mtags,
+				               ":%s TAGMSG %s",
+				               client->name, targetstr);
 			}
 
 			RunHook(HOOKTYPE_CHANMSG, client, channel, sendflags, member_modes, targetstr, mtags, text, sendtype);
@@ -377,8 +359,7 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 			free_message_tags(mtags);
 
 			continue;
-		}
-		else if (p2)
+		} else if (p2)
 		{
 			sendnumeric(client, ERR_NOSUCHNICK, p2);
 			continue;
@@ -401,11 +382,10 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 			}
 			new_message(client, recv_mtags, &mtags);
 			sendto_match_butone(IsServer(client->direction) ? client->direction : NULL,
-			    client, targetstr + 1,
-			    (*targetstr == '#') ? MATCH_HOST :
-			    MATCH_SERVER,
-			    mtags,
-			    ":%s %s %s :%s", client->name, cmd, targetstr, parv[2]);
+			                    client, targetstr + 1,
+			                    (*targetstr == '#') ? MATCH_HOST : MATCH_SERVER,
+			                    mtags,
+			                    ":%s %s %s :%s", client->name, cmd, targetstr, parv[2]);
 			free_message_tags(mtags);
 			continue;
 		}
@@ -416,7 +396,7 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 		{
 			const char *errmsg = NULL;
 			text = parv[2];
-			if (!can_send_to_user(client, target, &text, &errmsg, sendtype, clictx))
+			if (!can_send_to_user(client, target, &text, &errmsg, sendtype, clictx, 0))
 			{
 				/* Message is discarded */
 				if (IsDead(client))
@@ -447,21 +427,24 @@ void cmd_message(ClientContext *clictx, Client *client, MessageTag *recv_mtags, 
 						if (HasCapability(target, "message-tags"))
 						{
 							sendto_prefix_one(target, client, mtags, ":%s %s %s",
-									  client->name, cmd, target->name);
+							                  client->name, cmd, target->name);
 						}
-					} else {
+					} else
+					{
 						sendto_prefix_one(target, client, mtags, ":%s %s %s :%s",
-								  client->name, cmd, target->name, text);
+						                  client->name, cmd, target->name, text);
 					}
-				} else {
+				} else
+				{
 					/* Send to another server */
 					if (sendtype == SEND_TYPE_TAGMSG)
 					{
 						sendto_prefix_one(target, client, mtags, ":%s %s %s",
-								  client->id, cmd, target->id);
-					} else {
+						                  client->id, cmd, target->id);
+					} else
+					{
 						sendto_prefix_one(target, client, mtags, ":%s %s %s :%s",
-								  client->id, cmd, target->id, text);
+						                  client->id, cmd, target->id, text);
 					}
 				}
 				labeled_response_inhibit = 0;
@@ -530,12 +513,12 @@ CMD_FUNC(cmd_tagmsg)
  */
 const char *_StripColors(const char *text)
 {
-	int i = 0, len = strlen(text), save_len=0;
+	int i = 0, len = strlen(text), save_len = 0;
 	char nc = 0, col = 0, rgb = 0;
-	const char *save_text=NULL;
+	const char *save_text = NULL;
 	static char new_str[4096];
 
-	while (len > 0) 
+	while (len > 0)
 	{
 		if ((col && isdigit(*text) && nc < 2) ||
 		    ((col == 1) && (*text == ',') && isdigit(text[1]) && (nc > 0) && (nc < 3)))
@@ -556,8 +539,7 @@ const char *_StripColors(const char *text)
 			nc++;
 			if (*text == ',')
 				nc = 0;
-		}
-		else 
+		} else
 		{
 			if (col)
 				col = 0;
@@ -565,26 +547,24 @@ const char *_StripColors(const char *text)
 			{
 				if (nc != 6)
 				{
-					text = save_text+1;
-					len = save_len-1;
+					text = save_text + 1;
+					len = save_len - 1;
 					rgb = 0;
 					continue;
 				}
 				rgb = 0;
 			}
-			if (*text == '\003') 
+			if (*text == '\003')
 			{
 				col = 1;
 				nc = 0;
-			}
-			else if (*text == '\004')
+			} else if (*text == '\004')
 			{
 				save_text = text;
 				save_len = len;
 				rgb = 1;
 				nc = 0;
-			}
-			else if (*text != '\026') /* (strip reverse too) */
+			} else if (*text != '\026') /* (strip reverse too) */
 			{
 				new_str[i] = *text;
 				i++;
@@ -610,16 +590,16 @@ int ban_version(Client *client, const char *text)
 	len = strlen(ctcp_reply);
 	if (!len)
 		return 0;
-	
-	if (ctcp_reply[len-1] == '\1')
-		ctcp_reply[len-1] = '\0'; /* remove CTCP REPLY terminator (ASCII 1) */
+
+	if (ctcp_reply[len - 1] == '\1')
+		ctcp_reply[len - 1] = '\0'; /* remove CTCP REPLY terminator (ASCII 1) */
 
 	if ((ban = find_ban(NULL, ctcp_reply, CONF_BAN_VERSION)))
 	{
 		if (find_tkl_exception(TKL_BAN_VERSION, client))
 			return 0; /* we are exempt */
 
-		return take_action(client, ban->action, ban->reason, BAN_VERSION_TKL_TIME, 0, NULL);
+		return take_action(client, ban->action, "ban-version", ban->reason, BAN_VERSION_TKL_TIME, 0, NULL, NULL);
 	}
 
 	return 0;
@@ -634,16 +614,41 @@ int ban_version(Client *client, const char *text)
  * @returns Returns 1 if the user is allowed to send, otherwise 0.
  * (note that this behavior was reversed in UnrealIRCd versions <5.x.
  */
+/* FIXME: in a future major release, add 'int flags' parameter
+ * (matching can_send_to_user) so callers like aliases.c can pass
+ * CAN_SEND_SKIP_SPAMFILTER to opt out of the built-in spamfilter
+ * check. Can't add the parameter now without breaking the module API.
+ */
 int _can_send_to_channel(Client *client, Channel *channel, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx)
 {
+	static char errbuf[256];
 	Membership *lp;
-	int  member, i = 0;
+	int member, i = 0;
 	Hook *h;
 
 	if (!MyUser(client))
 		return 1;
 
 	*errmsg = NULL;
+
+	if (IsVirus(client) && strcasecmp(channel->name, SPAMFILTER_VIRUSCHAN))
+	{
+		ircsnprintf(errbuf, sizeof(errbuf), "You are only allowed to talk in '%s'", SPAMFILTER_VIRUSCHAN);
+		*errmsg = errbuf;
+		return 0;
+	}
+
+	/* Spamfilter: run on original text, before hooks may transform it
+	 * (e.g. +G censor). This ensures spamfilter catches the actual
+	 * input even if a channel mode would sanitize it for delivery.
+	 */
+	if (sendtype != SEND_TYPE_TAGMSG)
+	{
+		int spamtype = (sendtype == SEND_TYPE_NOTICE ? SPAMF_CHANNOTICE : SPAMF_CHANMSG);
+		const char *cmd = sendtype_to_cmd(sendtype);
+		if (match_spamfilter(client, *msgtext, spamtype, cmd, channel->name, 0, clictx, NULL))
+			return 0;
+	}
 
 	member = IsMember(client, channel);
 
@@ -658,8 +663,8 @@ int _can_send_to_channel(Client *client, Channel *channel, const char **msgtext,
 			if (!*errmsg)
 			{
 				unreal_log(ULOG_ERROR, "main", "BUG_CAN_SEND_TO_CHANNEL_NO_ERRMSG", client,
-					   "[BUG] Module $module did not set errmsg!!!",
-					   log_data_string("module", h->owner->header->name));
+				           "[BUG] Module $module did not set errmsg!!!",
+				           log_data_string("module", h->owner->header->name));
 				abort();
 			}
 			break;
@@ -688,7 +693,7 @@ int _can_send_to_channel(Client *client, Channel *channel, const char **msgtext,
 	/* Now we are going to check bans */
 
 	/* ..but first: exempt ircops */
-	if (op_can_override("channel:override:message:ban",client,channel,NULL))
+	if (op_can_override("channel:override:message:ban", client, channel, NULL))
 		return 1;
 
 	/* If local client is banned and not +vhoaq... */

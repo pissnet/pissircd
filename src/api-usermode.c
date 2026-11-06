@@ -22,7 +22,7 @@
 
 #include "unrealircd.h"
 
-char umodestring[UMODETABLESZ+1];
+char umodestring[UMODETABLESZ + 1];
 
 /** User modes and their handlers */
 Umode *usermodes = NULL;
@@ -53,8 +53,8 @@ long SNO_SPAMF = 0L;
 long SNO_SNOTICE = 0L;
 long SNO_OPER = 0L;
 
-long AllUmodes;		/* All umodes */
-long SendUmodes;	/* All umodes which are sent to other servers (global umodes) */
+long AllUmodes;  /* All umodes */
+long SendUmodes; /* All umodes which are sent to other servers (global umodes) */
 
 Umode *umode_letter_to_handler[256];
 
@@ -83,7 +83,7 @@ void make_umodestr(void)
 	Umode *um;
 	char *p = umodestring;
 
-	for (um=usermodes; um; um = um->next)
+	for (um = usermodes; um; um = um->next)
 	{
 		if (um->letter)
 		{
@@ -161,16 +161,23 @@ void usermode_add_sorted(Umode *n)
 }
 
 
-/* UmodeAdd:
- * Add a usermode with character 'ch', if global is set to 1 the usermode is global
- * (sent to other servers) otherwise it's a local usermode
+/** Register a new user mode.
+ * @param module		The module (usually modinfo->handle)
+ * @param ch			The mode character (eg 'x')
+ * @param global		UMODE_GLOBAL if the mode is sent to other servers, UMODE_LOCAL for local only
+ * @param unset_on_deoper	1 to automatically unset this mode when the user de-opers
+ * @param allowed		Function to check if a user is allowed to set/unset this mode
+ *				(eg umode_allow_all, umode_allow_opers, umode_allow_none)
+ * @param mode			Pointer to a long that will receive the mode bit
+ * @returns The Umode pointer, or NULL on failure
+ * @note Call this from MOD_INIT().
  */
 Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*allowed)(Client *client, int what), long *mode)
 {
 	Umode *um;
 	int existing = 0;
 
-	for (um=usermodes; um; um = um->next)
+	for (um = usermodes; um; um = um->next)
 	{
 		if (um->letter == ch)
 		{
@@ -179,7 +186,8 @@ Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*
 				um->unloaded = 0;
 				existing = 1;
 				break;
-			} else {
+			} else
+			{
 				if (module)
 					module->errorcode = MODERR_EXISTS;
 				return NULL;
@@ -191,10 +199,10 @@ Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*
 	{
 		/* Not found, create */
 		long l, found = 0;
-		for (l = 1; l < LONG_MAX/2; l *= 2)
+		for (l = 1; l < LONG_MAX / 2; l *= 2)
 		{
 			found = 0;
-			for (um=usermodes; um; um = um->next)
+			for (um = usermodes; um; um = um->next)
 			{
 				if (um->mode == l)
 				{
@@ -209,7 +217,7 @@ Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*
 		if (found)
 		{
 			unreal_log(ULOG_ERROR, "module", "USER_MODE_OUT_OF_SPACE", NULL,
-				   "UmodeAdd: out of space!!!");
+			           "UmodeAdd: out of space!!!");
 			if (module)
 				module->errorcode = MODERR_NOSPACE;
 			return NULL;
@@ -218,7 +226,8 @@ Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*
 		um->letter = ch;
 		um->mode = l;
 		usermode_add_sorted(um);
-	} else {
+	} else
+	{
 		umode_letter_to_handler[um->letter] = um;
 	}
 
@@ -243,6 +252,11 @@ Umode *UmodeAdd(Module *module, char ch, int global, int unset_on_deoper, int (*
 }
 
 
+/** Delete a user mode.
+ * @param umode		The user mode to delete
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 void UmodeDel(Umode *umode)
 {
 	/* Always free the module object */
@@ -341,7 +355,7 @@ void unload_all_unused_umodes(void)
 {
 	Umode *um, *um_next;
 
-	for (um=usermodes; um; um = um_next)
+	for (um = usermodes; um; um = um_next)
 	{
 		um_next = um->next;
 		if (um->letter && um->unloaded)

@@ -24,14 +24,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"reply-tag",
-	"5.0",
-	"+reply client tag",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "reply-tag",
+    "5.0",
+    "+reply client tag",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 int replytag_mtag_is_ok(Client *client, const char *name, const char *value);
 void mtag_add_replytag(Client *client, MessageTag *recv_mtags, MessageTag **mtag_list, const char *signature);
@@ -42,18 +41,16 @@ MOD_INIT()
 
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 
-#if 0
 	memset(&mtag, 0, sizeof(mtag));
 	mtag.name = "+reply";
 	mtag.is_ok = replytag_mtag_is_ok;
-	mtag.flags = MTAG_HANDLER_FLAGS_NO_CAP_NEEDED;
+	mtag.flags = MTAG_HANDLER_FLAGS_NO_CAP_NEEDED | MTAG_HANDLER_FLAGS_FIRST_ONLY;
 	MessageTagHandlerAdd(modinfo->handle, &mtag);
-#endif
 
 	memset(&mtag, 0, sizeof(mtag));
 	mtag.name = "+draft/reply";
 	mtag.is_ok = replytag_mtag_is_ok;
-	mtag.flags = MTAG_HANDLER_FLAGS_NO_CAP_NEEDED;
+	mtag.flags = MTAG_HANDLER_FLAGS_NO_CAP_NEEDED | MTAG_HANDLER_FLAGS_FIRST_ONLY;
 	MessageTagHandlerAdd(modinfo->handle, &mtag);
 
 	HookAddVoid(modinfo->handle, HOOKTYPE_NEW_MESSAGE, 0, mtag_add_replytag);
@@ -98,14 +95,12 @@ void mtag_add_replytag(Client *client, MessageTag *recv_mtags, MessageTag **mtag
 
 	if (IsUser(client))
 	{
-#if 0
 		m = find_mtag(recv_mtags, "+reply");
 		if (m)
 		{
 			m = duplicate_mtag(m);
 			AddListItem(m, *mtag_list);
 		}
-#endif
 		m = find_mtag(recv_mtags, "+draft/reply");
 		if (m)
 		{

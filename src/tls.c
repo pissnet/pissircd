@@ -25,15 +25,21 @@
 #include "unrealircd.h"
 #include "openssl_hostname_validation.h"
 
+#if (OPENSSL_VERSION_NUMBER >= 0x10100000L) && !defined(LIBRESSL_VERSION_NUMBER)
+ #define OSSL_CONST const
+#else
+ #define OSSL_CONST
+#endif
+
 #ifdef _WIN32
-#define IDC_PASS                        1166
+ #define IDC_PASS 1166
 extern HINSTANCE hInst;
 extern HWND hwIRCDWnd;
 #endif
 
-#define FUNC_TLS_READ 1
-#define FUNC_TLS_WRITE 2
-#define FUNC_TLS_ACCEPT 3
+#define FUNC_TLS_READ    1
+#define FUNC_TLS_WRITE   2
+#define FUNC_TLS_ACCEPT  3
 #define FUNC_TLS_CONNECT 4
 
 /* Forward declarations */
@@ -42,8 +48,10 @@ int cipher_check(SSL_CTX *ctx, char **errstr);
 int certificate_quality_check(SSL_CTX *ctx, char **errstr);
 
 /* The TLS structures */
-SSL_CTX *ctx_server;
-SSL_CTX *ctx_client;
+SSL_CTX *ctx_server; /**< Default TLS context for incoming connections (set::tls). */
+SSL_CTX *ctx_client; /**< Default TLS context for outgoing connections (set::tls). */
+static SSL_CTX *ctx_link_server = NULL; /**< Default TLS context for incoming server links (set::server-linking::tls-options). NULL when not set, then use ctx_server instead. */
+static SSL_CTX *ctx_link_client = NULL; /**< Default TLS context for outgoing server links (set::server-linking::tls-options). NULL when not set, then use ctx_client instead. */
 
 char *TLSKeyPasswd;
 
@@ -59,16 +67,18 @@ MODVAR int tls_client_index = 0;
 LRESULT TLS_key_passwd_dialog(HWND hDlg, UINT Message, WPARAM wParam, LPARAM lParam)
 {
 	static StreamIO *stream;
-	switch (Message) {
+	switch (Message)
+	{
 		case WM_INITDIALOG:
-			stream = (StreamIO*)lParam;
+			stream = (StreamIO *)lParam;
 			return TRUE;
 		case WM_COMMAND:
-			if (LOWORD(wParam) == IDCANCEL) {
+			if (LOWORD(wParam) == IDCANCEL)
+			{
 				*stream->buffer = NULL;
 				EndDialog(hDlg, IDCANCEL);
-			}
-			else if (LOWORD(wParam) == IDOK) {
+			} else if (LOWORD(wParam) == IDOK)
+			{
 				GetDlgItemText(hDlg, IDC_PASS, *stream->buffer, *stream->size);
 				EndDialog(hDlg, IDOK);
 			}
@@ -80,7 +90,7 @@ LRESULT TLS_key_passwd_dialog(HWND hDlg, UINT Message, WPARAM wParam, LPARAM lPa
 			return FALSE;
 	}
 }
-#endif				
+#endif
 
 /** Return error string for OpenSSL error.
  * @param err		OpenSSL error number to lookup
@@ -92,7 +102,7 @@ const char *ssl_error_str(int err, int my_errno)
 	static char ssl_errbuf[256];
 	char *ssl_errstr = NULL;
 
-	switch(err)
+	switch (err)
 	{
 		case SSL_ERROR_NONE:
 			ssl_errstr = "OpenSSL: No error";
@@ -133,7 +143,7 @@ int TLS_key_passwd_cb(char *buf, int size, int rwflag, void *password)
 	static char beforebuf[1024];
 #ifdef _WIN32
 	StreamIO stream;
-	char passbuf[512];	
+	char passbuf[512];
 	int passsize = 512;
 #endif
 	if (before)
@@ -147,7 +157,7 @@ int TLS_key_passwd_cb(char *buf, int size, int rwflag, void *password)
 	pass = passbuf;
 	stream.buffer = &pass;
 	stream.size = &passsize;
-	DialogBoxParam(hInst, "TLSKey", hwIRCDWnd, (DLGPROC)TLS_key_passwd_dialog, (LPARAM)&stream); 
+	DialogBoxParam(hInst, "TLSKey", hwIRCDWnd, (DLGPROC)TLS_key_passwd_dialog, (LPARAM)&stream);
 #endif
 	if (pass)
 	{
@@ -238,8 +248,7 @@ void disable_ssl_protocols(SSL_CTX *ctx, TLSOptions *tlsoptions)
 	    !(tlsoptions->protocols & TLS_PROTOCOL_TLSV1_1))
 	{
 		SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-	} else
-	if (!(tlsoptions->protocols & TLS_PROTOCOL_TLSV1))
+	} else if (!(tlsoptions->protocols & TLS_PROTOCOL_TLSV1))
 	{
 		SSL_CTX_set_min_proto_version(ctx, TLS1_1_VERSION);
 	} else
@@ -321,13 +330,28 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		 * _verify_link() will take care of it only after we learned what server
 		 * we are dealing with (and if we should verify certificates for that server).
 		 */
-		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_CLIENT_ONCE | (tlsoptions->options & TLSFLAG_FAILIFNOCERT ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0), ssl_verify_callback);
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE | (tlsoptions->options & TLSFLAG_FAILIFNOCERT ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0), ssl_verify_callback);
 	}
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 #ifndef SSL_OP_NO_TICKET
  #error "Your system has an outdated OpenSSL version. Please upgrade OpenSSL."
 #endif
 	SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+
+#ifdef SSL_OP_NO_RX_CERTIFICATE_COMPRESSION
+	/* Compression is always asking for trouble, they should know this by now */
+	SSL_CTX_set_options(ctx, SSL_OP_NO_RX_CERTIFICATE_COMPRESSION);
+#endif
+
+#ifdef SSL_OP_NO_RENEGOTIATION
+	/* No TLS renegotiations. OpenSSL 3.0.0 and later already do this by default */
+	if (server)
+		SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION);
+#elif defined(SSL_OP_NO_CLIENT_RENEGOTIATION)
+	/* Same, but for LibreSSL <4.1.0 which doesn't have SSL_OP_NO_RENEGOTIATION */
+	if (server)
+		SSL_CTX_set_options(ctx, SSL_OP_NO_CLIENT_RENEGOTIATION);
+#endif
 
 	/* Let's first check the simple case of file exist. That's because the
 	 * SSL_CTX_use_certificate_chain_file() later on works but produces like
@@ -339,16 +363,16 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		{
 			int saved_errno = errno;
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Could not open TLS certificate $filename: $system_error",
-				   log_data_string("filename", n->name),
-				   log_data_string("system_error", strerror(saved_errno)));
+			           "Could not open TLS certificate $filename: $system_error",
+			           log_data_string("filename", n->name),
+			           log_data_string("system_error", strerror(saved_errno)));
 
 			if (str_ends_with_case_sensitive(n->name, "tls/server.cert.pem"))
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED_DEFAULT_CERT", NULL,
-					   "It seems the default certificate is missing. "
-					   "Run 'make pem && make install' in the UnrealIRCd source directory "
-					   "to generate a self-signed cert.");
+				           "It seems the default certificate is missing. "
+				           "Run './unrealircd mkcert' "
+				           "to generate a self-signed cert.");
 			}
 			goto fail;
 		}
@@ -361,55 +385,82 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		{
 			int saved_errno = errno;
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Could not open TLS key $filename: $system_error",
-				   log_data_string("filename", n->name),
-				   log_data_string("system_error", strerror(saved_errno)));
+			           "Could not open TLS key $filename: $system_error",
+			           log_data_string("filename", n->name),
+			           log_data_string("system_error", strerror(saved_errno)));
 			goto fail;
 		}
 	}
 
 	// TODO: verify same amount of certificate_files vs key_files :D
 
+	/* (Re)compute the cached spkifp list for these options. init_ctx() can be
+	 * called more than once on the same TLSOptions (eg ctx_server + ctx_client,
+	 * and again on rehash), so clear it first to avoid duplicate entries.
+	 *
+	 * Note: rebuilding spkifp is a side effect, so throwaway callers (the expiry
+	 * check, test_tlsblock) also rebuild the live list. Harmless for now.
+	 * TODO: add an init_ctx() flag so those callers can skip it.
+	 */
+	safe_free_name_list(tlsoptions->spkifp);
+
 	for (n = tlsoptions->certificate_files, n2 = tlsoptions->key_files; n && n2; n = n->next, n2 = n2->next)
 	{
 		if (SSL_CTX_use_certificate_chain_file(ctx, n->name) <= 0)
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Failed to load TLS certificate $filename\n$tls_error.all",
-				   log_data_string("filename", n->name),
-				   log_data_tls_error());
+			           "Failed to load TLS certificate $filename\n$tls_error.all",
+			           log_data_string("filename", n->name),
+			           log_data_tls_error());
 			goto fail;
 		}
 		if (SSL_CTX_use_PrivateKey_file(ctx, n2->name, SSL_FILETYPE_PEM) <= 0)
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Failed to load TLS private key $filename\n$tls_error.all",
-				   log_data_string("filename", n2->name),
-				   log_data_tls_error());
+			           "Failed to load TLS private key $filename\n$tls_error.all",
+			           log_data_string("filename", n2->name),
+			           log_data_tls_error());
 			goto fail;
 		}
 		if (!SSL_CTX_check_private_key(ctx))
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Check for TLS private key(s) failed: "
-				   "certificate $certificate_filename vs key $key_filename\n"
-				   "$tls_error.all",
-				   log_data_string("certificate_filename", n->name),
-				   log_data_string("key_filename", n2->name),
-				   log_data_tls_error());
+			           "Check for TLS private key(s) failed: "
+			           "certificate $certificate_filename vs key $key_filename\n"
+			           "$tls_error.all",
+			           log_data_string("certificate_filename", n->name),
+			           log_data_string("key_filename", n2->name),
+			           log_data_tls_error());
 			/* An extra hint for dual cert as this mistake will likely happen
 			 * to some users and the OpenSSL error may be a bit too cryptic.
 			 */
 			if (tlsoptions->certificate_files->next)
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-					   "HINT: You are using multiple 'certificate' and 'key' items. "
-					   "Make sure each certificate/key pair belongs to each other, "
-					   "they should be in the correct order! "
-					   "E.g. certificate \"cert1\"; key \"key1\"; certificate \"cert2\"; key \"key2\";"
-					   );
+				           "HINT: You are using multiple 'certificate' and 'key' items. "
+				           "Make sure each certificate/key pair belongs to each other, "
+				           "they should be in the correct order! "
+				           "E.g. certificate \"cert1\"; key \"key1\"; certificate \"cert2\"; key \"key2\";");
 			}
 			goto fail;
+		}
+
+		/* Cache the spkifp of this just-loaded leaf certificate, so consumers
+		 * (genlinkblock and the server-linking advisor) see all of a multi-cert
+		 * server's fingerprints without re-reading files. SSL_new() +
+		 * SSL_get_certificate() works on all OpenSSL/LibreSSL versions and
+		 * returns the context's current (= just-loaded) certificate.
+		 */
+		{
+			SSL *probe = SSL_new(ctx);
+			if (probe)
+			{
+				X509 *leafcert = SSL_get_certificate(probe);
+				const char *fp = leafcert ? spki_fingerprint_ex(leafcert) : NULL;
+				if (fp)
+					append_name_list(tlsoptions->spkifp, fp);
+				SSL_free(probe);
+			}
 		}
 	}
 
@@ -446,8 +497,8 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 	{
 		unreal_log(ULOG_ERROR, "config", "TLS_CERTIFICATE_CHECK_FAILED", NULL,
 		           "There is a problem with your TLS certificate: $quality_check_error\n"
-		           "If you use the standard UnrealIRCd certificates then you can simply run 'make pem' and 'make install' "
-		           "from your UnrealIRCd source directory (eg: ~/unrealircd-6.X.Y/) to create and install new certificates",
+		           "If you use the standard UnrealIRCd certificates then you can simply run './unrealircd mkcert' "
+		           "to create and install new certificates",
 		           log_data_string("quality_check_error", errstr));
 		goto fail;
 	}
@@ -460,9 +511,9 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		if (!SSL_CTX_load_verify_locations(ctx, tlsoptions->trusted_ca_file, NULL))
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_LOAD_FAILED", NULL,
-				   "Failed to load trusted-ca-file $filename\n$tls_error.all",
-				   log_data_string("filename", tlsoptions->trusted_ca_file),
-				   log_data_tls_error());
+			           "Failed to load trusted-ca-file $filename\n$tls_error.all",
+			           log_data_string("filename", tlsoptions->trusted_ca_file),
+			           log_data_tls_error());
 			goto fail;
 		}
 	}
@@ -488,7 +539,7 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		 * Added in 2015 for safety. Seems OpenSSL was smart enough
 		 * to make this the default in 2016 after a security advisory.
 		 */
-		SSL_CTX_set_options(ctx, SSL_OP_SINGLE_ECDH_USE|SSL_OP_SINGLE_DH_USE);
+		SSL_CTX_set_options(ctx, SSL_OP_SINGLE_ECDH_USE | SSL_OP_SINGLE_DH_USE);
 	}
 
 #if defined(HAS_SSL_CTX_SET1_CURVES_LIST) || defined(HAS_SSL_CTX_SET1_GROUPS_LIST)
@@ -503,15 +554,15 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 				if (!unrealircd_set_tls_groups(ctx, UNREALIRCD_DEFAULT_TLS_GROUPS_TERTIARY))
 				{
 					unreal_log(ULOG_ERROR, "config", "TLS_INVALID_TLS_GROUPS_LIST", NULL,
-						   "Failed to set groups / ecdh-curves to either "
-						   "'$tls_groups_primary', '$tls_groups_secondary' or '$tls_groups_tertiary'.\n"
-						   "$tls_error.all\n"
-						   "It's strange that none of the three worked. "
-						   "Please report at https://bugs.unrealircd.org/ !",
-						   log_data_string("tls_groups_primary", UNREALIRCD_DEFAULT_TLS_GROUPS_PRIMARY),
-						   log_data_string("tls_groups_secondary", UNREALIRCD_DEFAULT_TLS_GROUPS_SECONDARY),
-						   log_data_string("tls_groups_tertiary", UNREALIRCD_DEFAULT_TLS_GROUPS_TERTIARY),
-						   log_data_tls_error());
+					           "Failed to set groups / ecdh-curves to either "
+					           "'$tls_groups_primary', '$tls_groups_secondary' or '$tls_groups_tertiary'.\n"
+					           "$tls_error.all\n"
+					           "It's strange that none of the three worked. "
+					           "Please report at https://bugs.unrealircd.org/ !",
+					           log_data_string("tls_groups_primary", UNREALIRCD_DEFAULT_TLS_GROUPS_PRIMARY),
+					           log_data_string("tls_groups_secondary", UNREALIRCD_DEFAULT_TLS_GROUPS_SECONDARY),
+					           log_data_string("tls_groups_tertiary", UNREALIRCD_DEFAULT_TLS_GROUPS_TERTIARY),
+					           log_data_tls_error());
 					goto fail;
 				}
 			}
@@ -522,12 +573,12 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		if (!unrealircd_set_tls_groups(ctx, tlsoptions->groups))
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_INVALID_TLS_GROUPS_LIST", NULL,
-				   "Failed to set groups / ecdh-curves '$tls_groups'\n$tls_error.all\n"
-				   "HINT: To get a list of supported names, run 'openssl ecparam -list_curves' on the server. "
-				   "Separate multiple curves by colon, for example: "
-				   "groups \"secp521r1:secp384r1\".",
-				   log_data_string("tls_groups", tlsoptions->groups),
-				   log_data_tls_error());
+			           "Failed to set groups / ecdh-curves '$tls_groups'\n$tls_error.all\n"
+			           "HINT: To get a list of supported names, run 'openssl ecparam -list_curves' on the server. "
+			           "Separate multiple curves by colon, for example: "
+			           "groups \"secp521r1:secp384r1\".",
+			           log_data_string("tls_groups", tlsoptions->groups),
+			           log_data_tls_error());
 			goto fail;
 		}
 	}
@@ -538,7 +589,7 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		 * it here too than be sorry if someone screws up:
 		 */
 		unreal_log(ULOG_ERROR, "config", "BUG_TLS_GROUPS", NULL,
-			   "tls groups / ecdh-curves specified but not supported by library -- BAD!");
+		           "tls groups / ecdh-curves specified but not supported by library -- BAD!");
 		goto fail;
 	}
 #endif
@@ -549,9 +600,9 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 		if (!SSL_CTX_set1_sigalgs_list(ctx, tlsoptions->signature_algorithms))
 		{
 			unreal_log(ULOG_ERROR, "config", "TLS_INVALID_TLS_SIGNATURE_ALGORITHMS", NULL,
-				   "Failed to set signature-algorithms to '$signature_algorithms'.\n$tls_error.all",
-				   log_data_string("signature_algorithms", tlsoptions->signature_algorithms),
-				   log_data_tls_error());
+			           "Failed to set signature-algorithms to '$signature_algorithms'.\n$tls_error.all",
+			           log_data_string("signature_algorithms", tlsoptions->signature_algorithms),
+			           log_data_tls_error());
 			goto fail;
 		}
 #else
@@ -568,6 +619,8 @@ SSL_CTX *init_ctx(TLSOptions *tlsoptions, int server)
 
 	return ctx;
 fail:
+	/* Don't leave a partial cached spkifp behind on failure. */
+	safe_free_name_list(tlsoptions->spkifp);
 	SSL_CTX_free(ctx);
 	return NULL;
 }
@@ -708,6 +761,56 @@ int early_init_tls(void)
 	return 1;
 }
 
+/** Return the TLS context an incoming connection on this listener should use.
+ * A serversonly listener with no per-listener tls-options presents the
+ * set::server-linking certificate (when configured); everything else uses the
+ * normal set::tls server context.
+ */
+SSL_CTX *tls_ctx_for_listener(ConfigItem_listen *listener)
+{
+	if (listener->ssl_ctx)
+		return listener->ssl_ctx;
+	if ((listener->options & LISTENER_SERVERSONLY) && ctx_link_server)
+		return ctx_link_server;
+	return ctx_server;
+}
+
+/** Return the TLS context an outgoing server link should use. A link with no
+ * per-link tls-options presents the set::server-linking certificate (when
+ * configured); otherwise the normal set::tls client context.
+ */
+SSL_CTX *tls_ctx_for_outgoing_link(ConfigItem_link *link)
+{
+	if (link->ssl_ctx)
+		return link->ssl_ctx;
+	if (ctx_link_client)
+		return ctx_link_client;
+	return ctx_client;
+}
+
+/** Return the effective TLSOptions for an incoming connection on this listener
+ * (same selection as tls_ctx_for_listener(), but the options struct). Used for
+ * STARTTLS option flags and by the server-linking certificate advisor.
+ */
+TLSOptions *tls_options_for_listener(ConfigItem_listen *listener)
+{
+	if (listener->tls_options)
+		return listener->tls_options;
+	if ((listener->options & LISTENER_SERVERSONLY) && iConf.server_linking_tls_options)
+		return iConf.server_linking_tls_options;
+	return iConf.tls_options;
+}
+
+/** Return the effective TLSOptions for an outgoing server link. */
+TLSOptions *tls_options_for_outgoing_link(ConfigItem_link *link)
+{
+	if (link->tls_options)
+		return link->tls_options;
+	if (iConf.server_linking_tls_options)
+		return iConf.server_linking_tls_options;
+	return iConf.tls_options;
+}
+
 /** Initialize the server and client contexts.
  * This is only possible after reading the configuration file.
  */
@@ -719,6 +822,15 @@ int init_tls(void)
 	ctx_client = init_ctx(iConf.tls_options, 0);
 	if (!ctx_client)
 		return 0;
+	if (iConf.server_linking_tls_options)
+	{
+		ctx_link_server = init_ctx(iConf.server_linking_tls_options, 1);
+		if (!ctx_link_server)
+			return 0;
+		ctx_link_client = init_ctx(iConf.server_linking_tls_options, 0);
+		if (!ctx_link_client)
+			return 0;
+	}
 	return 1;
 }
 
@@ -741,7 +853,7 @@ int reinit_tls(void)
 	if (ctx_server)
 		SSL_CTX_free(ctx_server);
 	ctx_server = tmp; /* activate */
-	
+
 	tmp = init_ctx(iConf.tls_options, 0);
 	if (!tmp)
 	{
@@ -753,6 +865,44 @@ int reinit_tls(void)
 		SSL_CTX_free(ctx_client);
 	ctx_client = tmp; /* activate */
 
+	/* set::server-linking::tls-options (free+NULL if no longer configured) */
+	if (iConf.server_linking_tls_options)
+	{
+		tmp = init_ctx(iConf.server_linking_tls_options, 1);
+		if (!tmp)
+		{
+			unreal_log(ULOG_ERROR, "config", "TLS_RELOAD_FAILED", NULL,
+			           "TLS Reload failed at set::server-linking::tls-options. See previous errors.");
+			return 0;
+		}
+		if (ctx_link_server)
+			SSL_CTX_free(ctx_link_server);
+		ctx_link_server = tmp; /* activate */
+
+		tmp = init_ctx(iConf.server_linking_tls_options, 0);
+		if (!tmp)
+		{
+			unreal_log(ULOG_ERROR, "config", "TLS_RELOAD_FAILED", NULL,
+			           "TLS Reload failed at set::server-linking::tls-options (client). See previous errors.");
+			return 0;
+		}
+		if (ctx_link_client)
+			SSL_CTX_free(ctx_link_client);
+		ctx_link_client = tmp; /* activate */
+	} else
+	{
+		if (ctx_link_server)
+		{
+			SSL_CTX_free(ctx_link_server);
+			ctx_link_server = NULL;
+		}
+		if (ctx_link_client)
+		{
+			SSL_CTX_free(ctx_link_client);
+			ctx_link_client = NULL;
+		}
+	}
+
 	/* listen::tls-options.... */
 	for (listen = conf_listen; listen; listen = listen->next)
 	{
@@ -762,7 +912,7 @@ int reinit_tls(void)
 			if (!tmp)
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_RELOAD_FAILED", NULL,
-					   "TLS Reload failed at listen::tls-options. See previous errors.");
+				           "TLS Reload failed at listen::tls-options. See previous errors.");
 				return 0;
 			}
 			if (listen->ssl_ctx)
@@ -780,7 +930,7 @@ int reinit_tls(void)
 			if (!tmp)
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_RELOAD_FAILED", NULL,
-					   "TLS Reload failed at sni::tls-options. See previous errors.");
+				           "TLS Reload failed at sni::tls-options. See previous errors.");
 				return 0;
 			}
 			if (sni->ssl_ctx)
@@ -798,8 +948,8 @@ int reinit_tls(void)
 			if (!tmp)
 			{
 				unreal_log(ULOG_ERROR, "config", "TLS_RELOAD_FAILED", NULL,
-					   "TLS Reload failed at link $servername due to outgoing::tls-options. See previous errors.",
-					   log_data_string("servername", link->servername));
+				           "TLS Reload failed at link $servername due to outgoing::tls-options. See previous errors.",
+				           log_data_string("servername", link->servername));
 				return 0;
 			}
 			if (link->ssl_ctx)
@@ -814,8 +964,8 @@ int reinit_tls(void)
 /** Set SSL connection as nonblocking */
 void SSL_set_nonblocking(SSL *s)
 {
-	BIO_set_nbio(SSL_get_rbio(s),1);
-	BIO_set_nbio(SSL_get_wbio(s),1);
+	BIO_set_nbio(SSL_get_rbio(s), 1);
+	BIO_set_nbio(SSL_get_wbio(s), 1);
 }
 
 /** Get TLS ciphersuite */
@@ -864,6 +1014,16 @@ TLSOptions *get_tls_options_for_client(Client *client)
 		return client->server->conf->tls_options;
 	if (client->local && client->local->listener && client->local->listener->tls_options)
 		return client->local->listener->tls_options;
+	/* No own tls-options: fall back to set::server-linking for s2s paths (like
+	 * tls_ctx_for_*() does for the context), else set::tls.
+	 */
+	if (iConf.server_linking_tls_options)
+	{
+		if (client->server && client->server->conf)
+			return iConf.server_linking_tls_options;
+		if (client->local->listener && (client->local->listener->options & LISTENER_SERVERSONLY))
+			return iConf.server_linking_tls_options;
+	}
 	return iConf.tls_options;
 }
 
@@ -871,8 +1031,7 @@ TLSOptions *get_tls_options_for_client(Client *client)
 void unreal_tls_client_handshake(int fd, int revents, void *data)
 {
 	Client *client = data;
-	SSL_CTX *ctx = (client->server && client->server->conf && client->server->conf->ssl_ctx) ? client->server->conf->ssl_ctx : ctx_client;
-	TLSOptions *tlsoptions = get_tls_options_for_client(client);
+	SSL_CTX *ctx = (client->server && client->server->conf) ? tls_ctx_for_outgoing_link(client->server->conf) : ctx_client;
 
 	if (!ctx)
 	{
@@ -894,18 +1053,6 @@ void unreal_tls_client_handshake(int fd, int revents, void *data)
 	SSL_set_fd(client->local->ssl, client->local->fd);
 	SSL_set_connect_state(client->local->ssl);
 	SSL_set_nonblocking(client->local->ssl);
-
-	if (tlsoptions->renegotiate_bytes > 0)
-	{
-		BIO_set_ssl_renegotiate_bytes(SSL_get_rbio(client->local->ssl), tlsoptions->renegotiate_bytes);
-		BIO_set_ssl_renegotiate_bytes(SSL_get_wbio(client->local->ssl), tlsoptions->renegotiate_bytes);
-	}
-
-	if (tlsoptions->renegotiate_timeout > 0)
-	{
-		BIO_set_ssl_renegotiate_timeout(SSL_get_rbio(client->local->ssl), tlsoptions->renegotiate_timeout);
-		BIO_set_ssl_renegotiate_timeout(SSL_get_wbio(client->local->ssl), tlsoptions->renegotiate_timeout);
-	}
 
 	if (client->server && client->server->conf)
 	{
@@ -929,7 +1076,7 @@ void unreal_tls_client_handshake(int fd, int revents, void *data)
 			client->local->fd = -1;
 			--OpenFiles;
 			return;
-		case 0: 
+		case 0:
 			SetTLSConnectHandshake(client);
 			return;
 		case 1:
@@ -937,7 +1084,6 @@ void unreal_tls_client_handshake(int fd, int revents, void *data)
 		default:
 			return;
 	}
-
 }
 
 /** Called by I/O engine to (re)try accepting an TLS connection */
@@ -957,14 +1103,14 @@ int unreal_tls_accept(Client *client, int fd)
 	{
 		char buf[1024];
 		int n;
-		
+
 		n = recv(fd, buf, sizeof(buf), MSG_PEEK);
 		if ((n >= 8) && !strncmp(buf, "STARTTLS", 8))
 		{
 			char buf[512];
 			snprintf(buf, sizeof(buf),
-				"ERROR :STARTTLS received but this is a TLS-only port. Check your connect settings. "
-				"If this is a server linking in then add 'tls' in your link::outgoing::options block.\r\n");
+			         "ERROR :STARTTLS received but this is a TLS-only port. Check your connect settings. "
+			         "If this is a server linking in then add 'tls' in your link::outgoing::options block.\r\n");
 			(void)send(fd, buf, strlen(buf), 0);
 			return fatal_tls_error(SSL_ERROR_SSL, FUNC_TLS_ACCEPT, ERRNO, client);
 		}
@@ -972,7 +1118,7 @@ int unreal_tls_accept(Client *client, int fd)
 		{
 			char buf[512];
 			snprintf(buf, sizeof(buf),
-				"ERROR :NON-TLS command received on TLS-only port. Check your connection settings.\r\n");
+			         "ERROR :NON-TLS command received on TLS-only port. Check your connection settings.\r\n");
 			(void)send(fd, buf, strlen(buf), 0);
 			return fatal_tls_error(SSL_ERROR_SSL, FUNC_TLS_ACCEPT, ERRNO, client);
 		}
@@ -980,7 +1126,7 @@ int unreal_tls_accept(Client *client, int fd)
 		{
 			char buf[512];
 			snprintf(buf, sizeof(buf),
-				"ERROR :NON-TLS command received on TLS-only port. Check your connection settings.\r\n");
+			         "ERROR :NON-TLS command received on TLS-only port. Check your connection settings.\r\n");
 			(void)send(fd, buf, strlen(buf), 0);
 			return fatal_tls_error(SSL_ERROR_SSL, FUNC_TLS_ACCEPT, ERRNO, client);
 		}
@@ -1033,7 +1179,7 @@ int unreal_tls_connect(Client *client, int fd)
 	if ((ssl_err = SSL_connect(client->local->ssl)) <= 0)
 	{
 		ssl_err = SSL_get_error(client->local->ssl, ssl_err);
-		switch(ssl_err)
+		switch (ssl_err)
 		{
 			case SSL_ERROR_SYSCALL:
 				if (ERRNO == P_EINTR || ERRNO == P_EWOULDBLOCK || ERRNO == P_EAGAIN)
@@ -1041,7 +1187,7 @@ int unreal_tls_connect(Client *client, int fd)
 					/* Hmmm. This implementation is different than in unreal_tls_accept().
 					 * One of them must be wrong -- better check! (TODO)
 					 */
-					fd_setselect(fd, FD_SELECT_READ|FD_SELECT_WRITE, unreal_tls_connect_retry, client);
+					fd_setselect(fd, FD_SELECT_READ | FD_SELECT_WRITE, unreal_tls_connect_retry, client);
 					return 0;
 				}
 				return fatal_tls_error(ssl_err, FUNC_TLS_CONNECT, ERRNO, client);
@@ -1072,7 +1218,7 @@ int SSL_smart_shutdown(SSL *ssl)
 	char i;
 	int rc = 0;
 
-	for(i = 0; i < 4; i++)
+	for (i = 0; i < 4; i++)
 	{
 		if ((rc = SSL_shutdown(ssl)))
 			break;
@@ -1105,7 +1251,7 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 	if (IsDeadSocket(client))
 		return -1;
 
-	switch(where)
+	switch (where)
 	{
 		case FUNC_TLS_READ:
 			ssl_func = "SSL_read()";
@@ -1129,7 +1275,8 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 	if (two && *two)
 	{
 		snprintf(additional_info, sizeof(additional_info), ": %s", two);
-	} else {
+	} else
+	{
 		*additional_info = '\0';
 	}
 #else
@@ -1139,7 +1286,8 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 	if (one && *one && two && *two)
 	{
 		snprintf(additional_info, sizeof(additional_info), ": %s: %s", one, two);
-	} else {
+	} else
+	{
 		*additional_info = '\0';
 	}
 #endif
@@ -1148,11 +1296,11 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 
 	SetDeadSocket(client);
 	unreal_log(ULOG_DEBUG, "tls", "DEBUG_TLS_FATAL_ERROR", client,
-		   "Exiting TLS client $client.details [port $port]: $tls_function: $tls_error_string: $tls_additional_info",
-		   log_data_string("tls_function", ssl_func),
-		   log_data_string("tls_error_string", ssl_errstr),
-		   log_data_string("tls_additional_info", additional_info),
-		   log_data_integer("port", client->local->listener ? client->local->listener->port : 0));
+	           "Exiting TLS client $client.details [port $port]: $tls_function: $tls_error_string: $tls_additional_info",
+	           log_data_string("tls_function", ssl_func),
+	           log_data_string("tls_error_string", ssl_errstr),
+	           log_data_string("tls_additional_info", additional_info),
+	           log_data_integer("port", client->local->listener ? client->local->listener->port : 0));
 
 
 	if (where == FUNC_TLS_CONNECT)
@@ -1168,8 +1316,7 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 		}
 		snprintf(buf, sizeof(buf), "%s: %s%s%s", ssl_func, ssl_errstr, additional_info, extra);
 		lost_server_link(client, buf);
-	} else
-	if (IsServer(client) || (client->server && client->server->conf))
+	} else if (IsServer(client) || (client->server && client->server->conf))
 	{
 		/* Either a trusted fully established server (incoming) or an outgoing server link (established or not) */
 		snprintf(buf, sizeof(buf), "%s: %s%s", ssl_func, ssl_errstr, additional_info);
@@ -1179,10 +1326,11 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 	if (errtmp)
 	{
 		SET_ERRNO(errtmp);
-		safe_strdup(client->local->error_str, strerror(errtmp));
-	} else {
+		safe_strdup(client->local->deadsocket_quit_reason, strerror(errtmp));
+	} else
+	{
 		SET_ERRNO(P_EIO);
-		safe_strdup(client->local->error_str, ssl_errstr);
+		safe_strdup(client->local->deadsocket_quit_reason, ssl_errstr);
 	}
 
 	return -1;
@@ -1191,7 +1339,15 @@ static int fatal_tls_error(int ssl_error, int where, int my_errno, Client *clien
 /** Do a TLS handshake after a STARTTLS, as a client */
 int client_starttls(Client *client)
 {
-	if ((client->local->ssl = SSL_new(ctx_client)) == NULL)
+	/* If this is an outgoing server link, then use link::outgoing::tls-options,
+	 * falling back to set::server-linking::tls-options.
+	 * Otherwise, use the client context.
+	 */
+	SSL_CTX *ctx = (client->server && client->server->conf) ? tls_ctx_for_outgoing_link(client->server->conf) : ctx_client;
+
+	dbuf_delete(&client->local->recvQ, DBufLength(&client->local->recvQ)); /* drop any plaintext pipelined before TLS (as in cmd_starttls) */
+
+	if ((client->local->ssl = SSL_new(ctx)) == NULL)
 		goto fail_starttls;
 
 	SetTLS(client);
@@ -1232,7 +1388,7 @@ TLSOptions *FindTLSOptionsForUser(Client *client)
 {
 	ConfigItem_sni *sni;
 	TLSOptions *sslopt = iConf.tls_options; /* default */
-	
+
 	if (!MyConnect(client) || !IsSecure(client))
 		return NULL;
 
@@ -1325,7 +1481,7 @@ int verify_certificate(SSL *ssl, const char *hostname, char **errstr)
 
 	/* Certificate is verified but is issued for a different hostname */
 	snprintf(buf, sizeof(buf), "Certificate '%s' is not valid for hostname '%s'",
-		certificate_name(ssl), hostname);
+	         certificate_name(ssl), hostname);
 verify_certificate_failed:
 	if (errstr)
 		*errstr = buf;
@@ -1337,7 +1493,7 @@ const char *certificate_name(SSL *ssl)
 {
 	static char buf[384];
 	X509 *cert;
-	X509_NAME *n;
+	OSSL_CONST X509_NAME *n;
 
 	if (!ssl)
 		return NULL;
@@ -1353,7 +1509,8 @@ const char *certificate_name(SSL *ssl)
 		X509_NAME_oneline(n, buf, sizeof(buf));
 		X509_free(cert);
 		return buf;
-	} else {
+	} else
+	{
 		X509_free(cert);
 		return NULL;
 	}
@@ -1389,20 +1546,17 @@ int cipher_check(SSL_CTX *ctx, char **errstr)
 			snprintf(errbuf, sizeof(errbuf), "DES is enabled but is a weak cipher");
 			SSL_free(ssl);
 			return 0;
-		}
-		else if (strstr(cipher, "3DES-"))
+		} else if (strstr(cipher, "3DES-"))
 		{
 			snprintf(errbuf, sizeof(errbuf), "3DES is enabled but is a weak cipher");
 			SSL_free(ssl);
 			return 0;
-		}
-		else if (strstr(cipher, "RC4-"))
+		} else if (strstr(cipher, "RC4-"))
 		{
 			snprintf(errbuf, sizeof(errbuf), "RC4 is enabled but is a weak cipher");
 			SSL_free(ssl);
 			return 0;
-		}
-		else if (strstr(cipher, "NULL-"))
+		} else if (strstr(cipher, "NULL-"))
 		{
 			snprintf(errbuf, sizeof(errbuf), "NULL cipher provides no encryption");
 			SSL_free(ssl);
@@ -1417,14 +1571,14 @@ int cipher_check(SSL_CTX *ctx, char **errstr)
 /** Check if a certificate (or actually: key) is weak */
 int certificate_quality_check(SSL_CTX *ctx, char **errstr)
 {
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
-	// FIXME: this only works on OpenSSL <3.0.0
 	SSL *ssl;
 	X509 *cert;
 	EVP_PKEY *public_key;
-	RSA *rsa_key;
 	int key_length;
 	static char errbuf[256];
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	RSA *rsa_key;
+#endif
 
 	*errbuf = '\0'; // safety
 
@@ -1455,6 +1609,20 @@ int certificate_quality_check(SSL_CTX *ctx, char **errstr)
 		SSL_free(ssl);
 		return 1;
 	}
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	/* OpenSSL 3.0+: use EVP_PKEY_get_base_id() and EVP_PKEY_get_bits() */
+	if (EVP_PKEY_get_base_id(public_key) != EVP_PKEY_RSA)
+	{
+		/* Not an RSA key, then we are done. */
+		EVP_PKEY_free(public_key);
+		SSL_free(ssl);
+		return 1;
+	}
+	key_length = EVP_PKEY_get_bits(public_key);
+	EVP_PKEY_free(public_key);
+	SSL_free(ssl);
+#else
 	rsa_key = EVP_PKEY_get1_RSA(public_key);
 	if (!rsa_key)
 	{
@@ -1464,10 +1632,10 @@ int certificate_quality_check(SSL_CTX *ctx, char **errstr)
 		return 1;
 	}
 	key_length = RSA_size(rsa_key) * 8;
-
 	EVP_PKEY_free(public_key);
 	RSA_free(rsa_key);
 	SSL_free(ssl);
+#endif
 
 	if (key_length < 2048)
 	{
@@ -1475,7 +1643,6 @@ int certificate_quality_check(SSL_CTX *ctx, char **errstr)
 		return 0;
 	}
 
-#endif
 	return 1;
 }
 
@@ -1551,7 +1718,7 @@ int outdated_tls_client(Client *client)
 	for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
 	{
 		if (match_simple(name, client_protocol))
-			 return 1; /* outdated protocol */
+			return 1; /* outdated protocol */
 	}
 
 	strlcpy(buf, tlsoptions->outdated_ciphers, sizeof(buf));
@@ -1625,14 +1792,14 @@ int check_certificate_expiry_ctx(SSL_CTX *ctx, char **errstr)
 		*errstr = errbuf;
 		return 1;
 	} else
-	/* or near-expiry? */
-	if (((days_expiry < 0) || (seconds_expiry < 0)) && (days_expiry > -7))
-	{
-		snprintf(errbuf, sizeof(errbuf), "certificate will expire in %s", pretty_time_val(0 - duration));
-		SSL_free(ssl);
-		*errstr = errbuf;
-		return 1;
-	}
+		/* or near-expiry? */
+		if (((days_expiry < 0) || (seconds_expiry < 0)) && (days_expiry > -7))
+		{
+			snprintf(errbuf, sizeof(errbuf), "certificate will expire in %s", pretty_time_val(0 - duration));
+			SSL_free(ssl);
+			*errstr = errbuf;
+			return 1;
+		}
 
 	/* All good */
 	SSL_free(ssl);
@@ -1675,6 +1842,9 @@ EVENT(tls_check_expiry)
 	/* set block */
 	check_certificate_expiry_tlsoptions_and_warn(iConf.tls_options);
 
+	if (iConf.server_linking_tls_options)
+		check_certificate_expiry_tlsoptions_and_warn(iConf.server_linking_tls_options);
+
 	for (listen = conf_listen; listen; listen = listen->next)
 		if (listen->tls_options)
 			check_certificate_expiry_tlsoptions_and_warn(listen->tls_options);
@@ -1705,7 +1875,7 @@ SSL_CTX *https_new_ctx(void)
 #ifdef HAS_SSL_CTX_SET_MIN_PROTO_VERSION
 	SSL_CTX_set_min_proto_version(ctx_client, TLS1_2_VERSION);
 #endif
-	SSL_CTX_set_options(ctx_client, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3|SSL_OP_NO_TLSv1|SSL_OP_NO_TLSv1_1);
+	SSL_CTX_set_options(ctx_client, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
 
 	/* Verify peer certificate */
 	snprintf(buf1, sizeof(buf1), "%s/tls/curl-ca-bundle.crt", CONFDIR);
@@ -1713,9 +1883,9 @@ SSL_CTX *https_new_ctx(void)
 	{
 #ifdef _WIN32
 		unreal_log(ULOG_ERROR, "url", "CA_BUNDLE_NOT_FOUND", NULL,
-			   "File $filename1 does not exist.\n"
-			   "Cannot use built-in https client without curl-ca-bundle.crt\n",
-			   log_data_string("filename1", buf1));
+		           "File $filename1 does not exist.\n"
+		           "Cannot use built-in https client without curl-ca-bundle.crt\n",
+		           log_data_string("filename1", buf1));
 		exit(-1);
 #else
 		snprintf(buf2, sizeof(buf2), "%s/doc/conf/tls/curl-ca-bundle.crt", BUILDDIR);

@@ -7,13 +7,12 @@
 #include "unrealircd.h"
 #ifndef _WIN32
 
-#define MODULEMANAGER_CONNECT_TIMEOUT	7
-#define MODULEMANAGER_TRANSFER_TIMEOUT	20
+ #define MODULEMANAGER_CONNECT_TIMEOUT  7
+ #define MODULEMANAGER_TRANSFER_TIMEOUT 20
 
 typedef struct ManagedModule ManagedModule;
 
-struct ManagedModule
-{
+struct ManagedModule {
 	ManagedModule *prev, *next;
 	char *repo_url;
 	char *name;
@@ -27,7 +26,9 @@ struct ManagedModule
 	char *min_unrealircd_version;
 	char *max_unrealircd_version;
 	char *description;
+	char *compile_flags;
 	MultiLine *post_install_text;
+	int unmanaged;
 };
 
 static ManagedModule *managed_modules = NULL;
@@ -42,24 +43,29 @@ static int no_make_install = 0;
 
 /* Forward declarations */
 int mm_valid_module_name(char *name);
-#define safe_free_managed_module(x)	do { free_managed_module(x); x = NULL; } while(0)
+ #define safe_free_managed_module(x) \
+	 do \
+	 { \
+		 free_managed_module(x); \
+		 x = NULL; \
+	 } while (0)
 void free_managed_module(ManagedModule *m);
 
 typedef enum ParseModuleHeaderStage {
-	PMH_STAGE_LOOKING		= 0,
-	PMH_STAGE_MODULEHEADER		= 1,
-	PMH_STAGE_MOD_HEADER		= 2,
-	PMH_STAGE_GOT_NAME		= 3,
-	PMH_STAGE_GOT_VERSION		= 4,
-	PMH_STAGE_GOT_DESCRIPTION	= 5,
-	PMH_STAGE_GOT_AUTHOR		= 6,
-	PMT_STAGE_DONE			= 7,
+	PMH_STAGE_LOOKING = 0,
+	PMH_STAGE_MODULEHEADER = 1,
+	PMH_STAGE_MOD_HEADER = 2,
+	PMH_STAGE_GOT_NAME = 3,
+	PMH_STAGE_GOT_VERSION = 4,
+	PMH_STAGE_GOT_DESCRIPTION = 5,
+	PMH_STAGE_GOT_AUTHOR = 6,
+	PMT_STAGE_DONE = 7,
 } ParseModuleHeaderStage;
 
 typedef enum ParseModuleConfigStage {
-	PMC_STAGE_LOOKING	= 0,
-	PMC_STAGE_STARTED	= 1,
-	PMC_STAGE_FINISHED	= 2,
+	PMC_STAGE_LOOKING = 0,
+	PMC_STAGE_STARTED = 1,
+	PMC_STAGE_FINISHED = 2,
 } ParseModuleConfigStage;
 
 int parse_quoted_string(char *buf, char *dest, size_t destlen)
@@ -71,19 +77,24 @@ int parse_quoted_string(char *buf, char *dest, size_t destlen)
 	p = strchr(buf, '"');
 	if (!p)
 		return 0;
-	p2 = strrchr(p+1, '"');
+	p2 = strrchr(p + 1, '"');
 	if (!p2)
 		return 0;
 	max = p2 - p;
 	if (max > destlen)
 		max = destlen;
-	strlcpy(dest, p+1, max);
+	strlcpy(dest, p + 1, max);
 	unreal_del_quotes(dest);
 	return 1;
 }
 
-#undef CheckNull
-#define CheckNull(x) if ((!(x)->value) || (!(*((x)->value)))) { config_error("%s:%i: missing parameter", m->name, (x)->line_number); return 0; }
+ #undef CheckNull
+ #define CheckNull(x) \
+	 if ((!(x)->value) || (!(*((x)->value)))) \
+	 { \
+		 config_error("%s:%i: missing parameter", m->name, (x)->line_number); \
+		 return 0; \
+	 }
 
 /** Parse a module { } line from a module (not repo!!) */
 int mm_module_file_config(ManagedModule *m, ConfigEntry *ce)
@@ -93,7 +104,7 @@ int mm_module_file_config(ManagedModule *m, ConfigEntry *ce)
 	if (ce->value)
 	{
 		config_error("%s:%d: module { } block should not have a name.",
-			m->name, ce->line_number);
+		             m->name, ce->line_number);
 		return 0;
 	}
 
@@ -102,42 +113,41 @@ int mm_module_file_config(ManagedModule *m, ConfigEntry *ce)
 		if (!strcmp(cep->name, "source") ||
 		    !strcmp(cep->name, "version") ||
 		    !strcmp(cep->name, "author") ||
-		    !strcmp(cep->name, "sha256sum") || 
-		    !strcmp(cep->name, "description")
-		    )
+		    !strcmp(cep->name, "sha256sum") ||
+		    !strcmp(cep->name, "description"))
 		{
 			config_error("%s:%d: module::%s should not be in here (it only exists in repository entries)",
-				m->name, cep->line_number, cep->name);
+			             m->name, cep->line_number, cep->name);
 			return 0;
-		}
-		else if (!strcmp(cep->name, "troubleshooting"))
+		} else if (!strcmp(cep->name, "troubleshooting"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->troubleshooting, cep->value);
-		}
-		else if (!strcmp(cep->name, "documentation"))
+		} else if (!strcmp(cep->name, "documentation"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->documentation, cep->value);
-		}
-		else if (!strcmp(cep->name, "min-unrealircd-version"))
+		} else if (!strcmp(cep->name, "min-unrealircd-version"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->min_unrealircd_version, cep->value);
-		}
-		else if (!strcmp(cep->name, "max-unrealircd-version"))
+		} else if (!strcmp(cep->name, "max-unrealircd-version"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->max_unrealircd_version, cep->value);
-		}
-		else if (!strcmp(cep->name, "post-install-text"))
+		} else if (!strcmp(cep->name, "compile-flags"))
+		{
+			CheckNull(cep);
+			safe_strdup(m->compile_flags, cep->value);
+		} else if (!strcmp(cep->name, "post-install-text"))
 		{
 			if (cep->items)
 			{
 				ConfigEntry *cepp;
 				for (cepp = cep->items; cepp; cepp = cepp->next)
 					addmultiline(&m->post_install_text, cepp->name);
-			} else {
+			} else
+			{
 				CheckNull(cep);
 				addmultiline(&m->post_install_text, cep->value);
 			}
@@ -170,7 +180,7 @@ int mm_module_file_config(ManagedModule *m, ConfigEntry *ce)
 	return 1;
 }
 
-#undef CheckNull
+ #undef CheckNull
 
 int mm_parse_module_file(ManagedModule *m, char *buf, unsigned int line_offset)
 {
@@ -197,8 +207,118 @@ int mm_parse_module_file(ManagedModule *m, char *buf, unsigned int line_offset)
 	return 1;
 }
 
-#define MODULECONFIGBUFFER 16384
-ManagedModule *mm_parse_module_c_file(char *modulename, char *fname)
+/* Strip comments in C code. This is a minimal single-line-only version.
+ * It does NOT deal with multiline. We keep it simple, a minimal version.
+ * It is only used for mod header parsing anyway.
+ */
+void strip_c_comments(const char *buf, char *dest, size_t destlen)
+{
+	char *p, *e;
+
+	strlcpy(dest, buf, destlen);
+
+	p = strstr(dest, "//");
+	if (p)
+		*p = '\0';
+
+	while ((p = strstr(dest, "/*")))
+	{
+		e = strstr(p + 2, "*/");
+		if (!e)
+		{
+			*p = '\0';
+			break;
+		}
+		memmove(p, e + 2, strlen(e + 2) + 1);
+	}
+}
+
+/* Helper function for mm_parse_module_c_file().
+ * This parses one line of the ModuleHeader block. This advances 'stage'
+ * and fills in the fields of 'm'. Returns 1 if we can proceed to next line,
+ * or 0 if there is a fatal error.
+ */
+int mm_parse_module_header_line(const char *buf, ParseModuleHeaderStage *stage,
+                                ManagedModule *m, const char *modulename, int linenr, int silent)
+{
+	ParseModuleHeaderStage stage_before = *stage;
+	char value[256];
+	char line[1024];
+	char *p;
+
+	strip_c_comments(buf, line, sizeof(line));
+
+	switch (*stage)
+	{
+		case PMH_STAGE_LOOKING:
+			if (strstr(line, "ModuleHeader"))
+				*stage = PMH_STAGE_MODULEHEADER;
+			else
+				break;
+			/*fallthrough*/
+		case PMH_STAGE_MODULEHEADER:
+			if (strstr(line, "MOD_HEADER"))
+				*stage = PMH_STAGE_MOD_HEADER;
+			break;
+		case PMH_STAGE_MOD_HEADER:
+			if (parse_quoted_string(line, value, sizeof(value)))
+			{
+				safe_strdup(m->name, value);
+				*stage = PMH_STAGE_GOT_NAME;
+			}
+			break;
+		case PMH_STAGE_GOT_NAME:
+			if (parse_quoted_string(line, value, sizeof(value)))
+			{
+				safe_strdup(m->version, value);
+				*stage = PMH_STAGE_GOT_VERSION;
+			}
+			break;
+		case PMH_STAGE_GOT_VERSION:
+			if (parse_quoted_string(line, value, sizeof(value)))
+			{
+				safe_strdup(m->description, value);
+				*stage = PMH_STAGE_GOT_DESCRIPTION;
+			}
+			break;
+		case PMH_STAGE_GOT_DESCRIPTION:
+			if (parse_quoted_string(line, value, sizeof(value)))
+			{
+				safe_strdup(m->author, value);
+				*stage = PMH_STAGE_GOT_AUTHOR;
+			}
+			break;
+		default:
+			break;
+	}
+
+	/* Between the PMH_STAGE_MOD_HEADER and the PMH_STAGE_GOT_AUTHOR stage:
+	 * Did parse_quoted_string() fail above in the switch?
+	 * Then this means we did not encounter a "string".
+	 */
+	if ((stage_before >= PMH_STAGE_MOD_HEADER) && (stage_before < PMH_STAGE_GOT_AUTHOR) &&
+	    (*stage == stage_before))
+	{
+		p = line;
+		skip_whitespace(&p);
+		if (*p && (strspn(p, "={},; \t") != strlen(p)))
+		{
+			if (!silent)
+			{
+				fprintf(stderr, "ERROR: %s:%d: expected a string in the ModuleHeader block, but got: %s\n",
+				        modulename, linenr, p);
+				fprintf(stderr, "The name, version, description and author in ModuleHeader must be plain strings. "
+				                "Macros and other expressions are not supported there.\n");
+			}
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+ #define MODULECONFIGBUFFER 16384
+ManagedModule *mm_parse_module_c_file(char *modulename, char *fname, int silent)
 {
 	char buf[1024];
 	FILE *fd;
@@ -206,13 +326,7 @@ ManagedModule *mm_parse_module_c_file(char *modulename, char *fname)
 	ParseModuleConfigStage parse_module_config = PMC_STAGE_LOOKING;
 	char *moduleconfig = NULL;
 	int linenr = 0, module_config_start_line = 0;
-	char module_header_name[128];
-	char module_header_version[64];
-	char module_header_description[256];
-	char module_header_author[128];
 	ManagedModule *m = NULL;
-
-	*module_header_name = *module_header_version = *module_header_description = *module_header_author = '\0';
 
 	if (!mm_valid_module_name(modulename))
 	{
@@ -224,52 +338,30 @@ ManagedModule *mm_parse_module_c_file(char *modulename, char *fname)
 	if (!fd)
 	{
 		fprintf(stderr, "Unable to open module '%s', file '%s': %s\n",
-			modulename, fname, strerror(errno));
+		        modulename, fname, strerror(errno));
 		return NULL;
 	}
 
+	m = safe_alloc(sizeof(ManagedModule));
 	moduleconfig = safe_alloc(MODULECONFIGBUFFER); /* should be sufficient */
 	while ((fgets(buf, sizeof(buf), fd)))
 	{
 		linenr++;
 		stripcrlf(buf);
-		/* parse module header stuff: */
-		switch (parse_module_header)
+		/* parse module header */
+		if (!mm_parse_module_header_line(buf, &parse_module_header, m, modulename, linenr, silent))
 		{
-			case PMH_STAGE_LOOKING:
-				if (strstr(buf, "ModuleHeader"))
-					parse_module_header = PMH_STAGE_MODULEHEADER;
-				else
-					break;
-				/*fallthrough*/
-			case PMH_STAGE_MODULEHEADER:
-				if (strstr(buf, "MOD_HEADER"))
-					parse_module_header = PMH_STAGE_MOD_HEADER;
-				break;
-			case PMH_STAGE_MOD_HEADER:
-				if (parse_quoted_string(buf, module_header_name, sizeof(module_header_name)))
-					parse_module_header = PMH_STAGE_GOT_NAME;
-				break;
-			case PMH_STAGE_GOT_NAME:
-				if (parse_quoted_string(buf, module_header_version, sizeof(module_header_version)))
-					parse_module_header = PMH_STAGE_GOT_VERSION;
-				break;
-			case PMH_STAGE_GOT_VERSION:
-				if (parse_quoted_string(buf, module_header_description, sizeof(module_header_description)))
-					parse_module_header = PMH_STAGE_GOT_DESCRIPTION;
-				break;
-			case PMH_STAGE_GOT_DESCRIPTION:
-				if (parse_quoted_string(buf, module_header_author, sizeof(module_header_author)))
-					parse_module_header = PMH_STAGE_GOT_AUTHOR;
-				break;
-			default:
-				break;
+			fclose(fd);
+			safe_free_managed_module(m);
+			safe_free(moduleconfig);
+			return NULL;
 		}
 		/* parse module config stuff: */
 		switch (parse_module_config)
 		{
 			case PMC_STAGE_LOOKING:
-				if (strstr(buf, "<<<MODULE MANAGER START>>>")){
+				if (strstr(buf, "<<<MODULE MANAGER START>>>"))
+				{
 					module_config_start_line = linenr;
 					parse_module_config = PMC_STAGE_STARTED;
 				}
@@ -291,47 +383,45 @@ ManagedModule *mm_parse_module_c_file(char *modulename, char *fname)
 	}
 	fclose(fd);
 
-	if (!*module_header_name || !*module_header_version ||
-	    !*module_header_description || !*module_header_author)
+	if (BadPtr(m->name) || BadPtr(m->version) || BadPtr(m->description) || BadPtr(m->author))
 	{
 		fprintf(stderr, "Error parsing module header in %s\n", modulename);
+		safe_free_managed_module(m);
 		safe_free(moduleconfig);
 		return NULL;
 	}
 
-	if (strcmp(module_header_name, modulename))
+	if (strcmp(m->name, modulename))
 	{
 		fprintf(stderr, "ERROR: Mismatch in module name in header (%s) and filename (%s)\n",
-			module_header_name, modulename);
+		        m->name, modulename);
+		safe_free_managed_module(m);
 		safe_free(moduleconfig);
 		return NULL;
 	}
 
 	if (!*moduleconfig)
 	{
-		fprintf(stderr, "ERROR: Module does not contain module config data (<<<MODULE MANAGER START>>>)\n"
-		                "This means it is not meant to be managed by the module manager\n");
+		if (!silent)
+		{
+			fprintf(stderr, "ERROR: Module does not contain module config data (<<<MODULE MANAGER START>>>)\n"
+			                "This means it is not meant to be managed by the module manager\n");
+		}
+		safe_free_managed_module(m);
 		safe_free(moduleconfig);
 		return NULL;
 	}
-
-	/* Fill in the fields from MOD_HEADER() */
-	m = safe_alloc(sizeof(ManagedModule));
-	safe_strdup(m->name, module_header_name);
-	safe_strdup(m->version, module_header_version);
-	safe_strdup(m->description, module_header_description);
-	safe_strdup(m->author, module_header_author);
 
 	if (!mm_parse_module_file(m, moduleconfig, module_config_start_line))
 	{
 		fprintf(stderr, "ERROR: Problem with module manager data block within the %s module C source file.\n"
 		                "You are suggested to contact the module author and paste the above to him/her\n",
-		                m->name);
+		        m->name);
 		safe_free_managed_module(m);
 		safe_free(moduleconfig);
 		return NULL;
 	}
-	
+
 	safe_free(moduleconfig);
 	return m;
 }
@@ -353,7 +443,7 @@ char *mm_sourceslist_file(void)
 		{
 			fprintf(stderr, "ERROR: Neither '%s' nor '%s' exist.\n"
 			                "No module repositories configured.\n",
-			                buf1, buf2);
+			        buf1, buf2);
 			print_documentation();
 			exit(-1);
 		}
@@ -376,6 +466,7 @@ void free_managed_module(ManagedModule *m)
 	safe_free(m->min_unrealircd_version);
 	safe_free(m->max_unrealircd_version);
 	safe_free(m->description);
+	safe_free(m->compile_flags);
 	freemultiline(m->post_install_text);
 	safe_free(m);
 }
@@ -396,8 +487,13 @@ int mm_valid_module_name(char *name)
 	return 1;
 }
 
-#undef CheckNull
-#define CheckNull(x) if ((!(x)->value) || (!(*((x)->value)))) { config_error("%s:%i: missing parameter", repo_url, (x)->line_number); goto fail_mm_repo_module_config; }
+ #undef CheckNull
+ #define CheckNull(x) \
+	 if ((!(x)->value) || (!(*((x)->value)))) \
+	 { \
+		 config_error("%s:%i: missing parameter", repo_url, (x)->line_number); \
+		 goto fail_mm_repo_module_config; \
+	 }
 
 /** Parse a module { } line from a repository */
 ManagedModule *mm_repo_module_config(char *repo_url, ConfigEntry *ce)
@@ -408,19 +504,19 @@ ManagedModule *mm_repo_module_config(char *repo_url, ConfigEntry *ce)
 	if (!ce->value)
 	{
 		config_error("%s:%d: module { } with no name",
-			repo_url, ce->line_number);
+		             repo_url, ce->line_number);
 		goto fail_mm_repo_module_config;
 	}
 	if (!str_starts_with_case_sensitive(ce->value, "third/"))
 	{
 		config_error("%s:%d: module { } name must start with: third/",
-			repo_url, ce->line_number);
+		             repo_url, ce->line_number);
 		goto fail_mm_repo_module_config;
 	}
 	if (!mm_valid_module_name(ce->value))
 	{
 		config_error("%s:%d: module { } with illegal name: %s",
-			repo_url, ce->line_number, ce->value);
+		             repo_url, ce->line_number, ce->value);
 		goto fail_mm_repo_module_config;
 	}
 	safe_strdup(m->name, ce->value);
@@ -432,55 +528,51 @@ ManagedModule *mm_repo_module_config(char *repo_url, ConfigEntry *ce)
 		{
 			CheckNull(cep);
 			safe_strdup(m->source, cep->value);
-		}
-		else if (!strcmp(cep->name, "sha256sum"))
+		} else if (!strcmp(cep->name, "sha256sum"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->sha256sum, cep->value);
-		}
-		else if (!strcmp(cep->name, "version"))
+		} else if (!strcmp(cep->name, "version"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->version, cep->value);
-		}
-		else if (!strcmp(cep->name, "author"))
+		} else if (!strcmp(cep->name, "author"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->author, cep->value);
-		}
-		else if (!strcmp(cep->name, "troubleshooting"))
+		} else if (!strcmp(cep->name, "troubleshooting"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->troubleshooting, cep->value);
-		}
-		else if (!strcmp(cep->name, "documentation"))
+		} else if (!strcmp(cep->name, "documentation"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->documentation, cep->value);
-		}
-		else if (!strcmp(cep->name, "min-unrealircd-version"))
+		} else if (!strcmp(cep->name, "min-unrealircd-version"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->min_unrealircd_version, cep->value);
-		}
-		else if (!strcmp(cep->name, "max-unrealircd-version"))
+		} else if (!strcmp(cep->name, "max-unrealircd-version"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->max_unrealircd_version, cep->value);
-		}
-		else if (!strcmp(cep->name, "description"))
+		} else if (!strcmp(cep->name, "compile-flags"))
+		{
+			CheckNull(cep);
+			safe_strdup(m->compile_flags, cep->value);
+		} else if (!strcmp(cep->name, "description"))
 		{
 			CheckNull(cep);
 			safe_strdup(m->description, cep->value);
-		}
-		else if (!strcmp(cep->name, "post-install-text"))
+		} else if (!strcmp(cep->name, "post-install-text"))
 		{
 			if (cep->items)
 			{
 				ConfigEntry *cepp;
 				for (cepp = cep->items; cepp; cepp = cepp->next)
 					addmultiline(&m->post_install_text, cepp->name);
-			} else {
+			} else
+			{
 				CheckNull(cep);
 				addmultiline(&m->post_install_text, cep->value);
 			}
@@ -538,7 +630,7 @@ fail_mm_repo_module_config:
 	return NULL;
 }
 
-#undef CheckNull
+ #undef CheckNull
 
 int mm_parse_repo_db(char *url, const char *filename)
 {
@@ -570,16 +662,14 @@ int mm_parse_repo_db(char *url, const char *filename)
 int mm_refresh_repository(void)
 {
 	char *sourceslist = mm_sourceslist_file();
-	FILE *fd;
-	char buf[512];
+	NameList *repos = NULL, *e;
+	const char *error;
 	const char *tmpfile;
-	int linenr = 0;
 	int success = 0;
-	int numrepos = 0;
 
 	if (!file_exists(TMPDIR))
 	{
-		(void)mkdir(TMPDIR, S_IRUSR|S_IWUSR|S_IXUSR); /* Create the tmp dir, if it doesn't exist */
+		(void)mkdir(TMPDIR, S_IRUSR | S_IWUSR | S_IXUSR); /* Create the tmp dir, if it doesn't exist */
 		if (!file_exists(TMPDIR))
 		{
 			/* This is possible if the directory structure does not exist,
@@ -593,47 +683,13 @@ int mm_refresh_repository(void)
 	}
 
 	printf("Reading module repository list from '%s'...\n", mm_sourceslist_file());
-	fd = fopen(sourceslist, "r");
-	if (!fd)
+	if (!read_name_list_file(sourceslist, &repos, &error))
 	{
-		fprintf(stderr, "ERROR: Could not open '%s': %s\n", sourceslist, strerror(errno));
+		fprintf(stderr, "ERROR: Could not read '%s': %s\n", sourceslist, error);
 		return 0;
 	}
 
-	while ((fgets(buf, sizeof(buf), fd)))
-	{
-		char *line = buf;
-		linenr++;
-		stripcrlf(line);
-		/* Skip whitespace */
-		while (*line == ' ')
-			line++;
-		/* Skip empty lines and ones that start with a hash mark (#) */
-		if (!*line || (*line == '#'))
-			continue;
-		if (!str_starts_with_case_sensitive(line, "https://"))
-		{
-			fprintf(stderr, "ERROR in %s on line %d: URL should start with https://",
-				sourceslist, linenr);
-			fclose(fd);
-			return 0;
-		}
-		printf("Checking module repository %s...\n", line);
-		numrepos++;
-		tmpfile = synchronous_http_request(line, 1, MODULEMANAGER_CONNECT_TIMEOUT, MODULEMANAGER_TRANSFER_TIMEOUT);
-		if (tmpfile)
-		{
-			if (!mm_parse_repo_db(line, tmpfile))
-			{
-				fclose(fd);
-				return 0;
-			}
-			success++;
-		}
-	}
-	fclose(fd);
-
-	if (numrepos == 0)
+	if (!repos)
 	{
 		fprintf(stderr, "ERROR: No repositories listed in module repository list. "
 		                "Did you remove the default UnrealIRCd repository?\n"
@@ -641,12 +697,39 @@ int mm_refresh_repository(void)
 		return 0;
 	}
 
+	for (e = repos; e; e = e->next)
+	{
+		if (!str_starts_with_case_sensitive(e->name, "https://"))
+		{
+			fprintf(stderr, "ERROR in %s: URL '%s' should start with https://\n",
+			        sourceslist, e->name);
+			free_entire_name_list(repos);
+			return 0;
+		}
+	}
+
+	for (e = repos; e; e = e->next)
+	{
+		printf("Checking module repository %s...\n", e->name);
+		tmpfile = synchronous_http_request(e->name, 1, MODULEMANAGER_CONNECT_TIMEOUT, MODULEMANAGER_TRANSFER_TIMEOUT);
+		if (tmpfile)
+		{
+			if (!mm_parse_repo_db(e->name, tmpfile))
+			{
+				free_entire_name_list(repos);
+				return 0;
+			}
+			success++;
+		}
+	}
+	free_entire_name_list(repos);
+
 	return success ? 1 : 0;
 }
 
-#define COLUMN_STATUS	0
-#define COLUMN_NAME	1
-#define COLUMN_VERSION	2
+ #define COLUMN_STATUS  0
+ #define COLUMN_NAME    1
+ #define COLUMN_VERSION 2
 
 void mm_list_print(char *status, char *name, char *version, char *description, int largest_column[3])
 {
@@ -694,15 +777,17 @@ int mm_check_module_compatibility(ManagedModule *m)
 	return 1;
 }
 
-#define MMMS_INSTALLED		0x0001
-#define MMMS_UPGRADE_AVAILABLE	0x0002
-#define MMMS_UNAVAILABLE	0x0004
+ #define MMMS_INSTALLED              0x0001
+ #define MMMS_UPGRADE_AVAILABLE      0x0002
+ #define MMMS_UNAVAILABLE            0x0004
+ #define MMMS_LOCAL_VERSION_IS_NEWER 0x0008
 
 int mm_get_module_status(ManagedModule *m)
 {
 	FILE *fd;
 	char fname[512];
 	const char *our_sha256sum;
+	ManagedModule *our_module;
 
 	snprintf(fname, sizeof(fname), "%s/src/modules/%s.c", BUILDDIR, m->name);
 	if (!file_exists(fname))
@@ -712,17 +797,24 @@ int mm_get_module_status(ManagedModule *m)
 		return 0;
 	}
 
+	our_module = mm_parse_module_c_file(m->name, fname, 1);
 	our_sha256sum = sha256sum_file(fname);
-	if (!strcasecmp(our_sha256sum, m->sha256sum))
+
+	if (our_module && our_module->version && (strnatcasecmp(m->version, our_module->version) < 0))
 	{
-		return MMMS_INSTALLED;
-	} else {
-		if (!mm_check_module_compatibility(m))
-			return MMMS_INSTALLED|MMMS_UNAVAILABLE;
-		return MMMS_INSTALLED|MMMS_UPGRADE_AVAILABLE;
+		safe_free_managed_module(our_module);
+		return MMMS_INSTALLED | MMMS_LOCAL_VERSION_IS_NEWER;
 	}
 
-	return 0;
+	safe_free_managed_module(our_module);
+
+	if (!strcasecmp(our_sha256sum, m->sha256sum))
+		return MMMS_INSTALLED;
+
+	if (!mm_check_module_compatibility(m))
+		return MMMS_INSTALLED | MMMS_UNAVAILABLE;
+
+	return MMMS_INSTALLED | MMMS_UPGRADE_AVAILABLE;
 }
 
 char *mm_get_module_status_string(ManagedModule *m)
@@ -734,10 +826,12 @@ char *mm_get_module_status_string(ManagedModule *m)
 		return "unav";
 	else if (status == MMMS_INSTALLED)
 		return "inst";
-	else if (status == (MMMS_INSTALLED|MMMS_UNAVAILABLE))
+	else if (status == (MMMS_INSTALLED | MMMS_UNAVAILABLE))
 		return "inst/UNAV";
-	else if (status == (MMMS_INSTALLED|MMMS_UPGRADE_AVAILABLE))
+	else if (status == (MMMS_INSTALLED | MMMS_UPGRADE_AVAILABLE))
 		return "inst/UPD";
+	else if (status == (MMMS_INSTALLED | MMMS_LOCAL_VERSION_IS_NEWER))
+		return "inst/LOCAL";
 	return "UNKNOWN?";
 }
 
@@ -750,10 +844,12 @@ char *mm_get_module_status_string_long(ManagedModule *m)
 		return "Unavailable for your UnrealIRCd version";
 	else if (status == MMMS_INSTALLED)
 		return "Installed and up to date";
-	else if (status == (MMMS_INSTALLED|MMMS_UNAVAILABLE))
+	else if (status == (MMMS_INSTALLED | MMMS_UNAVAILABLE))
 		return "Installed, an upgrade is available but not for your UnrealIRCd version";
-	else if (status == (MMMS_INSTALLED|MMMS_UPGRADE_AVAILABLE))
+	else if (status == (MMMS_INSTALLED | MMMS_UPGRADE_AVAILABLE))
 		return "Installed, upgrade available";
+	else if (status == (MMMS_INSTALLED | MMMS_LOCAL_VERSION_IS_NEWER))
+		return "Installed, local version is newer than online version";
 	return "UNKNOWN?";
 }
 
@@ -797,6 +893,32 @@ int count_unknown_modules(void)
 	return count;
 }
 
+/** Returns 1 if any 3rd party modules are installed */
+int any_third_party_modules_installed(void)
+{
+	DIR *fd;
+	struct dirent *dir;
+	char dirname[512];
+
+	snprintf(dirname, sizeof(dirname), "%s/src/modules/third", BUILDDIR);
+
+	fd = opendir(dirname);
+	if (fd)
+	{
+		while ((dir = readdir(fd)))
+		{
+			char *fname = dir->d_name;
+			if (filename_has_suffix(fname, ".c"))
+			{
+				closedir(fd);
+				return 1;
+			}
+		}
+		closedir(fd);
+	}
+	return 0;
+}
+
 void mm_list(char *searchname)
 {
 	ManagedModule *m;
@@ -813,7 +935,7 @@ void mm_list(char *searchname)
 		printf("Searching for '%s' in names of all available modules...\n", searchname);
 
 	memset(&largest_column, 0, sizeof(largest_column));
-	largest_column[COLUMN_STATUS] = strlen("inst/UNAV");
+	largest_column[COLUMN_STATUS] = strlen("inst/LOCAL");
 	largest_column[COLUMN_NAME] = strlen("Name:");
 	largest_column[COLUMN_VERSION] = strlen("Version:");
 
@@ -872,18 +994,36 @@ void mm_list(char *searchname)
 	printf("|=======================================================================================\n");
 
 	printf("\nStatus column legend:\n"
-	       "          : not installed\n"
-	       "inst      : module installed\n"
-	       "inst/UPD  : module installed, upgrade available (latest version differs from yours)\n"
-	       "unav      : module not available for your UnrealIRCd version\n"
-	       "inst/UNAV : module installed, upgrade exists but is not available for your UnrealIRCd version (too old UnrealIRCd version?)\n"
-	       "UNKNOWN   : module does not exist in any repository (perhaps you installed it manually?), module will be left untouched\n");
+	       "           : not installed\n"
+	       "inst       : module installed\n"
+	       "inst/UPD   : module installed, upgrade available (latest version differs from yours)\n"
+	       "inst/LOCAL : module installed, local version is newer than available online (unusual!)\n"
+	       "inst/UNAV  : module installed, upgrade exists but is not available for your UnrealIRCd version (too old UnrealIRCd version?)\n"
+	       "unav       : module not available for your UnrealIRCd version\n"
+	       "UNKNOWN    : module does not exist in any repository (perhaps you installed it manually?), module will be left untouched\n");
 
 	printf("\nFor more information about a particular module, use './unrealircd module info name-of-module'\n\n");
 	print_documentation();
 }
 
-int mm_compile(ManagedModule *m, const char *tmpfile, int test)
+
+/* Helper to get compile flags. Do not return NULL but "" here if none */
+const char *mm_get_compile_flags(ManagedModule *m)
+{
+	static char retbuf[512];
+	char *flags;
+
+	if (!m->compile_flags)
+		return "";
+
+	/* Simple as-is for now */
+	flags = m->compile_flags;
+
+	unreal_add_quotes_r(flags, retbuf, sizeof(retbuf) - 1);
+	return retbuf;
+}
+
+int mm_compile(ManagedModule *m, const char *tmpfile, int test, int upgrade)
 {
 	char newpath[512];
 	char cmd[512];
@@ -894,16 +1034,15 @@ int mm_compile(ManagedModule *m, const char *tmpfile, int test)
 	int n;
 
 	if (test)
-		printf("Test compiling %s...\n", m->name);
+		printf("\nTest compiling %s...\n", m->name);
 	else
-		printf("Compiling %s...\n", m->name);
+		printf("\nCompiling %s...\n", m->name);
 
 	basename = unreal_getfilename(test ? tmpfile : m->name);
 	snprintf(newpath, sizeof(newpath), "%s/src/modules/third/%s%s", BUILDDIR, basename, test ? "" : ".c");
-	if (!test)
+	if (!test && upgrade)
 	{
-		/* If the file already exists then we are upgrading.
-		 * It's a good idea to backup the file rather than
+		/* It's a good idea to backup the file rather than
 		 * just delete it. Perhaps the user had local changes
 		 * he/she wished to preserve and accidently went
 		 * through the upgrade procedure.
@@ -913,14 +1052,15 @@ int mm_compile(ManagedModule *m, const char *tmpfile, int test)
 		unlink(backupfile);
 		(void)rename(newpath, backupfile);
 	}
-	if (!unreal_copyfileex(tmpfile, newpath, 0))
+
+	if (tmpfile && !unreal_copyfileex(tmpfile, newpath, 0))
 		return 0;
 
 	snprintf(cmd, sizeof(cmd),
-	         "cd \"%s\"; $MAKE custommodule MODULEFILE=\"%s\"",
+	         "cd \"%s\"; $MAKE custommodule MODULEFILE=\"%s\" EXLIBS=\"%s\"",
 	         BUILDDIR,
-	         filename_strip_suffix(basename, ".c")
-	         );
+	         filename_strip_suffix(basename, ".c"),
+	         mm_get_compile_flags(m));
 	fd = popen(cmd, "r");
 	if (!fd)
 	{
@@ -928,7 +1068,7 @@ int mm_compile(ManagedModule *m, const char *tmpfile, int test)
 		unlink(newpath);
 		return 0;
 	}
-	while((fgets(buf, sizeof(buf), fd)))
+	while ((fgets(buf, sizeof(buf), fd)))
 	{
 		printf("%s", buf);
 	}
@@ -939,7 +1079,7 @@ int mm_compile(ManagedModule *m, const char *tmpfile, int test)
 		/* Remove the XXXXXXX.modname.c file */
 		unlink(newpath);
 		/* Remove the XXXXXXX.modname.so file */
-		newpath[strlen(newpath)-2] = '\0'; // cut off .c
+		newpath[strlen(newpath) - 2] = '\0'; // cut off .c
 		strlcat(newpath, ".so", sizeof(newpath));
 		unlink(newpath);
 	}
@@ -947,10 +1087,71 @@ int mm_compile(ManagedModule *m, const char *tmpfile, int test)
 	if (WIFEXITED(n) && (WEXITSTATUS(n) == 0))
 		return 1;
 
-	fprintf(stderr, "ERROR: Compile errors encountered while compiling module '%s'\n"
-	                "You are suggested to contact the author (%s) of this module:\n%s\n",
-	                m->name, m->author, m->troubleshooting);
+	fprintf(stderr, "ERROR: Compile errors encountered while compiling module '%s'\n", m->name);
+	if (m->author && m->troubleshooting)
+	{
+		fprintf(stderr, "You are suggested to contact the author (%s) of this module %s:\n%s\n",
+		        m->author, m->name, m->troubleshooting);
+	}
+
 	return 0;
+}
+
+/** Compile all modules (including unknown), this is used by generic 'make' */
+int mm_compile_all(int argc, char *args[])
+{
+	DIR *fd;
+	struct dirent *dir;
+	char dirname[512];
+	ManagedModule *m;
+	int n;
+
+	snprintf(dirname, sizeof(dirname), "%s/src/modules/third", BUILDDIR);
+	fd = opendir(dirname);
+	if (fd)
+	{
+		while ((dir = readdir(fd)))
+		{
+			char *fname = dir->d_name;
+			if (filename_has_suffix(fname, ".c"))
+			{
+				char fullpath[512];
+				char modname[512];
+				char *p;
+				char simplename[512];
+
+				snprintf(fullpath, sizeof(fullpath), "%s/%s", dirname, fname);
+				strlcpy(simplename, filename_strip_suffix(fname, ".c"), sizeof(simplename));
+				snprintf(modname, sizeof(modname), "third/%s", simplename);
+
+				if (!(m = mm_find_module(modname)))
+				{
+					m = mm_parse_module_c_file(modname, fullpath, 1);
+					if (!m)
+					{
+						/* No module manager block, create a fake one: */
+						m = safe_alloc(sizeof(ManagedModule));
+						safe_strdup(m->name, modname);
+					}
+					m->unmanaged = 1;
+					n = mm_compile(m, NULL, 0, 0);
+					safe_free_managed_module(m);
+				} else
+				{
+					n = mm_compile(m, NULL, 0, 0);
+				}
+
+				if (n == 0)
+				{
+					/* Something if it fails? Error was already printed.
+					 * We silently continue for now.
+					 */
+				}
+			}
+		}
+		closedir(fd);
+	}
+	return 1; // always 1 atm
 }
 
 /** Actually download and install the module.
@@ -982,19 +1183,19 @@ int mm_install_module(ManagedModule *m)
 		fprintf(stderr, "ERROR: SHA256 Checksum mismatch\n"
 		                "Expected (value in repository list): %s\n"
 		                "Received (value of downloaded file): %s\n",
-		                m->sha256sum, sha256);
+		        m->sha256sum, sha256);
 		fprintf(stderr, "Fatal error encountered, see above. Try running the command again in 5-10 minutes.\n"
 		                "If the issue persists, contact the repository manager of %s\n",
-		                m->repo_url);
+		        m->repo_url);
 		return 0;
 	}
-	if (!mm_compile(m, tmpfile, 1))
+	if (!mm_compile(m, tmpfile, 1, 1))
 	{
 		fprintf(stderr, "Fatal error encountered, see above.\n");
 		return 0;
 	}
 
-	if (!mm_compile(m, tmpfile, 0))
+	if (!mm_compile(m, tmpfile, 0, 1))
 	{
 		fprintf(stderr, "The test compile went OK earlier, but the final compile did not. BAD!!\n");
 		return 0;
@@ -1088,9 +1289,9 @@ int mm_install(int argc, char *args[], int upgrade)
 		fprintf(stderr, "ERROR: Module '%s' exists, but is not compatible with your UnrealIRCd version:\n"
 		                "Your UnrealIRCd version  : %s\n"
 		                "Minimum version required : %s\n",
-		                name,
-		                VERSIONONLY,
-		                m->min_unrealircd_version);
+		        name,
+		        VERSIONONLY,
+		        m->min_unrealircd_version);
 		if (m->max_unrealircd_version)
 			fprintf(stderr, "Maximum version          : %s\n", m->max_unrealircd_version);
 		return 0;
@@ -1099,6 +1300,13 @@ int mm_install(int argc, char *args[], int upgrade)
 	{
 		/* If updating, and we are already on latest version, then don't upgrade */
 		printf("Module %s is the latest version, no upgrade needed\n", m->name);
+		return 1;
+	}
+	if (upgrade && (status == (MMMS_INSTALLED | MMMS_LOCAL_VERSION_IS_NEWER)))
+	{
+		/* If updating, and we are already on latest version, then don't upgrade */
+		printf("Module %s: local version is newer than the online version, not upgrading.\n", m->name);
+		return 1;
 	}
 	if (!mm_install_module(m))
 		return 0;
@@ -1110,7 +1318,8 @@ int mm_install(int argc, char *args[], int upgrade)
 		for (l = m->post_install_text; l; l = l->next)
 			printf(" %s\n", l->line);
 		printf("---\n");
-	} else {
+	} else
+	{
 		printf("Don't forget to add a 'loadmodule' line for the module and rehash\n");
 	}
 	return 1;
@@ -1167,19 +1376,17 @@ void mm_upgrade(int argc, char *args[])
 	for (m = managed_modules; m; m = m->next)
 	{
 		int status = mm_get_module_status(m);
-		if (status == (MMMS_INSTALLED|MMMS_UPGRADE_AVAILABLE))
+		if (status == (MMMS_INSTALLED | MMMS_UPGRADE_AVAILABLE))
 		{
 			args[1] = m->name;
 			if (mm_install(1, args, 1))
 				upgraded++;
 			else
 				failed++;
-		} else
-		if (status == MMMS_INSTALLED)
+		} else if ((status == MMMS_INSTALLED) || (status == (MMMS_INSTALLED | MMMS_LOCAL_VERSION_IS_NEWER)))
 		{
 			uptodate_already++;
-		} else
-		if (status == (MMMS_INSTALLED|MMMS_UNAVAILABLE))
+		} else if (status == (MMMS_INSTALLED | MMMS_UNAVAILABLE))
 		{
 			update_unavailable++;
 		}
@@ -1192,10 +1399,11 @@ void mm_upgrade(int argc, char *args[])
 	if (failed)
 	{
 		printf("There was %d FAILED module upgrade. %d module(s) upgraded, %d already up-to-date\n",
-			failed, upgraded, uptodate_already);
-	} else {
+		       failed, upgraded, uptodate_already);
+	} else
+	{
 		printf("All actions were successful. %d module(s) upgraded, %d already up-to-date\n",
-			upgraded, uptodate_already);
+		       upgraded, uptodate_already);
 	}
 	if (update_unavailable)
 		printf("%d module(s) have updates but not for your UnrealIRCd version\n", update_unavailable);
@@ -1281,6 +1489,8 @@ void print_md_block(FILE *fdo, ManagedModule *m)
 	fprintf(fdo, "\tmin-unrealircd-version \"%s\";\n", unreal_add_quotes(m->min_unrealircd_version));
 	if (m->max_unrealircd_version)
 		fprintf(fdo, "\tmax-unrealircd-version \"%s\";\n", unreal_add_quotes(m->max_unrealircd_version));
+	if (m->compile_flags)
+		fprintf(fdo, "\tcompile-flags \"%s\";\n", unreal_add_quotes(m->compile_flags));
 	if (m->post_install_text)
 	{
 		MultiLine *l;
@@ -1324,7 +1534,7 @@ void mm_generate_repository(int argc, char *args[])
 		exit(-1);
 	}
 
-	if ((strlen(urlbasepath) < 2) || (urlbasepath[strlen(urlbasepath)-1] != '/'))
+	if ((strlen(urlbasepath) < 2) || (urlbasepath[strlen(urlbasepath) - 1] != '/'))
 	{
 		fprintf(stderr, "Error: the URL base path must end with a slash\n");
 		mm_generate_repository_usage();
@@ -1354,7 +1564,7 @@ void mm_generate_repository(int argc, char *args[])
 			snprintf(fullname, sizeof(fullname), "%s/%s", dirname, fname);
 			snprintf(modname, sizeof(modname), "third/%s", filename_strip_suffix(fname, ".c"));
 			printf("Processing: %s\n", modname);
-			m = mm_parse_module_c_file(modname, fullname);
+			m = mm_parse_module_c_file(modname, fullname, 0);
 			if (!m)
 			{
 				fprintf(stderr, "WARNING: Skipping module '%s' due to errors\n", modname);
@@ -1398,7 +1608,7 @@ void mm_parse_c_file(int argc, char *args[])
 
 	snprintf(modname, sizeof(modname), "third/%s", filename_strip_suffix(basename, ".c"));
 	printf("Processing: %s\n", modname);
-	m = mm_parse_module_c_file(modname, fullname);
+	m = mm_parse_module_c_file(modname, fullname, 0);
 	if (!m)
 	{
 		fprintf(stderr, "Errors encountered. See above\n");
@@ -1406,6 +1616,7 @@ void mm_parse_c_file(int argc, char *args[])
 	}
 	m->sha256sum = strdup(sha256sum_file(fullname));
 	m->source = strdup("...");
+	m->mtime = unreal_getfilemodtime(fullname);
 	print_md_block(stdout, m);
 	safe_free_managed_module(m);
 	exit(0);
@@ -1458,16 +1669,17 @@ void mm_self_test(void)
 	if (!file_exists(BUILDDIR))
 	{
 		fprintf(stderr, "ERROR: Directory %s does not exist.\n"
-				"The UnrealIRCd source is required for the module manager to work!\n",
-				BUILDDIR);
+		                "The UnrealIRCd source is required for the module manager to work!\n",
+		        BUILDDIR);
 		exit(-1);
-	} else {
+	} else
+	{
 		snprintf(name, sizeof(name), "%s/src/modules/third/Makefile", BUILDDIR);
 		if (!file_exists(name))
 		{
 			fprintf(stderr, "ERROR: Directory %s exists, but your UnrealIRCd is not compiled yet.\n"
-					"You must compile your UnrealIRCd first (run './Config', then 'make install')\n",
-					BUILDDIR);
+			                "You must compile your UnrealIRCd first (run './Config', then 'make install')\n",
+			        BUILDDIR);
 			exit(-1);
 		}
 	}
@@ -1489,15 +1701,28 @@ void modulemanager(int argc, char *args[])
 	{
 		mm_uninstall(argc, args);
 		exit(0);
-	}
-	else if (!strcasecmp(args[0], "generate-repository"))
+	} else if (!strcasecmp(args[0], "generate-repository"))
 	{
 		mm_generate_repository(argc, args);
 		exit(0);
-	}
-	else if (!strcasecmp(args[0], "parse-c-file"))
+	} else if (!strcasecmp(args[0], "parse-c-file"))
 	{
 		mm_parse_c_file(argc, args);
+		exit(0);
+	} else if (!strcasecmp(args[0], "compile-all"))
+	{
+		mm_compile_all(argc, args);
+		exit(0);
+	}
+
+	/* Check if there are any 3rd party mods at all in src/modules/third/.
+	 * If there are none, and we are asked to run 'upgrade' then
+	 * we bail out prematurely. This saves a repo check if you have no
+	 * third party modules installed.
+	 */
+	if (!strcasecmp(args[0], "upgrade") && !any_third_party_modules_installed())
+	{
+		fprintf(stderr, "No third party modules installed. Module manager has nothing to do.\n");
 		exit(0);
 	}
 
@@ -1516,8 +1741,9 @@ void modulemanager(int argc, char *args[])
 	{
 		if (mm_install(argc, args, 0))
 			fprintf(stderr, "All actions were successful.\n");
-	}
-	else if (!strcasecmp(args[0], "upgrade"))
+		else
+			exit(1);
+	} else if (!strcasecmp(args[0], "upgrade"))
 		mm_upgrade(argc, args);
 	else
 		mm_usage();

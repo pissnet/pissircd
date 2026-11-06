@@ -114,7 +114,7 @@ JANSSON_LIB=/LIBPATH:"$(JANSSON_LIB_DIR)"
 !IFDEF USE_REMOTEINC
 CURLCFLAGS=/D USE_LIBCURL
 CURLOBJ=SRC/URL_CURL.OBJ
-CURLLIB=libcurl.lib
+CURLLIB=libcurl_imp.lib
 !IFDEF LIBCURL_INC_DIR
 LIBCURL_INC=/I "$(LIBCURL_INC_DIR)"
 !ENDIF
@@ -275,6 +275,7 @@ DLL_FILES=\
  src/modules/geoip_base.dll \
  src/modules/geoip_classic.dll \
  src/modules/geoip_csv.dll \
+ src/modules/geoip_mmdb.dll \
  src/modules/geoip-tag.dll \
  src/modules/globops.dll \
  src/modules/help.dll \
@@ -310,6 +311,7 @@ DLL_FILES=\
  src/modules/message-ids.dll \
  src/modules/message-tags.dll \
  src/modules/mkpasswd.dll \
+ src/modules/multiline.dll \
  src/modules/mode.dll \
  src/modules/monitor.dll \
  src/modules/motd.dll \
@@ -339,13 +341,15 @@ DLL_FILES=\
  src/modules/rmtkl.dll \
  src/modules/rpc/channel.dll \
  src/modules/rpc/log.dll \
+ src/modules/rpc/message.dll \
  src/modules/rpc/name_ban.dll \
  src/modules/rpc/rpc.dll \
- src/modules/rpc/stats.dll \
+ src/modules/rpc/security_group.dll \
  src/modules/rpc/server.dll \
  src/modules/rpc/server_ban.dll \
  src/modules/rpc/server_ban_exception.dll \
  src/modules/rpc/spamfilter.dll \
+ src/modules/rpc/stats.dll \
  src/modules/rpc/whowas.dll \
  src/modules/rpc/user.dll \
  src/modules/rules.dll \
@@ -395,7 +399,6 @@ DLL_FILES=\
  src/modules/tkl.dll \
  src/modules/tkldb.dll \
  src/modules/tline.dll \
- src/modules/tls_antidos.dll \
  src/modules/tls_cipher.dll \
  src/modules/topic.dll \
  src/modules/trace.dll \
@@ -964,11 +967,11 @@ src/modules/geoip_classic.dll: src/modules/geoip_classic.c $(INCLUDES)
 src/modules/geoip_csv.dll: src/modules/geoip_csv.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/geoip_csv.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/geoip_csv.pdb $(MODLFLAGS)
 
+src/modules/geoip_mmdb.dll: src/modules/geoip_mmdb.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/geoip_mmdb.c src/modules/mmdb.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/geoip_mmdb.pdb $(MODLFLAGS)
+
 src/modules/geoip-tag.dll: src/modules/geoip-tag.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/geoip-tag.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/geoip-tag.pdb $(MODLFLAGS)
-
-src/modules/geoip_maxmind.dll: src/modules/geoip_maxmind.c $(INCLUDES)
-	$(CC) $(MODCFLAGS) src/modules/geoip_maxmind.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/geoip_maxmind.pdb $(MODLFLAGS)
 
 src/modules/globops.dll: src/modules/globops.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/globops.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/globops.pdb $(MODLFLAGS)
@@ -1072,6 +1075,9 @@ src/modules/message-tags.dll: src/modules/message-tags.c $(INCLUDES)
 src/modules/mkpasswd.dll: src/modules/mkpasswd.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/mkpasswd.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/mkpasswd.pdb $(MODLFLAGS)
 
+src/modules/multiline.dll: src/modules/multiline.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/multiline.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/multiline.pdb $(MODLFLAGS)
+
 src/modules/mode.dll: src/modules/mode.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/mode.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/mode.pdb $(MODLFLAGS)
 
@@ -1159,14 +1165,17 @@ src/modules/rpc/channel.dll: src/modules/rpc/channel.c $(INCLUDES)
 src/modules/rpc/log.dll: src/modules/rpc/log.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/log.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/log.pdb $(MODLFLAGS)
 
+src/modules/rpc/message.dll: src/modules/rpc/message.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/rpc/message.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/message.pdb $(MODLFLAGS)
+
 src/modules/rpc/name_ban.dll: src/modules/rpc/name_ban.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/name_ban.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/name_ban.pdb $(MODLFLAGS)
 
 src/modules/rpc/rpc.dll: src/modules/rpc/rpc.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/rpc.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/rpc.pdb $(MODLFLAGS)
 
-src/modules/rpc/stats.dll: src/modules/rpc/stats.c $(INCLUDES)
-	$(CC) $(MODCFLAGS) src/modules/rpc/stats.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/stats.pdb $(MODLFLAGS)
+src/modules/rpc/security_group.dll: src/modules/rpc/security_group.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/rpc/security_group.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/security_group.pdb $(MODLFLAGS)
 
 src/modules/rpc/server.dll: src/modules/rpc/server.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/server.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/server.pdb $(MODLFLAGS)
@@ -1179,6 +1188,9 @@ src/modules/rpc/server_ban_exception.dll: src/modules/rpc/server_ban_exception.c
 
 src/modules/rpc/spamfilter.dll: src/modules/rpc/spamfilter.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/spamfilter.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/spamfilter.pdb $(MODLFLAGS)
+
+src/modules/rpc/stats.dll: src/modules/rpc/stats.c $(INCLUDES)
+	$(CC) $(MODCFLAGS) src/modules/rpc/stats.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/stats.pdb $(MODLFLAGS)
 
 src/modules/rpc/user.dll: src/modules/rpc/user.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/rpc/user.c /Fesrc/modules/rpc/ /Fosrc/modules/rpc/ /Fdsrc/modules/rpc/user.pdb $(MODLFLAGS)
@@ -1326,9 +1338,6 @@ src/modules/tkldb.dll: src/modules/tkldb.c $(INCLUDES)
 
 src/modules/tline.dll: src/modules/tline.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/tline.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/tline.pdb $(MODLFLAGS)
-
-src/modules/tls_antidos.dll: src/modules/tls_antidos.c $(INCLUDES)
-	$(CC) $(MODCFLAGS) src/modules/tls_antidos.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/tls_antidos.pdb $(MODLFLAGS)
 
 src/modules/tls_cipher.dll: src/modules/tls_cipher.c $(INCLUDES)
 	$(CC) $(MODCFLAGS) src/modules/tls_cipher.c /Fesrc/modules/ /Fosrc/modules/ /Fdsrc/modules/tls_cipher.pdb $(MODLFLAGS)

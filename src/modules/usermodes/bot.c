@@ -19,17 +19,16 @@
 
 #include "unrealircd.h"
 
-#define IsBot(cptr)    (cptr->umodes & UMODE_BOT)
+#define IsBot(cptr) (cptr->umodes & UMODE_BOT)
 
 /* Module header */
-ModuleHeader MOD_HEADER
-  = {
-	"usermodes/bot",
-	"4.2",
-	"User Mode +B",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "usermodes/bot",
+    "4.2",
+    "User Mode +B",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Global variables */
 long UMODE_BOT = 0L;
@@ -48,11 +47,11 @@ MOD_INIT()
 {
 	UmodeAdd(modinfo->handle, 'B', UMODE_GLOBAL, 0, NULL, &UMODE_BOT);
 	ISupportAdd(modinfo->handle, "BOT", "B");
-	
+
 	HookAdd(modinfo->handle, HOOKTYPE_WHOIS, 0, bot_whois);
 	HookAdd(modinfo->handle, HOOKTYPE_WHO_STATUS, 0, bot_who_status);
 	HookAdd(modinfo->handle, HOOKTYPE_UMODE_CHANGE, 0, bot_umode_change);
-	
+
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	return MOD_SUCCESS;
 }
@@ -77,7 +76,7 @@ int bot_whois(Client *client, Client *target, NameValuePrioList **list)
 	if (whois_get_policy(client, target, "bot") == WHOIS_CONFIG_DETAILS_NONE)
 		return 0;
 
-	add_nvplist_numeric(list, 0, "bot", client, RPL_WHOISBOT, target->name, NETWORK_NAME);
+	add_nvplist_numeric(list, 60000, "bot", client, RPL_WHOISBOT, target->name, NETWORK_NAME);
 
 	return 0;
 }
@@ -86,7 +85,7 @@ int bot_who_status(Client *client, Client *target, Channel *channel, Member *cm,
 {
 	if (IsBot(target))
 		return 'B';
-	
+
 	return 0;
 }
 

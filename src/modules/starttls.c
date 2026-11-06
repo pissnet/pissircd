@@ -23,29 +23,30 @@
 #include "unrealircd.h"
 
 CMD_FUNC(cmd_starttls);
+int starttls_is_handshake_finished(Client *client);
 
-#define MSG_STARTTLS 	"STARTTLS"	
+#define MSG_STARTTLS "STARTTLS"
 
-ModuleHeader MOD_HEADER
-  = {
-	"starttls",
-	"5.0",
-	"command /starttls", 
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "starttls",
+    "5.0",
+    "command /starttls",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 long CLICAP_STARTTLS;
 
 MOD_INIT()
 {
 	ClientCapabilityInfo cap;
-	
+
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	CommandAdd(modinfo->handle, MSG_STARTTLS, cmd_starttls, MAXPARA, CMD_UNREGISTERED);
 	memset(&cap, 0, sizeof(cap));
 	cap.name = "tls";
 	ClientCapabilityAdd(modinfo->handle, &cap, &CLICAP_STARTTLS);
+	HookAdd(modinfo->handle, HOOKTYPE_IS_HANDSHAKE_FINISHED, 0, starttls_is_handshake_finished);
 
 	return MOD_SUCCESS;
 }
@@ -68,8 +69,14 @@ CMD_FUNC(cmd_starttls)
 	if (!MyConnect(client) || !IsUnknown(client))
 		return;
 
-	ctx = client->local->listener->ssl_ctx ? client->local->listener->ssl_ctx : ctx_server;
-	tls_options = client->local->listener->tls_options ? client->local->listener->tls_options->options : iConf.tls_options->options;
+	if (IsWebsocket(client))
+	{
+		sendnumeric(client, ERR_STARTTLS, "STARTTLS failed. This makes no sense for websockets (wrong network layer).");
+		return;
+	}
+
+	ctx = tls_ctx_for_listener(client->local->listener);
+	tls_options = tls_options_for_listener(client->local->listener)->options;
 
 	/* This should never happen? */
 	if (!ctx)
@@ -118,4 +125,12 @@ fail:
 	client->local->ssl = NULL;
 	ClearTLS(client);
 	SetUnknown(client);
+}
+
+int starttls_is_handshake_finished(Client *client)
+{
+	if (client->local->ssl && !SSL_is_init_finished(client->local->ssl))
+		return 0;
+
+	return 1;
 }

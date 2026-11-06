@@ -1,5 +1,749 @@
-UnrealIRCd 6.2.2
+UnrealIRCd 6.2.8-git
 =================
+
+This is the git version (development version) for future UnrealIRCd 6.2.8.
+This is work in progress and may not always be a stable version.
+
+For an important security pre-announcement, see
+https://forums.unrealircd.org/viewtopic.php?t=9486
+
+That Saturday 7-Nov-2026 the patches will be ported to this git version.
+However, 6.2.7.1 will not exist in git, and neither will 6.2.8 be released
+that Saturday (is not ready yet).
+
+I REPEAT: THIS GIT VERSION IS NOT AND WILL NOT BE UNREALIRCD 6.2.7.1.
+
+### Enhancements:
+* A ton of spamreport changes:
+  * A spamreport block can now report automatically, via the new option
+    [spamreport::auto-report](https://www.unrealircd.org/docs/Spamreport_block).
+    Currently it has three sources:
+    * `spamfilter`: when a spamfilter kills or *LINEs a user.
+      The spamfilter itself is included in the report.
+    * `server-ban`: when an online user is banned (eg /GLINE by an oper) [*]
+    * `kill`: when a user is killed (eg /KILL by an oper) [*]
+
+    For [Central Spamreport](https://www.unrealircd.org/docs/Central_spamreport)
+    all three on by default. For other spamreport blocks it is off by default.
+    To turn it off, you put in the spamreport block: `auto-report { }`.
+    You can exempt specific users from being auto reported at all through
+    [set::spamreport::auto-report::except](https://www.unrealircd.org/docs/Set_block#set::spamreport).  
+    [*]: Not all server bans and kills are sent in, only if the ban or kill
+    reason contain the word "spam". This can be configured via
+    [set::spamreport::auto-report::ban-or-kill-filter](https://www.unrealircd.org/docs/Set_block#set::spamreport).
+  * The `SPAMREPORT` command now has an optional reason:  
+    `SPAMREPORT <nick|ip> [name-of-spamreport-block|all] [reason]`
+  * For spamreport blocks of type simple you can now use `$source`,
+    `$reason` and `$spamfilter_id` in the URL.
+
+### Changes:
+* Link blocks with `link::outgoing` that use a password (not spkifp/certfp/cert)
+  will now raise a warning. We have already been warning about this since
+  2017 at link time so this should not be a surprise for anyone.
+  In Q1 2027 this will become an error.
+  * Link blocks without spkifp/certfp/cert allow a
+    [man-in-the-middle attack](https://en.wikipedia.org/wiki/Man-in-the-middle_attack).
+  * Please refer to our [linking guide](https://www.unrealircd.org/docs/Linking_servers_(genlinkblock))
+    on how to link two unrealircd servers securely. It's very simple.
+  * Link blocks without an outgoing section, or link blocks that link
+    to localhost, are exempt. You can also manually exempt a link block via
+    link::options::no-certificate-verification. Only do so if you insist to
+    link without cert validation, for example when you are linking over a VPN.
+* We continue the gradual transition from `geoip_classic` to `geoip_mmdb`.
+  Now also for `./Config -quick` (and thus `./unrealircd upgrade`).
+  This because we will stop database updates for classic in mid-2027.
+* You now get a config error if you use `action { gline; report; }`.
+  This because `report` (and `set`) cannot happen after a user is killed.
+  The correct syntax is: `action { report; gline; }`
+
+### Fixes:
+* In 6.2.x every server ban was accidentally reported to all spamreport
+  blocks (including Central Spamreport). That could have been especially
+  bad if you had a spamreport block with type `dronebl`.
+
+### Developers and protocol:
+* In JSON-RPC an except in spamfilter objects previously showed as
+  `match` (which is super confusing). That's now under `except`.
+* New hook `HOOKTYPE_KILLED_CLIENT`, called when a local user is killed.
+* In `HOOKTYPE_BANNED_CLIENT` there is now a `TKL *tkl` parameter (this
+  is NULL when a ban is not a TKL, such as a realname ban).
+* The function `take_action()` changed and has two more parameters.
+
+UnrealIRCd 6.2.7
+-----------------
+
+This UnrealIRCd 6.2.7 release fixes multiple issues in the webserver
+module which allow an attacker to stall the IRCd. If you use Websockets
+or JSON-RPC then we recommend to either upgrade or **hot-patch**.
+The hot-patch allows you to update the server **without a restart** on
+UnrealIRCd 6.2.x and may also work on older (unsupported) versions.
+
+To do so, run: `./unrealircd hot-patch webserver-header-dos`
+
+Note that the hot-patch *only* fixes the issues mentioned above. This
+release contains other fixes and enhancements. A good strategy may be
+to hot-patch now to fix the most urgent issue and plan an upgrade to
+6.2.7 at a more convenient time in the upcoming weeks.
+
+### Enhancements:
+* New [set::anti-flood](https://www.unrealircd.org/docs/Anti-flood_settings#max-processing-time)
+  setting `max-processing-time`: this limits how much time we spend on a
+  particular client in the I/O engine. This gives other clients a more fair
+  chance to get their commands read and processed. Defaults to 25ms for
+  unknown-users and 50ms for known-users.
+* IRCOps can use `WHO` with
+  [Extended Server Bans](https://www.unrealircd.org/docs/Extended_server_bans)
+  for things like `WHO ~asn:64496`, `WHO ~country:NL` and
+  `WHO ~security-group:unknown-users`.
+
+### Changes:
+* Update shipped libs: c-ares (1.34.8, security fixes)
+* The [GeoIP](https://www.unrealircd.org/docs/GeoIP) engine was already
+  switched to `geoip_mmdb` in 6.2.4 for new installations. We now change
+  the default for existing installations as well. The old engine
+  `geoip_classic` is now deprecated and we will stop database updates
+  for classic somewhere in 2027.
+* Added minimal self-check for Argon2 (fail early instead of crashing)
+
+### Fixes:
+* Resource exhaustion attack in the webserver. Previously we had no
+  restriction on HTTP request headers, so a client could make a big
+  request which would consume a lot of memory and stall the IRCd. This
+  only affects servers with a listen block with `listen::options::websocket`
+  (for [Websockets](https://www.unrealircd.org/docs/WebSocket_support))
+  or `listen::options::rpc`
+  (for [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC)). See the top
+  of these release notes, especially the hot-patch.
+* Websocket pings were limited in size but not throttled
+* Crash when using [crule functions](https://www.unrealircd.org/docs/Crule)
+  `match_asname()` or when using `unicode_count('Nonexistent Block')`.
+* Crash with JSON-RPC method `rpc.del_timer`
+* Crash with `REHASH -dns` if linking to a server (race condition)
+* [AntiMixedUTF8](https://www.unrealircd.org/docs/Set_block#set::antimixedutf8)
+  gave some emoji a way too high score.
+* Race condition in server linking. If a server was trying to link to
+  multiple servers at once, then the servers could clash causing a
+  connect+split. This could happen in the non-standard configuration where
+  [set::server-linking::autoconnect-strategy](https://www.unrealircd.org/docs/Set_block#set::server-linking)
+  was set to `parallel` instead of the default `sequential`. This change
+  means that `parallel` should now be safe to use.
+* The memory log, that JSON-RPC log.getall uses, was cleaned up too much.
+* Channel mode `+f` type `r` (repeat) has normalization (like ignoring
+  upper/lowercase and color), but this normalization was accidently ignored.
+
+### Developers and protocol:
+* New wiki articles: [Dev:Coding guidelines](https://www.unrealircd.org/docs/Dev:Coding_guidelines)
+  and [Dev:Visual Studio Code](https://www.unrealircd.org/docs/Dev:Visual_Studio_Code).
+* After more than 25 years, the entire source code has been reformatted
+  in one big clang-format commit ('make format'), giving the whole tree
+  a single consistent style. Git blame on github.com is unaffected thanks
+  to `.git-blame-ignore-revs`. For local `git blame` to benefit as well,
+  run this once in your working copy:
+  `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+  If you maintain a fork or local patches, then read the migration
+  instructions in
+  [this commit message](https://github.com/unrealircd/unrealircd/commit/e77eb9e923e84853c0fb2a154150f401a9602e0b).
+* All C code must now be formatted with clang-format version 21: run
+  `make format` **before committing** (or use clang-format in your editor).
+  CI will check for this and fail a PR containing unformatted code.
+* [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC:Security_group)
+  `security_group.list` and `security_group.get`: we now consistently
+  have `builtin` on all built-in security groups, and a fix for missing
+  `public` in unknown-users.
+
+UnrealIRCd 6.2.6
+-----------------
+
+UnrealIRCd 6.2.6 enables multiline by default, adds TKL IDs and tracking of
+hit counts on *LINES/Spamfilter. New crule functions were added to fetch
+server flood counts. Guidance to admins for server linking with 'spkifp'
+has been improved.
+
+A crash bug in the multiline implementation in 6.2.4/6.2.5/6.2.6-rc1
+has been fixed as well. Note that multiline was not enabled by default
+in 6.2.4/6.2.5. If you *only* want to fix that issue then it is possible
+to run the following command on *NIX to patch it without a server restart:
+`./unrealircd hot-patch multiline-62x-crash`
+
+### Enhancements:
+* [IRCv3 draft/multiline](https://ircv3.net/specs/extensions/multiline)
+  is now enabled by default. See the [UnrealIRCd 6.2.4 release](#unrealircd-624)
+  for all information on what this feature does, the default limits, etc.
+  To turn it off completely you can use: `blacklist-module multiline;`
+* Server bans and Spamfilters now have a unique ID, like `G7K2MP9WQX3`:
+  * The first letter denotes the type: `G` for gline, `K` for kline,
+    `Z` for (g)zline, `H` for shun. Spamfilter IDs start with `SPAM`.
+  * The ID is shown to the affected user, so they can paste the ID back to
+    network staff. It is `$banid` in
+    [set::reject-message](https://www.unrealircd.org/docs/Set_block#set::reject-message)
+    and included by default. If you have a custom set::reject-message in
+    your config file then you will have to add it in manually.
+  * IRCOps see the ID in `STATS gline` and similar and can search for it
+    with e.g. `STATS gline +i G7K2MP9WQX3`.
+  * Spamfilters also have an ID, and we already had something similar that
+    could be used for `SPAMFILTER del <id>` that was only local-server.
+    For new spamfilters this is now a network wide ID.
+  * When a server ban was placed by a spamfilter, `STATS gline` shows the
+    originating spamfilter's ID, so it can be traced back.
+  * The TKL ID and related Spamfilter ID (if any), also appear in log
+    messages `TKL_ADD`, `TKL_DEL`, `TKL_EXPIRE` and `SPAMFILTER_MATCH`.
+  * The `STATS gline` and other TKL stats changed format, see
+    *Developers and protocol* if you use scripts or your client depends
+    on the exact numeric format.
+  * For TKL IDs to reach all servers, all servers need to be on 6.2.6
+    or later, especially the hubs. If there is one server in-between
+    that is older, then TKL IDs don't propagate properly and the ID
+    will be empty.
+* Server bans and Spamfilters now track how often they are hit and the time
+  of the last hit, eg in `STATS gline` for GLINEs. These counts happen on
+  each individual server and are not network-wide. This allows IRCOps to see
+  which entries never get any hits and can potentially be removed.
+  * Important exception: config-based spamfilters/bans lose their counters
+    on restart.
+  * For non-config TKLs, the hit count and last hit timestamp are preserved
+    across reboots (via tkldb).
+  * Again, see *Developers and protocol* for the exact STATS field.
+* New [crule functions](https://www.unrealircd.org/docs/Crule) that return
+  the number of times a flood was blocked for a user.
+  * `server_flood_count('..setting..')` returns the number of times
+    set::anti-flood settings were exceeded by that user. Available are:
+    `away`, `nick`, `join`, `invite`, `knock`, `vhost` and `conversations`.
+    Plus, there is `all` for the sum of all items.
+  * `total_channel_flood_count('..setting..')` returns the number of
+    times `+f`/`+F` limits were exceeded by that user in all channels
+    the user is or was in. Available are: `nick`, `join`, `knock`, `msg`,
+    `ctcp`, `text`, `repeat` and `paste` (and `all` for the sum).
+  * All these are counted for the duration of the session (user connection).
+  * These can be used in a security-group::rule or spamfilter::rule. Eg:  
+    `spamfilter { rule "server_flood_count('nick')>4"; reason "Nick flood"; action gline; ban-time 1h; }`
+* Central Spamreport now also receives those flood counters.
+
+### Changes:
+* Server linking and certificates: we now treat listener blocks that are
+  `serversonly` (such as port 6900 in the example.conf) and link { } blocks
+  in a different way than regular listen { } blocks:
+  * If there are different certificates used in the serversonly listen block
+    vs link blocks, then this is almost always means server linking is broken,
+    so we now print a warning on boot and rehash.
+  * We also print an 'advice' if any of these are not using (long-lived)
+    self-signed certificate. This is because CA issued certificates are
+    typically not suitable because they typically rotate keys and thus change
+    the `spkifp`. Changing spkifp breaks server linking. We will now print
+    an advice along with command and config block instructions to fix it.
+  * We now use `set::server-linking::tls-options` for link { } blocks
+    and listen { } blocks that are `serversonly`. All the rest uses the
+    `set::tls` settings by default (eg the regular listen { } block on 6697).
+    * This means our guide on
+      [Using Let's Encrypt with UnrealIRCd](https://www.unrealircd.org/docs/Using_Let's_Encrypt_with_UnrealIRCd)
+      and generic usage is more intuitive. You just set both set settings
+      and then no longer need to use any tls-options in listen blocks or link
+      blocks. The example conf has also been updated with this.
+    * If `set::server-linking::tls-options` is not configured, it defaults
+      to `set::tls`, so there is no unexpected behavior change for anyone.
+  * In a future release we will make server linking with `spkifp` mandatory,
+    so all of this helps with getting people ready for that, making such
+    a future transition smooth.
+  * The command `./unrealircd genlinkblock` now also deals with ECC + ML-DSA
+    where you have multiple `password ".." { spkifp; }` entries.
+* Spamfilter regexes now use more sensible defaults in terms of "max effort",
+  similar to what PHP has been using for years. This means very slow regexes
+  will now raise a `SPAMFILTER_REGEX_ERROR` warning during execution if
+  this happens (should be extremely rare).
+* The UnrealIRCd base directory (eg `~/unrealircd/`) is now created with
+  0700 permissions, just like most subdirectories were.
+* We now have `./unrealircd mkcert` which replaces `make pem`
+  certificate/key generation.
+* Translation updates: `help.fr.conf`
+* CHATHISTORY now sends a `draft/chathistory-end` if the end of history
+  has been reached ([a recent spec improvement](https://github.com/unrealircd/unrealircd/pull/337)).
+* The IRCv3 [reply](https://ircv3.net/specs/client-tags/reply) client tag
+  and [no-implicit-names](https://ircv3.net/specs/extensions/no-implicit-names)
+  extensions have been ratified. During the transition period we support both.
+
+### Fixes:
+* A crash if multiline was enabled
+* The following config items previously raised a config error:
+  allow channel::except, deny channel::except and spamfilter::except.
+* deny channel::mask with a [Mask item](https://www.unrealircd.org/docs/Mask_item)
+  caused a config error.
+* Long multiline messages could be cut off when sent to clients that do not
+  support multiline.
+* Hardening of the built-in HTTPS client
+* JSON-RPC: Remote RPC was broken and causing "not authorized" error messages.
+  This was used by `server.rehash` and `server.module_list`. Plus,
+  this release `user.get` under some circumstances. This is now
+  fixed but requires the target server to be on UnrealIRCd 6.2.6.
+  If the target server does not meet this condition then we error
+  telling the server "does not support remote JSON-RPC".
+
+### Developers and protocol:
+* If you use `CAP LS` instead of `CAP LS 302` then you will now miss various
+  capabilities. We had to trim it down because only 302 and later allow
+  responses that span multiple lines. If your client is still not using 302
+  then please do so soon (the IRCv3 spec is from Nov'2017). For this first
+  change, you won't miss out much, but somewhere in the future this can
+  become a real problem for you.
+* URL API: The OutgoingWebRequest `max_size` (introduced last release) now
+  also caps file-backed downloads. Default for file-backed when left at 0
+  is 50MB (`DOWNLOAD_MAX_SIZE_FILE_BACKED`). For memory-backed, it stays
+  at 1MB like in 6.2.5 (`DOWNLOAD_MAX_SIZE_MEMORY_BACKED`).
+* The `unreal_match()` function now has a 3rd argument `const char **error`
+  for communicating regex errors back. Just set to `NULL` if you don't care.
+* Similarly, `unreal_create_match()` last argument is now `const char **error`
+  (const was added). So when callers use that, their variable `char *err`
+  needs to become `const char *err`.
+* If you do something to a user that would (potentially) move the user from
+  `unknown-users` to `known-users` (or vice versa) then you should call
+  `update_known_user_cache(client);` to update the known users cache.
+  For example, if you have some authentication module that marks a user
+  as IsLoggedIn.
+* TKL entries can now use message tags to carry extra data, similar to how
+  `s2s-md` worked for early moddata, we have `s2s-tkl`. We have two at
+  the moment:
+  * `s2s-tkl/id`: network-wide unique ID for the TKL entry
+  * `s2s-tkl/spamfilter_id`: for server bans, if they were set by spamfilter,
+    the spamfilter TKL ID.
+  * Example: `@s2s-tkl/id=xxxx;s2s-tkl/spamfilter_id=yyyy :server TKL .....`
+  * Older servers will not pass these along, so for this functionality to
+    work all servers need to be on latest version, especially your hub.
+* The TKL `STATS` numerics has more fields now, they are added right before
+  last (so before the `:reason` or `:regex`):
+  * `RPL_STATSGLINE` (223) ends with `hits lasthit spamfilter_id id :reason`
+  * `RPL_STATSQLINE` (217) ends with `hits lasthit id :reason`
+  * `RPL_STATSSPAMF` (229) ends with `lasthit lasthit_except id :regex`
+    (which comes right after `hits hits_except`, which was already there)
+  * `RPL_STATSEXCEPTTKL` (230) ends with `id :reason`
+  * An absent id or spamfilter_id is sent as `-`
+  * The hits/lasthit/lasthit_except show how often the TKL was hit and
+    the timestamp of the last hit (the usual, unix time), or 0 for never.
+    These counts are local to each server.
+* `banned_client()` has an extra parameter `const char *tklid` for the
+   TKL ID (or NULL if none).
+* The tkldb database version is now 6260 and stores the id, spamfilter_id and
+  the hit statistics (hit count and last-hit time per ban).
+  Older databases still load. Downside: you cannot downgrade UnrealIRCd.
+* JSON for TKL entries (server logs and JSON-RPC) now includes `id`, and
+  `spamfilter_id` for spamfilter-created server bans.
+* JSON-RPC `user.get` can now expose flood counters (see next).
+* JSON-RPC: We can now route `user.get` requests to the server that user is
+  on. This so we can fetch all fields for that user (including flood
+  counters, idle time, snomask) that are normally not available remotely.
+  * We do this automatically in `user.get` when `object_detail_level` is 5+.
+  * You can force this explicitly with `object_remote_fetch` set to `true`.
+    So you can also use it with detail level 2 if you want, e.g. if you
+    don't need the flood counters but do want the idle time.
+  * When RRPC is not available we answer ourselves (so safe fallback, but
+    you won't have the local-only fields).
+
+UnrealIRCd 6.2.5
+-----------------
+
+This UnrealIRCd 6.2.5 release is mostly about improving IPv6 clone
+detection. If your IRC network has IPv6 connectivity then hot-patching
+without restart (see below), or upgrading, is highly recommended.
+If you don't have IPv6 then this release is less important.
+
+Without this, a user with IPv6 connectivity (e.g. a typical
+residential connection) can connect thousands of clones using
+their /64 prefix, bypassing per-host limits like `allow::maxperip`
+and `connect-flood`.
+
+If you run UnrealIRCd 6.2.x then you also have the option of using our
+**hot-patch**, which allows updating the server **without a restart**.  
+To do so, run: `./unrealircd hot-patch ipv6-clones`  
+For UnrealIRCd 6.2.3 and 6.2.4 this gives you nearly the same IPv6 clones
+protection as this 6.2.5 release. For UnrealIRCd 6.2.0/6.2.1/6.2.2 it will
+hot-patch only the maxperip /64 issue and not add the new connthrottle
+functionality.
+
+This release has been tested on a couple of networks with hundreds of users,
+without an impact on regular users, but it is still good to know these new
+limits.
+
+### Enhancements:
+* [allow::maxperip](https://www.unrealircd.org/docs/Allow_block#maxperip)
+  and [connect-flood](https://www.unrealircd.org/docs/Anti-flood_settings#connect-flood)
+  now treat an IPv6 /64 as a single host
+  ([set::default-ipv6-clone-mask](https://www.unrealircd.org/docs/Set_block#set::default-ipv6-clone-mask)).
+  Since end users are typically allocated a whole /64, per-/128 counting
+  offered no real clone protection. We previously claimed to be doing this
+  already in the documentation, but in practice the setting was ignored.
+  A related unused option allow::ipv6-clone-mask has been removed and will
+  now raise an error.
+* [ConnThrottle](https://www.unrealircd.org/docs/Connthrottle) now has a
+  set::connthrottle::ipv6-unknown-users-limit (enabled by default).
+  This reduces the effect of an attacker launching many IPv6 clones at
+  a server. Users in the "known-users" security-group are exempt (by
+  default: identified to services, or
+  [reputation](https://www.unrealircd.org/docs/Reputation_score) of 25 or more).
+  Also exempt are users matching set::connthrottle::except or an
+  except ban with type maxperip.
+  * Difference from maxperip: maxperip counts everyone per /64. This counts
+    only unknown users and works on wider IPv6 prefixes (/56, /48 and /32).
+    So known users can connect while cloners are limited.
+* New [set::known-cloud-services](https://www.unrealircd.org/docs/Set_block#set::known-cloud-services)
+  (enabled by default) exempts large IRC platforms with stable
+  published IP ranges from [allow::maxperip](https://www.unrealircd.org/docs/Allow_block#maxperip)
+  and [connect-flood](https://www.unrealircd.org/docs/Anti-flood_settings#connect-flood).
+  Currently only IRCCloud qualifies. This is more reliable than the
+  `except ban { mask *.irccloud.com; ... }` block that `example.conf`
+  has shipped since 2023, as DNS can fail during outages or restarts.
+  The new maxperip and connthrottle limits make this even more important.
+  To disable, use: `set { known-cloud-services no; }`.
+* New [snomask](https://www.unrealircd.org/docs/Snomasks) `+x` for rejections
+  from [allow::maxperip](https://www.unrealircd.org/docs/Allow_block#maxperip)
+  and [ConnThrottle](https://www.unrealircd.org/docs/Connthrottle).
+  Included in the default oper snomask (unless overridden in
+  [set::snomask-on-oper](https://www.unrealircd.org/docs/Set_block#set::snomask-on-oper)
+  or [oper::snomask](https://www.unrealircd.org/docs/Oper_block#snomask)).
+* New [set::log-throttle](https://www.unrealircd.org/docs/Set_block#set::log-throttle):
+  suppresses high-rate events. This is on by default for the new `+x` rejections.
+* [ConnThrottle](https://www.unrealircd.org/docs/Connthrottle) now
+  also exempts users with an except ban of type `connect-flood` from
+  the new-users rate limit.
+
+### Changes:
+* The maxperip and connthrottle rejection messages were changed to give
+  more information about the IPv6 range limitation and now include the
+  text `[maxperip]` or `[connthrottle]` so you can see which limit is hit.
+* Update shipped libs: Sodium (1.0.22)
+* The event names `CONNTHROTLE_*` were renamed to `CONNTHROTTLE_*` as the
+  former was a typo.
+* `link::verify-certificate` is now deprecated and a config warning is
+  shown when set. It verified the peer certificate against CA trust.
+  However, newly issued certs from CAs (such as Let's Encrypt) tend to
+  no longer have the Client Authentication EKU, so linking with
+  `verify-certificate` often fails nowadays. Admins should switch to
+  `spkifp` for server linking, like everyone else.
+
+### Fixes:
+* [set::connthrottle::disabled-when::reputation-gathering](https://www.unrealircd.org/docs/Connthrottle)
+  has been set to 1 week in example.conf since 2019, but if you did
+  not have that item it defaulted to 0 (no delay). Now 1 week.
+* OOB write if a URL callback returns a response that is more than
+  2GB. This only affects memory-backed callbacks: centralblocklist,
+  spamreport and log with destination webhook. In practice these
+  are likely all trusted servers.
+* [WEBIRC](https://www.unrealircd.org/docs/WebIRC_block):
+  if you had an `except ban` block with type `connect-flood` for the
+  gateway then we were accidentally also exempting the end-users
+  behind it, rendering connect-flood useless.
+
+### Developers and protocol:
+* `OutgoingWebRequest` has a new `max_size` field (in bytes) that caps
+  the response size for memory-backed downloads. It defaults to
+  `DOWNLOAD_MAX_SIZE` (1MB). Ignored for file-backed downloads. This
+  protects against rogue or misbehaving webservers sending huge
+  responses that could otherwise fill server memory.
+
+UnrealIRCd 6.2.4
+=================
+
+This version comes with optional multiline support (not loaded by default
+yet), a lot of new conditional config and crule functions, and a new
+GeoIP engine. A bug has been fixed that could confuse services with +e/+I
+extbans and a Windows crash bug has been resolved.
+
+### Enhancements:
+* Add [IRCv3 draft/multiline](https://ircv3.net/specs/extensions/multiline)
+  support with a default max-lines of `15` for `known-users` and `7` for
+  `unknown-users` (with max-bytes `5250` and `1500` respectively). This
+  allows pasting a short snippet of code, config file, text from a site, etc.
+  Multiline guarantees:
+  * You will see the entire text with no delay between lines
+  * You won't see another persons chat half-way through such a paste
+  * For multiline supporting clients it is clear that all the text
+    belongs to each other, which can make selecting/copying easier.
+
+  This basically means short snippets/pastes like that can be completely on
+  IRC again. No need for a pastebin. Though, you may still need such a service
+  if you are pasting more lines.
+
+  Only a couple clients support sending multiline at the moment:
+  IRCCloud, WeeChat, ObsidianIRC, Halloy, and the bots BitBot & Limnoria.
+  Incoming lines with multilines are displayed normally in unsupporting clients,
+  using a fallback algorithm.
+
+  IMPORTANT: This module is **not loaded by default** at the moment. You need
+  a `loadmodule "multiline";` to use it. In a future version of UnrealIRCd we
+  will likely load this module by default, after receiving more feedback.
+
+  Regarding limits and anti-flood:
+  * This obeys the limit of `+f` subtype `t`: so `+f [5t]:15` (max 5 lines
+    per 15 secs) means multiline max lines is also 5 for that channel.
+  * A new `+f` subtype `p` ("pastes") is introduced. Any multiline of
+    3 or more lines is considered a paste and something like `+f [2p]:15`
+    then only allows 2 pastes per 15 seconds in the channel. If any user
+    tries to do a 3rd paste within that period it is rejected.
+  * The [anti-flood profile](https://www.unrealircd.org/docs/Channel_anti-flood_settings)
+    `normal` has a limit of `[2p]:15`. Only profile `very-relaxed` allows
+    more: `[3p]:15`. Profiles `strict` and `very-strict` use `[1p]:15`.
+
+  Finally, it is good to know that multiline events are atomic, in chat
+  history too. This means you will either get them in full or not at all.
+  If your channel has `+H 5:60m` and the last message was a multiline event
+  of 15 lines, then we allow to temporarily overshoot and you will see 15 lines
+  (the alternative would be 0 lines, which would be worse).
+* [Conditional config](https://www.unrealircd.org/docs/Defines_and_conditional_config):
+  * New built-in variables `$CONFDIR`, `$DATADIR`, `$LOGDIR`, `$TMPDIR`,
+    `$DOCDIR`, `$MODULESDIR` and `$MAXCONNECTIONS` are now
+    available for use in the configuration file.
+  * Variable comparisons now support `>`, `>=`, `<`, `<=` in addition
+    to `==` and `!=`. Uses natural ordering, so version strings and
+    numbers compare correctly. Example: `@if $MAXCONNECTIONS >= 1024`.
+  * New `@if minimum-version("6.2.4")` to check if the UnrealIRCd version
+    is at least the specified version.
+  * New `@if module-exists("modulename")` to check if a module exists on
+    disk. You can use this with a subsequent `loadmodule` and config items,
+    this can be handy with 3rd party modules.
+  * New `@if module-version("modulename")` to check or compare the
+    version of a loaded module.
+    Example: `@if module-version("third/something") >= "2.0"`.
+    This obviously only works if the module is loaded.
+  * New `@if file-exists("filename")` to check if a file exists.
+    Paths are relative to the conf directory, or absolute if starting
+    with `/`.
+  * New `@else` support: `@if ... @else ... @endif`.
+  * New `@if environment("VARNAME")` to check if an environment variable
+    is set. Can also be used with comparison operators, e.g.,
+    `@if environment("SOMETHING") == "myserver"`.
+  * `@define` can now use value-returning functions, e.g.,
+    `@define $ADMIN_EMAIL environment("ADMIN_EMAIL")` to set a
+    variable from an OS environment variable.
+  * New `@error "message"` and `@warning "message"` directives.
+    Eg for `if !environment("ADMIN")` `@error "ADMIN env var not defined"`.
+* New [crule functions](https://www.unrealircd.org/docs/Crule)
+  for use in security groups, match items, spamfilter::rule:
+  * Boolean checks: `is_oper`, `is_local`, `has_swhois`
+  * Match functions: `match_class`, `match_server`, `match_vhost`,
+    `match_realhost`, `match_away`, `match_asname`, `match_operlogin`,
+    `match_operclass`, `match_sni`, `match_tls_cipher`
+  * Numeric counters: `connections_from_ip`, `channel_count`,
+    `channel_member_count`, `idle_time`
+  * Traffic stats: `messages_sent`, `messages_received`, `bytes_sent`,
+    `bytes_received`
+  * Text analysis: `text_byte_count`, `text_character_count`, `word_count`,
+    `uppercase_percentage`, `digit_percentage`, `non_ascii_percentage`,
+    `max_repeat_count`, `mixed_utf8_score`, `unicode_block_count`
+  * The [documentation](https://www.unrealircd.org/docs/Crule)
+    also has been rewritten to group the functions for a better overall view.
+
+### Changes:
+* [GeoIP](https://www.unrealircd.org/docs/GeoIP):
+  * We now ship with our own mmdb engine and `geoip_mmdb` (replacement for
+    `geoip_maxmind`).
+  * The `./Config` question on GeoIP now defaults to `mmdb`. Existing users
+    who upgrade will keep their current setting (usually `classic`) for now.
+  * Both `geoip_classic` and `geoip_mmdb` now receive automatic updates
+  * You can `@define $NO_DEFAULT_GEOIP "1"` to disable auto configuration
+    and updates.
+* Errors in TLS certificate/keys are now fatal errors.
+
+### Fixes:
+* The Windows version could crash after a few minutes due to missing MODVAR.
+* Downgrade shipped sodium library to 1.0.20 to fix arm64 compile issue
+  with 1.0.21.
+* Compile fixes when using OpenSSL 4.0.0
+* Named extbans in `+e` and `+I` were supposed to be sent with letters instead
+  of names to servers not supporting them (UnrealIRCd older than 6 and Services),
+  but this was not the case. Is now fixed. This bug caused for example Anope 2.0.x
+  to get confused if `KEEPMODES` was on a channel and you had like `+I ~account:xyz`.
+  Then next time anope relinked it would add `+I *!*@~account:xyz`. This bug is
+  present since 6.0.0 already. It does not affect `+b`.
+* In some uncommon cases, `X25519MLKEM768` was not negotiated when it could
+  have. So we now try harder. In technical terms we now use tuple syntax
+  for the TLS group to signal that we can afford a Hello Retry Request.
+
+### Developers and protocol:
+* If the "multiline" module is loaded then we support
+  [`draft/multiline`](https://ircv3.net/specs/extensions/multiline):
+  *  If the client does not support draft/multiline then messages are shown using
+     the fallback implementation, as outlined in that draft (basically just regular
+     PRIVMSGs, nothing weird).
+  * Clients that do support the spec send a BATCH start + PRIVMSGs + BATCH end and
+    are allowed to send that in one go with no delay (no ratelimiting). As long
+    as they obey the advertised limits. They will get fake lag applied *after* the
+    multiline batch, with an algorithm similar to current fakelag but with a hard
+    cap of maximum 15s fakelag, which means 5s max effective fakelag.
+  * We use different limits for the `unknown-users` and `known-users` security group.
+    Clients will receive their `multiline=max-bytes=xx,maxlines=yy` message that
+    are a hard limit. If a client transitions between security groups, for example
+    because you authenticated to services, you will receive a `CAP NEW` event.
+  * Channels that have +f with subtype 't' set, such as +f `[5t]:15` which means
+    a maximum of 5 lines per 15 seconds, will also enforce that limit for multiline,
+    so max 5 lines in a multiline. If a client hits that limit, and this is possibly
+    since clients usually don't understand +f and only look at the CAP max-lines,
+    then we simply reject the multiline event at BATCH end.
+  * Similarly, we have a new +f subtype 'p' which limits the number of pastes in
+    a channel (which is 3+ line multiline events). For example, `+f [2p]:15` allows
+    two pastes in a channel per 15 seconds. A third one in the same timeframe
+    will result in a rejection after the BATCH end.
+  * In UnrealIRCd we buffer and will only do (nearly) all access checks and such
+    at the BATCH end, and not at the PRIVMSG/NOTICE stage, so only at the BATCH end
+    the client will receive an error message such as cannot send due to `+m`.
+    Since clients will send all events at full speed in one go, this makes sense
+    to do at BATCH end as well.
+  * In UnrealIRCd we do not allow CTCPs in multiline events. These make no sense and
+    also would result in different behavior in multiline vs non-multiline clients.
+  * Multiline events are checked per-line as usual, through spamfilter too, and
+    they are as-a-whole put again through spamfilter to avoid bypassing spamfilters.
+  * Multiline has a slightly odd interaction with `draft/history`:
+    * One multiline event is counted as 1 line. So if you use `CHATHISTORY` to
+      request 5 lines, you could get like 19 lines if one of those "5 lines" is
+      actually a multiline of 15 lines, or even 5*15 lines.
+    * As mentioned, for `+H` we allow to overshoot the max history lines if
+      the latest message was a multiline message. So for `+H 5:1h` and a
+      15 line multiline batch, we will store 15 lines. Multiline batches are
+      atomic so the alternative would be to store 0 lines, which is worse in
+      terms of functionality than temporarily overshooting the line limit.
+    * The spec requires only the 1st line to have a `msgid` and lines 2-N of a
+      multiline event are forbidden to have a `msgid`. They can have other tags, though.
+    * As expected, we show multiline nested batches in history if `draft/multiline`
+      is supported.
+* ClientContext now has a new field `fake_lag_added_msec` and there is
+  a new function `subtract_fake_lag()`. This is used by multiline, for example.
+* We now guard that `CommandOverrideAdd()` is only used in `MOD_LOAD` and
+  not in `MOD_INIT` (otherwise it is too early, commands may not exist yet).
+  Similarly, we ensure `EfunctionAdd()` is used from `MOD_TEST`. Clear
+  errors are logged in both cases if you try to do otherwise.
+
+UnrealIRCd 6.2.3
+-----------------
+
+This version comes with several new features, improved security,
+and a number of bug fixes.
+
+### Enhancements:
+* In [ban user { }](https://www.unrealircd.org/docs/Ban_user_block)
+  you can now use `soft yes;` to make it a
+  [Soft ban](https://www.unrealircd.org/docs/Soft_ban).
+* Two new settings that control the use of `SETIDENT` and `SETNAME`:
+  * [set::allow-setident](https://www.unrealircd.org/docs/Set_block#set::allow-setident)
+    now defaults to 'no'. Previously, users were allowed to change their
+    ident (with
+    [allow-userhost-change](https://www.unrealircd.org/docs/Set_block#set::allow-userhost-change)
+    restrictions).
+  * [set::allow-setname](https://www.unrealircd.org/docs/Set_block#set::allow-setname)
+    has a default of 'yes' which matches older UnrealIRCd versions (no change).
+    Perhaps some admins who use controlled (web)chats may want to set this to 'no'
+    if users are not supposed to change their realname/gecos. This is likely rare.
+* The [module manager](https://www.unrealircd.org/docs/Module_manager)
+  now allows 3rd party modules to specify external libraries and build flags.
+* If a recipient has user mode `+D` or `+R` and the sender is not allowed
+  to send a `PRIVMSG` or `NOTICE` then we will silently drop `TAGMSG`.
+  This prevents silent discovery of who blocks you. Plus, you no longer
+  get confusing "cannot send" errors due to typing indicator, when you
+  have not even sent a message yet.
+* DNS caching when using built-in HTTPS, like for
+  [Central Blocklist](https://www.unrealircd.org/docs/Central_Blocklist).
+  This is especially important if the server is under a heavy attack.
+* Security hardening: we now build with stronger mitigations (full RELRO,
+  CFI, zero-initialized stack variables, stricter bounds checking).
+  These are now also verified in BuildBot (CI). Several of these protections
+  also require support in the OS/distro, CFI even in the processor,
+  but when supported we will use it.
+* The [extjwt { } block](https://www.unrealircd.org/docs/Extjwt_block)
+  is now documented, the code has been updated to use the latest
+  OpenSSL APIs and is now tested in the test framework.
+
+### Changes:
+* If SASL authentication is ongoing and a client sends `CAP END`, we now wait for
+  SASL to succeed/fail/timeout before actually ending the handshake. This solves
+  a race condition for IRC clients that don't follow the recommendation in the
+  [SASL specification](https://ircv3.net/specs/extensions/sasl-3.1#the-authenticate-command).
+* Slightly raise default
+  [set::handshake-timeout](https://www.unrealircd.org/docs/Set_block#set::handshake-timeout)
+  from 30 to 40 seconds.
+* `./unrealircd module install` now gives a non-zero exit code on failure
+* Update shipped libs: PCRE2 (10.47), Jansson (2.15.0), Sodium (1.0.21)
+* Small updates to `HELPOP`.
+
+### Fixes:
+* Crash when using [Extended Server Bans](https://www.unrealircd.org/docs/Extended_server_bans)
+  with invalid syntax in the configuration file.
+* Crash on malicious server-to-server traffic (OOB write), bug introduced in 6.2.2.
+* Linking could cause splitting the wrong server when a duplicate link was detected.
+* Don't show confusing `CENTRAL_BLOCKLIST_TIMEOUT` message when user is shunned by CBL.
+* Various memory leaks were fixed. Mostly a couple of bytes on `REHASH` in
+  some specific configurations such as tld::channel (harmless),
+  but a bigger one was with blacklists using soft bans, where it could leak
+  memory if an IP had hits from multiple blacklist blocks.
+* In JSON-RPC `user.part` the oper-only-viewable message tag
+  [unrealircd.org/issued-by](https://www.unrealircd.org/issued-by) was missing.
+* Building UnrealIRCd failed if DNS was not working. Obviously building
+  should never fail if internet or our infra is unreachable. Additionally,
+  we now skip over the module upgrade step (and fetching the module repository)
+  if there are no 3rd party modules installed.
+
+### Removed:
+* set::restrict-extendedbans has been removed because it didn't work since
+  UnrealIRCd 6.0.0. If you don't want a particular extended ban to be used
+  then simply don't load the module or use
+  [blacklist-module](https://www.unrealircd.org/docs/Blacklist-module_directive).
+  For example, assuming you include `modules.default.conf` and you don't
+  want the `~quiet` extban then add `blacklist-module "extbans/quiet";`
+  to your `unrealircd.conf`.
+
+### Developers and protocol:
+* We now compile with `-fstrict-flex-arrays=3` which means strict bounds
+  checking on structs is possible. This also means you should no longer
+  use tricks like `struct { char name[1]; }` and then alloc with size
+  `sizeof(struct)+strlen(name)`, instead you should use `char name[]`
+  and alloc `sizeof(struct)+strlen(name)+1`. Or just use a fixed value
+  like `char name[32]`, of course.
+* We now compile with `-ftrivial-auto-var-init=zero` which helps against
+  use of uninitialized variables on the stack. This is a safety net only,
+  you should still initialize variables.
+* Third party modules can now set module::compile-flags in the
+  [module manager block](https://www.unrealircd.org/docs/Special_module_manager_block_in_source_file).
+  This allows linking with libraries for that specific module, or
+  any other custom compile flags.
+* All 3rd party modules are now compiled via the modulemanager,
+  including unmanaged ones. This also means that modules that do not
+  exist in any repository, can still use a module manager block to
+  specify compile flags.
+* Setting ChanMode `+l` with a value of zero or less will cause an
+  `ERR_INVALIDMODEPARAM` message, instead of transforming it to `1`.
+* In `HOOKTYPE_CAN_SEND_TO_USER` you can now choose not to set `*errmsg`
+  to silently drop a message. Generally you should set the message, though.
+  This is used now by +D/+R if user is blocked and it is a TAGMSG.
+* Calling `register_user()` more than once for the same user should
+  never be done (causes a desync). We now guard against this in the
+  function. Similarly, we guard against allowing shunned users in.
+* As mentioned under "Changes": if SASL authentication is ongoing
+  and a client sends `CAP END`, we now wait for SASL to succeed/fail/timeout
+  before actually ending the handshake. This solves a race condition
+  for IRC clients that don't follow the recommendation in the
+  [SASL specification](https://ircv3.net/specs/extensions/sasl-3.1#the-authenticate-command).
+  Our approach would be problematic for clients who deliberately wanted
+  to abort SASL due to a timeout but UnrealIRCd already handles SASL
+  timeout via [set::sasl-timeout](https://www.unrealircd.org/docs/Set_block#set::sasl-timeout)
+  which is 15 seconds by default, so that's fine.
+* Changes in [JSON-RPC](https://www.unrealircd.org/docs/JSON-RPC):
+  * Mask/match items and security groups now get expanded in the same way.
+    All properties are expanded properly. Extended fields like `account`
+    and `country` are expanded directly under, just like any other items.
+  * [`security_group`](https://www.unrealircd.org/docs/JSON-RPC:Security_group):
+    Uses the new style output (see previous).
+  * [`server_ban`](https://www.unrealircd.org/docs/JSON-RPC:Server_ban) and
+    [`server_ban_exception`](https://www.unrealircd.org/docs/JSON-RPC:Server_ban_exception)
+    now show the expanded mask items in `match` rather than `"name":"<match item>"`.
+    This does mean that `name` will be missing if it is a `match` item.
+  * [`spamfilter`](https://www.unrealircd.org/docs/JSON-RPC:Spamfilter):
+    here too, mask item is expanded if it is used in spamfilter.except.
+    so it actually works now.
+* We now consistently enforce `MAXBANLEN`, which is the same as `MODEBUFLEN` (200)
+  throughout the code. Only when unsetting we allow to exceed this.
+  Third party extended bans should obey this limit and use something
+  quite a bit lower (due to potential stacking). In our own code, the
+  highest final-element-without-stacking extban is `~text` with 150 bytes.
+* Regular bans on `nick!user@host` can now be 106 bytes
+  (`NICKLEN+USERLEN+HOSTLEN+3`) rather than 79 (`USERLEN+HOSTLEN+6`).
+  It should be noted that in extbans, such as `~quiet` you could
+  already use 106+.
+
+UnrealIRCd 6.2.2
+-----------------
 
 This is a small maintenance release to fix some minor issues.
 

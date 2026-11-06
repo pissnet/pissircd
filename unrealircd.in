@@ -11,12 +11,13 @@ TMPDIR="@TMPDIR@"
 SCRIPTDIR="@SCRIPTDIR@"
 MODULESDIR="@MODULESDIR@"
 DOCDIR="@DOCDIR@"
+OPENSSLPATH="@OPENSSLPATH@"
 
 # When built with --with-asan, ASan does not dump core by default because
 # older gcc/clang might dump a 16TB core file. We explicitly enable it here.
 export ASAN_OPTIONS="abort_on_error=1:disable_coredump=0:unmap_shadow_on_exit=1:log_path=$TMPDIR/unrealircd_asan:detect_leaks=0"
 
-if [ ! -f $IRCD ]; then
+if [ "$1" != "mkcert" ] && [ ! -f $IRCD ]; then
 	echo "ERROR: Could not find the IRCd binary ($IRCD)"
 	echo "This could mean two things:"
 	echo "1) You forgot to run 'make install' after running 'make'"
@@ -268,6 +269,84 @@ __EOF__
 	echo "Thanks!"
 elif [ "$1" = "spki" -o "$1" = "spkifp" ] ; then
 	$UNREALIRCDCTL $*
+elif [ "$1" = "mkcert" ] ; then
+	TLSDIR="$CONFDIR/tls"
+	BASE="$CONFDIR/tls/server"
+	if [ "$2" != "" ]; then
+		# Optional second argument: path prefix for the certificate/key
+		BASE="$2"
+	fi
+	KEY="$BASE.key.pem"
+	CERT="$BASE.cert.pem"
+	OUTDIR=`dirname "$CERT"`
+
+	# Locate the OpenSSL configuration template. After 'make install' it
+	# lives in the TLS directory. During initial setup (./Config), before
+	# 'make install' has run, we use the copy in the source directory.
+	if [ -f "$TLSDIR/tls.cnf" ]; then
+		CNF="$TLSDIR/tls.cnf"
+	elif [ -f "$BUILDDIR/doc/conf/tls/tls.cnf" ]; then
+		CNF="$BUILDDIR/doc/conf/tls/tls.cnf"
+	else
+		echo "ERROR: Could not find the OpenSSL template tls.cnf"
+		echo "(Neither $TLSDIR/tls.cnf nor $BUILDDIR/doc/conf/tls/tls.cnf exists)"
+		exit 1
+	fi
+
+	if [ ! -d "$OUTDIR" ]; then
+		mkdir -p "$OUTDIR" || exit 1
+		chmod 0700 "$OUTDIR"
+	fi
+
+	REPLACED=0
+	if [ -f "$CERT" ] || [ -f "$KEY" ]; then
+		echo "This command will replace your existing certificate and key."
+		echo "(in $OUTDIR)"
+		echo -n "Do you wish to proceed? [Y|N] "
+		read answer
+		case "$answer" in
+			[Yy]*)
+				;;
+			*)
+				echo "Aborted."
+				exit 1
+				;;
+		esac
+		REPLACED=1
+	fi
+
+	# Keep a backup of the previous certificate and key, so it can be
+	# restored if the newly generated one turns out to be unsuitable.
+	if [ "$REPLACED" = 1 ]; then
+		for f in "$KEY" "$CERT"; do
+			if [ -f "$f" ]; then
+				cp -p "$f" "$f.old"
+			fi
+		done
+	fi
+
+	# Make sure the private key is not briefly world/group readable while
+	# it is being generated.
+	umask 077
+
+	echo "Generating server key..."
+	"$OPENSSLPATH" ecparam -out "$KEY" -name secp384r1 -genkey || exit 1
+	echo "Generating self-signed certificate..."
+	"$OPENSSLPATH" req -new -x509 -key "$KEY" -config "$CNF" -days 3650 -sha256 -out "$CERT" || exit 1
+
+	echo "Setting permissions on the certificate and key..."
+	chmod o-rwx "$KEY" "$CERT"
+	chmod g-rwx "$KEY" "$CERT"
+
+	echo ""
+	echo "A new self-signed certificate and key have been generated in $OUTDIR"
+	if [ "$REPLACED" = 1 ]; then
+		echo "Your previous certificate and key were backed up with a .old suffix."
+	fi
+	echo "Note: the SPKI fingerprint has changed. If other servers link to you and"
+	echo "      verify a fingerprint, you need to update the link { } block on their side."
+	echo "If UnrealIRCd is currently running, load the new certificate with:"
+	echo "  $0 reloadtls"
 elif [ "$1" = "hot-patch" -o "$1" = "cold-patch" ] ; then
 	if [ ! -d "$BUILDDIR" ]; then
 		echo "UnrealIRCd source not found. Sorry, it is not possible to patch."
@@ -321,6 +400,7 @@ elif [ "$1" = "hot-patch" -o "$1" = "cold-patch" ] ; then
 			echo "This is for your information only. It is possible to continue."
 			echo "Press ENTER to continue, or CTRL+C to abort."
 			echo "If in doubt, see https://www.unrealircd.org/docs/FAQ#upgrade-verify-failed"
+			read answer
 			export NOGPG=1
 		fi
 	else
@@ -329,6 +409,8 @@ elif [ "$1" = "hot-patch" -o "$1" = "cold-patch" ] ; then
 		echo "or 'sudo pkg install gnupg' on FreeBSD."
 		echo "When 'gpg' is installed then the UnrealIRCd patch script can"
 		echo "verify the digital signature of the download file."
+		echo "Press ENTER to continue, or CTRL+C to abort."
+		read answer
 		export NOGPG=1
 	fi
 
@@ -440,6 +522,8 @@ else
 	echo "unrealircd upgrade       Upgrade UnrealIRCd to the latest version (or the next available"
  	echo "                         release candidate if the --rc argument is used)"
 	echo "unrealircd mkpasswd      Hash a password"
+	echo "unrealircd mkcert        Create or replace the self-signed TLS certificate"
+	echo "                         (optionally pass a path prefix; normal path rules apply)"
 	echo "unrealircd version       Display the UnrealIRCd version"
 	echo "unrealircd module        Install and uninstall 3rd party modules"
 	echo "unrealircd croncheck     For use in crontab: this checks if the server"

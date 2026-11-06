@@ -7,7 +7,7 @@ dnl src/windows/unrealinst.iss
 dnl doc/Config.header
 dnl src/version.c.SH
 
-AC_INIT([unrealircd], [6.2.2], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
+AC_INIT([unrealircd], [6.2.8-git], [https://bugs.unrealircd.org/], [], [https://unrealircd.org/])
 AC_CONFIG_SRCDIR([src/ircd.c])
 AC_CONFIG_HEADER([include/setup.h])
 AC_CONFIG_AUX_DIR([autoconf])
@@ -18,8 +18,6 @@ if test "x$enable_dynamic_linking" = "x"; then
 	exit 1
 fi
 
-dnl Save CFLAGS, use this when building the libraries like c-ares
-orig_cflags="$CFLAGS"
 
 dnl Save build directory early on (used in our m4 macros too)
 BUILDDIR_NOW="`pwd`"
@@ -34,13 +32,13 @@ UNREAL_VERSION_MAJOR=["2"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MAJOR], [$UNREAL_VERSION_MAJOR], [Major version number (e.g.: Y for X.Y.Z)])
 
 # Minor version number (e.g.: Z in X.Y.Z)
-UNREAL_VERSION_MINOR=["2"]
+UNREAL_VERSION_MINOR=["8"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_MINOR], [$UNREAL_VERSION_MINOR], [Minor version number (e.g.: Z for X.Y.Z)])
 
 # The version suffix such as a beta marker or release candidate
 # marker. (e.g.: -rcX for unrealircd-3.2.9-rcX). This macro is a
 # string instead of an integer because it contains arbitrary data.
-UNREAL_VERSION_SUFFIX=[""]
+UNREAL_VERSION_SUFFIX=["-git"]
 AC_DEFINE_UNQUOTED([UNREAL_VERSION_SUFFIX], ["$UNREAL_VERSION_SUFFIX"], [Version suffix such as a beta marker or release candidate marker. (e.g.: -rcX for unrealircd-3.2.9-rcX)])
 
 AC_PATH_PROG(RM,rm)
@@ -67,6 +65,9 @@ dnl Check for compiler
 AC_PROG_CC_C99
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"],
 	[AC_MSG_ERROR([No C99 compiler was found. Please install gcc or clang and other build tools. Eg, on Debian/Ubuntu you probably want to run the following as root: apt-get install build-essential ])])
+
+dnl Save CFLAGS, use this when building the libraries like c-ares
+orig_cflags="$CFLAGS"
 
 dnl Check for make moved down, so the above compiler check takes precedence.
 AC_CHECK_PROG(MAKER, gmake, gmake, make)
@@ -144,8 +145,20 @@ AS_IF([test x"$hardening" != x"no"], [
   # Added in UnrealIRCd 5.0.5 (default on Ubuntu 19.10)
   check_cc_flag([-fstack-clash-protection], [HARDEN_CFLAGS="$HARDEN_CFLAGS -fstack-clash-protection"])
 
-  # Control Flow Enforcement (ROP hardening) - requires CPU hardware support
+  # Control Flow Enforcement (ROP hardening) - requires CPU hardware support (x64)
   check_cc_flag([-fcf-protection], [HARDEN_CFLAGS="$HARDEN_CFLAGS -fcf-protection"])
+
+  # Similar to above but for arm64
+  check_cc_flag([-mbranch-protection=standard], [HARDEN_CFLAGS="$HARDEN_CFLAGS -mbranch-protection=standard"])
+
+  # Since we have moved from name[1] to name[], setting this should help bounds checking:
+  check_cc_flag([-fstrict-flex-arrays=3], [HARDEN_CFLAGS="$HARDEN_CFLAGS -fstrict-flex-arrays=3"])
+
+  # This zeroes out variables that COULD be accessed before being set.
+  # We are generally very careful about this in our code, but 3rd party
+  # modules are not always so careful. And still useful in case we ourselves
+  # screw up.
+  check_cc_flag([-ftrivial-auto-var-init=zero], [HARDEN_CFLAGS="$HARDEN_CFLAGS -ftrivial-auto-var-init=zero"])
 
   # At the link step, we might want -pie (GCC) or -Wl,-pie (Clang on OS X)
   #
@@ -165,6 +178,12 @@ AC_SUBST([HARDEN_CFLAGS])
 AC_SUBST([HARDEN_LDFLAGS])
 AC_SUBST([HARDEN_BINCFLAGS])
 AC_SUBST([HARDEN_BINLDFLAGS])
+
+# Hardening flags to be used for libraries
+# These are the same of what we have, except we leave out -fstrict-flex-arrays=3
+# since that would break in some cases of code, and we don't control the libs..
+HARDEN_LIB_CFLAGS=$(echo "$HARDEN_CFLAGS" | sed 's/-fstrict-flex-arrays=3//')
+HARDEN_LIB_LDFLAGS="$HARDEN_LDFLAGS"
 
 # End of flag tests.
 CC="$saved_CC"
@@ -349,7 +368,7 @@ if test "$ac_cv_underscore" = "yes"; then
 	AC_DEFINE([UNDERSCORE], [], [Define if your system prepends an underscore to symbols])
 fi
 
-MODULEFLAGS="$ac_cv_pic $DYNAMIC_LDFLAGS"
+MODULEFLAGS="$ac_cv_pic $DYNAMIC_LDFLAGS $HARDEN_LDFLAGS"
 dnl DYNAMIC_LINKING is not meant to be defined in include/setup.h, it's 
 dnl defined in the Makefiles using -D. Having it defined globally will
 dnl only cause braindamage and symbol collisions :-D.
@@ -539,6 +558,11 @@ AS_IF([test "x$with_privatelibdir" = "xno"],
 AS_IF([test "x$PRIVATELIBDIR" = "x"],
 	[LDFLAGS_PRIVATELIBS=""],
 	[AC_DEFINE_UNQUOTED([PRIVATELIBDIR], ["$PRIVATELIBDIR"], [Define the location of private libraries])
+		# Create the private library directory now with restrictive permissions.
+		# This must happen here rather than in the Makefile because the bundled
+		# libraries are installed into it during configure. It must also work when
+		# configure is run directly without ./Config having created it first.
+		mkdir -p "$PRIVATELIBDIR" && chmod 0700 "$PRIVATELIBDIR"
 		LDFLAGS_PRIVATELIBS="-Wl,-rpath,$PRIVATELIBDIR"
 		LDFLAGS="$LDFLAGS $LDFLAGS_PRIVATELIBS"
 		export LDFLAGS])
@@ -623,7 +647,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libpcre2*])],[has
 
 AS_IF([test "$has_system_pcre2" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW PCRE2 RELEASE!
-pcre2_version="10.45"
+pcre2_version="10.47"
 AC_MSG_RESULT(extracting PCRE2 regex library)
 cur_dir=`pwd`
 cd extras
@@ -641,10 +665,13 @@ fi
 AC_MSG_RESULT(configuring PCRE2 regex library)
 cd pcre2-$pcre2_version
 save_cflags="$CFLAGS"
-CFLAGS="$orig_cflags"
-export CFLAGS
+save_ldflags="$LDFLAGS"
+CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+LDFLAGS="$HARDEN_LIB_LDFLAGS"
+export CFLAGS LDFLAGS
 ./configure --enable-jit --enable-shared --prefix=$cur_dir/extras/pcre2 --libdir=$PRIVATELIBDIR || exit 1
 CFLAGS="$save_cflags"
+LDFLAGS="$save_ldflags"
 AC_MSG_RESULT(compiling PCRE2 regex library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing PCRE2 regex library)
@@ -690,6 +717,11 @@ else
 	cp argon2.tar.gz.bak argon2.tar.gz
 	tar xf argon2.tar
 fi
+save_cflags="$CFLAGS"
+save_ldflags="$LDFLAGS"
+CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+LDFLAGS="$HARDEN_LIB_LDFLAGS"
+export CFLAGS LDFLAGS
 AC_MSG_RESULT(compiling Argon2 library)
 cd argon2-$argon2_version
 $ac_cv_prog_MAKER || exit 1
@@ -702,7 +734,9 @@ $ac_cv_prog_MAKER install PREFIX=$cur_dir/extras/argon2 || exit 1
 # lead to a crash of the currently running IRCd.
 rm -f "$PRIVATELIBDIR/"libargon2*
 # Now copy the new library files:
-cp -av $cur_dir/extras/argon2/lib/* $PRIVATELIBDIR/
+cp -av $cur_dir/extras/argon2/lib/* $PRIVATELIBDIR/ || exit 1
+CFLAGS="$save_cflags"
+LDFLAGS="$save_ldflags"
 ARGON2_CFLAGS="-I$cur_dir/extras/argon2/include"
 AC_SUBST(ARGON2_CFLAGS)
 ARGON2_LIBS="-L$PRIVATELIBDIR -largon2"
@@ -718,7 +752,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libsodium*])],[ha
 
 AS_IF([test "$has_system_sodium" = "no"],[
 dnl REMEMBER TO CHANGE WITH A NEW SODIUM RELEASE!
-sodium_version="1.0.20"
+sodium_version="1.0.22"
 AC_MSG_RESULT(extracting sodium library)
 cur_dir=`pwd`
 cd extras
@@ -736,10 +770,13 @@ fi
 AC_MSG_RESULT(compiling sodium library)
 cd libsodium-$sodium_version
 save_cflags="$CFLAGS"
-CFLAGS="$orig_cflags"
-export CFLAGS
+save_ldflags="$LDFLAGS"
+CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+LDFLAGS="$HARDEN_LIB_LDFLAGS"
+export CFLAGS LDFLAGS
 ./configure --prefix=$cur_dir/extras/sodium --libdir=$PRIVATELIBDIR --enable-shared --disable-static --enable-opt || exit 1
 CFLAGS="$save_cflags"
+LDFLAGS="$save_ldflags"
 AC_MSG_RESULT(compiling sodium resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing sodium resolver library)
@@ -768,7 +805,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libcares*])],[has
 
 AS_IF([test "$has_system_cares" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW C-ARES RELEASE!
-cares_version="1.34.6"
+cares_version="1.34.8"
 AC_MSG_RESULT(extracting c-ares resolver library)
 cur_dir=`pwd`
 cd extras
@@ -785,10 +822,13 @@ fi
 AC_MSG_RESULT(configuring c-ares library)
 cd c-ares-$cares_version
 save_cflags="$CFLAGS"
-CFLAGS="$orig_cflags"
-export CFLAGS
+save_ldflags="$LDFLAGS"
+CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+LDFLAGS="$HARDEN_LIB_LDFLAGS"
+export CFLAGS LDFLAGS
 ./configure --prefix=$cur_dir/extras/c-ares --libdir=$PRIVATELIBDIR --enable-shared --disable-tests || exit 1
 CFLAGS="$save_cflags"
+LDFLAGS="$save_ldflags"
 AC_MSG_RESULT(compiling c-ares resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing c-ares resolver library)
@@ -843,7 +883,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libjansson*])],[h
 
 AS_IF([test "$has_system_jansson" = "no"],[
 dnl REMEMBER TO CHANGE WITH A NEW JANSSON RELEASE!
-jansson_version="2.14.1"
+jansson_version="2.15.0"
 AC_MSG_RESULT(extracting jansson library)
 cur_dir=`pwd`
 cd extras
@@ -861,10 +901,13 @@ fi
 AC_MSG_RESULT(compiling jansson library)
 cd jansson-$jansson_version
 save_cflags="$CFLAGS"
-CFLAGS="$orig_cflags"
-export CFLAGS
+save_ldflags="$LDFLAGS"
+CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+LDFLAGS="$HARDEN_LIB_LDFLAGS"
+export CFLAGS LDFLAGS
 ./configure --prefix=$cur_dir/extras/jansson --libdir=$PRIVATELIBDIR --enable-shared --disable-static || exit 1
 CFLAGS="$save_cflags"
+LDFLAGS="$save_ldflags"
 AC_MSG_RESULT(compiling jansson resolver library)
 $ac_cv_prog_MAKER || exit 1
 AC_MSG_RESULT(installing jansson resolver library)
@@ -893,8 +936,15 @@ CHECK_LIBCURL
 
 CHECK_GEOIP_CLASSIC
 
-CHECK_LIBMAXMINDDB
+dnl This does not do much anymore but..
+AC_ARG_ENABLE(mmdb,
+[AC_HELP_STRING([--enable-mmdb=no/yes],[enable GeoIP mmdb support])],
+[enable_mmdb=$enableval],
+[enable_mmdb=no])
+AS_IF([test "x$enable_mmdb" = "xyes"],
+[AC_DEFINE([GEOIP_ENGINE], ["geoip_mmdb"], [MMDB GeoIP engine])])
 
+dnl Set to include dir
 UNRLINCDIR="`pwd`/include"
 
 dnl This is at the end so the (potential) -std=gnu17 is not used

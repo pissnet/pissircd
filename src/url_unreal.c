@@ -33,8 +33,18 @@
  * and perhaps by then it is long enough that we don't need the fallback to older
  * functions.
  */
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
+
+/* Maximum length of a single chunked-transfer chunk header
+ * (the line announcing a chunk, eg. "7f\r\n", optionally with
+ * chunk extensions like "7f;name=value\r\n"). This is NOT the
+ * size of the chunk data itself.
+ * Caps how much we will buffer while waiting for the terminating
+ * LF so a server that streams a chunk header with no LF cannot
+ * grow handle->lefttoparse without bound.
+ */
+#define HTTPS_MAX_CHUNK_HEADER_LEN 256
 
 /* Structs */
 
@@ -44,26 +54,26 @@
  */
 typedef struct Download Download;
 
-struct Download
-{
+struct Download {
 	Download *prev, *next;
 	OutgoingWebRequest *request;
-	FILE *file_fd;		/**< File open for writing (otherwise NULL) */
+	FILE *file_fd;  /**< File open for writing (otherwise NULL) */
 	char *filename;
 	char *memory_data; /**< Memory for writing response (otherwise NULL) */
-	int memory_data_len; /**< Size of memory_data */
-	int memory_data_allocated; /**< Total allocated memory for 'memory_data' */
+	long long memory_data_len; /**< Size of memory_data */
+	long long memory_data_allocated; /**< Total allocated memory for 'memory_data' */
+	long long bytes_written_to_file; /**< Bytes written to file_fd so far (for max_size cap) */
 	char errorbuf[512];
-	char *hostname;		/**< Parsed hostname (from 'url') */
-	int port;		/**< Parsed port (from 'url') */
+	char *hostname;  /**< Parsed hostname (from 'url') */
+	int port;  /**< Parsed port (from 'url') */
 	char *username;
 	char *password;
-	char *document;		/**< Parsed document (from 'url') */
-	char *ip4;		/**< Resolved IP (IPv4) */
-	char *ip6;		/**< Resolved IP (IPv6) */
-	SocketType socket_type;	/**< Socket type that we are trying (SOCKET_TYPE_IPV4 or SOCKET_TYPE_IPV6) */
+	char *document;         /**< Parsed document (from 'url') */
+	char *ip4;              /**< Resolved IP (IPv4) */
+	char *ip6;              /**< Resolved IP (IPv6) */
+	SocketType socket_type; /**< Socket type that we are trying (SOCKET_TYPE_IPV4 or SOCKET_TYPE_IPV6) */
 	SSL *ssl;
-	int fd;			/**< Socket */
+	int fd;   /**< Socket */
 	int connected;
 	int got_response;
 	int http_status_code;
@@ -73,7 +83,7 @@ struct Download
 	time_t download_started;
 	int dns_refcnt;
 	TransferEncoding transfer_encoding;
-	long chunk_remaining;
+	long long chunk_remaining;
 	char *redirect_new_location;
 };
 
@@ -97,7 +107,7 @@ void https_done_cached(Download *handle);
 void https_redirect(Download *handle);
 int https_parse_header(char *buffer, int len, char **key, char **value, char **lastloc, int *end_of_request);
 char *url_find_end_of_request(char *header, int totalsize, int *remaining_bytes);
-int https_cancel(Download *handle, FORMAT_STRING(const char *pattern), ...)  __attribute__((format(printf,2,3)));
+int https_cancel(Download *handle, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 2, 3)));
 
 void url_free_handle(Download *handle)
 {
@@ -179,6 +189,8 @@ void url_start_async(OutgoingWebRequest *request)
 		request->connect_timeout = DOWNLOAD_CONNECT_TIMEOUT;
 	if (request->transfer_timeout == 0)
 		request->transfer_timeout = DOWNLOAD_TRANSFER_TIMEOUT;
+	if (request->max_size <= 0)
+		request->max_size = request->store_in_file ? DOWNLOAD_MAX_SIZE_FILE_BACKED : DOWNLOAD_MAX_SIZE_MEMORY_BACKED;
 
 	handle = safe_alloc(sizeof(Download));
 	handle->download_started = TStime();
@@ -218,7 +230,8 @@ void url_start_async(OutgoingWebRequest *request)
 
 		safe_strdup(handle->filename, tmp);
 		safe_free(file);
-	} else {
+	} else
+	{
 		handle->memory_data_allocated = URL_MEMORY_BACKED_CHUNK_SIZE;
 		handle->memory_data = safe_alloc(URL_MEMORY_BACKED_CHUNK_SIZE);
 	}
@@ -231,11 +244,12 @@ void url_start_async(OutgoingWebRequest *request)
 		else
 			safe_strdup(handle->ip4, handle->hostname);
 		unreal_https_initiate_connect(handle);
-	} else {
+	} else
+	{
 		/* Hostname, so start resolving... */
 		handle->dns_refcnt += 2;
-		ares_gethostbyname(resolver_channel_client, handle->hostname, AF_INET, url_resolve_cb, handle);
-		ares_gethostbyname(resolver_channel_client, handle->hostname, AF_INET6, url_resolve_cb, handle);
+		ares_gethostbyname(resolver_channel_https, handle->hostname, AF_INET, url_resolve_cb, handle);
+		ares_gethostbyname(resolver_channel_https, handle->hostname, AF_INET6, url_resolve_cb, handle);
 	}
 }
 
@@ -244,7 +258,7 @@ void url_resolve_cb(void *arg, int status, int timeouts, struct hostent *he)
 	Download *handle = (Download *)arg;
 	int n;
 	struct hostent *he2;
-	char ipbuf[HOSTLEN+1];
+	char ipbuf[HOSTLEN + 1];
 	const char *ip = NULL;
 
 	handle->dns_refcnt--;
@@ -273,8 +287,7 @@ void url_resolve_cb(void *arg, int status, int timeouts, struct hostent *he)
 				safe_strdup(handle->ip6, ip);
 			else
 				safe_strdup(handle->ip4, ip);
-		} else
-		if ((handle->dns_refcnt == 0) && !handle->ip4 && !handle->ip6)
+		} else if ((handle->dns_refcnt == 0) && !handle->ip4 && !handle->ip6)
 		{
 			https_cancel(handle, "Unable to resolve hostname '%s'", handle->hostname);
 			return;
@@ -301,6 +314,8 @@ void url_resolve_cb(void *arg, int status, int timeouts, struct hostent *he)
 
 void unreal_https_initiate_connect(Download *handle)
 {
+	int opt;
+
 	handle->fd = fd_socket(handle->socket_type == SOCKET_TYPE_IPV6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0, "HTTPS");
 	if (handle->fd < 0)
 	{
@@ -315,6 +330,8 @@ void unreal_https_initiate_connect(Download *handle)
 		return;
 	}
 	set_sock_opts(handle->fd, NULL, handle->socket_type);
+	opt = 204800; /* 200k */
+	setsockopt(handle->fd, SOL_SOCKET, SO_SNDBUF, (void *)&opt, sizeof(opt));
 	if (!unreal_connect(handle->fd,
 	                    (handle->socket_type == SOCKET_TYPE_IPV4) ? handle->ip4 : handle->ip6,
 	                    handle->port,
@@ -353,7 +370,8 @@ void unreal_https_connect_handshake(int fd, int revents, void *data)
 			handle->socket_type = SOCKET_TYPE_IPV6;
 			unreal_https_initiate_connect(handle);
 			return;
-		} else {
+		} else
+		{
 			/* Fatal error */
 			https_cancel(handle, "Connect failed: %s", STRERROR(sockerr));
 			return;
@@ -402,7 +420,7 @@ int https_connect(Download *handle)
 	if ((ssl_err = SSL_connect(handle->ssl)) <= 0)
 	{
 		ssl_err = SSL_get_error(handle->ssl, ssl_err);
-		switch(ssl_err)
+		switch (ssl_err)
 		{
 			case SSL_ERROR_SYSCALL:
 				if (ERRNO == P_EINTR || ERRNO == P_EWOULDBLOCK || ERRNO == P_EAGAIN)
@@ -410,7 +428,7 @@ int https_connect(Download *handle)
 					/* Hmmm. This implementation is different than in unreal_tls_accept().
 					 * One of them must be wrong -- better check! (TODO)
 					 */
-					fd_setselect(handle->fd, FD_SELECT_READ|FD_SELECT_WRITE, https_connect_retry, handle);
+					fd_setselect(handle->fd, FD_SELECT_READ | FD_SELECT_WRITE, https_connect_retry, handle);
 					return 0;
 				}
 				return https_fatal_tls_error(ssl_err, ERRNO, handle);
@@ -459,7 +477,8 @@ int https_fatal_tls_error(int ssl_error, int my_errno, Download *handle)
 	if (two && *two)
 	{
 		snprintf(additional_info, sizeof(additional_info), ": %s", two);
-	} else {
+	} else
+	{
 		*additional_info = '\0';
 	}
 #else
@@ -469,7 +488,8 @@ int https_fatal_tls_error(int ssl_error, int my_errno, Download *handle)
 	if (one && *one && two && *two)
 	{
 		snprintf(additional_info, sizeof(additional_info), ": %s: %s", one, two);
-	} else {
+	} else
+	{
 		*additional_info = '\0';
 	}
 #endif
@@ -484,6 +504,7 @@ int https_fatal_tls_error(int ssl_error, int my_errno, Download *handle)
 int url_parse(const char *url, char **hostname, int *port, char **username, char **password, char **document)
 {
 	char *p, *p2;
+	const char *q;
 	static char hostbuf[256];
 	static char documentbuf[512];
 
@@ -492,6 +513,12 @@ int url_parse(const char *url, char **hostname, int *port, char **username, char
 
 	if (strncmp(url, "https://", 8))
 		return 0;
+
+	/* Refuse control chars and space (would allow request-line injection). */
+	for (q = url; *q; q++)
+		if (*q <= ' ')
+			return 0;
+
 	url += 8; /* skip over https:// part */
 
 	p = strchr(url, '/');
@@ -532,7 +559,8 @@ int url_parse(const char *url, char **hostname, int *port, char **username, char
 
 int https_connect_send_header(Download *handle)
 {
-	char buf[8192];
+	char *buf;
+	size_t buflen = 8192;
 	char hostandport[512];
 	int ssl_err;
 	char *host;
@@ -542,44 +570,48 @@ int https_connect_send_header(Download *handle)
 	handle->connected = 1;
 	snprintf(hostandport, sizeof(hostandport), "%s:%d", handle->hostname, handle->port);
 
+	if (handle->request->body)
+		buflen += strlen(handle->request->body);
+	buf = safe_alloc(buflen);
+
 	/* Prepare the header */
 	if (handle->request->http_method == HTTP_METHOD_GET)
 	{
-		snprintf(buf, sizeof(buf), "GET %s HTTP/1.1\r\n"
-				    "User-Agent: UnrealIRCd %s\r\n"
-				    "Host: %s\r\n"
-				    "Connection: close\r\n",
-				    handle->document,
-				    VERSIONONLY,
-				    hostandport);
-	} else
-	if (handle->request->http_method == HTTP_METHOD_POST)
+		snprintf(buf, buflen, "GET %s HTTP/1.1\r\n"
+		                      "User-Agent: UnrealIRCd %s\r\n"
+		                      "Host: %s\r\n"
+		                      "Connection: close\r\n",
+		         handle->document,
+		         VERSIONONLY,
+		         hostandport);
+	} else if (handle->request->http_method == HTTP_METHOD_POST)
 	{
 		if (!handle->request->body || !strlen(handle->request->body))
 		{
-			snprintf(buf, sizeof(buf), "POST %s HTTP/1.1\r\n"
-					    "User-Agent: UnrealIRCd %s\r\n"
-					    "Host: %s\r\n"
-					    "Connection: close\r\n",
-					    handle->document,
-					    VERSIONONLY,
-					    hostandport);
-		} else {
+			snprintf(buf, buflen, "POST %s HTTP/1.1\r\n"
+			                      "User-Agent: UnrealIRCd %s\r\n"
+			                      "Host: %s\r\n"
+			                      "Connection: close\r\n",
+			         handle->document,
+			         VERSIONONLY,
+			         hostandport);
+		} else
+		{
 			char add_default_content_type = 0;
 			if (!find_nvplist(handle->request->headers, "Content-Type"))
 				add_default_content_type = 1;
 
-			snprintf(buf, sizeof(buf), "POST %s HTTP/1.1\r\n"
-					    "User-Agent: UnrealIRCd %s\r\n"
-					    "Host: %s\r\n"
-					    "%s"
-					    "Content-Length: %ld\r\n"
-					    "Connection: close\r\n",
-					    handle->document,
-					    VERSIONONLY,
-					    hostandport,
-					    add_default_content_type ? "Content-Type: application/x-www-form-urlencoded\r\n" : "",
-					    (long)strlen(handle->request->body));
+			snprintf(buf, buflen, "POST %s HTTP/1.1\r\n"
+			                      "User-Agent: UnrealIRCd %s\r\n"
+			                      "Host: %s\r\n"
+			                      "%s"
+			                      "Content-Length: %ld\r\n"
+			                      "Connection: close\r\n",
+			         handle->document,
+			         VERSIONONLY,
+			         hostandport,
+			         add_default_content_type ? "Content-Type: application/x-www-form-urlencoded\r\n" : "",
+			         (long)strlen(handle->request->body));
 		}
 	} else
 		abort();
@@ -590,10 +622,10 @@ int https_connect_send_header(Download *handle)
 		char header[512];
 
 		snprintf(wbuf, sizeof(wbuf), "%s:%s", handle->username, handle->password);
-		if (b64_encode(wbuf, strlen(wbuf), obuf, sizeof(obuf)-1) > 0)
+		if (b64_encode(wbuf, strlen(wbuf), obuf, sizeof(obuf) - 1) > 0)
 		{
 			snprintf(header, sizeof(header), "Authorization: Basic %s\r\n", obuf);
-			strlcat(buf, header, sizeof(buf));
+			strlcat(buf, header, buflen);
 		}
 	}
 	if (handle->request->cachetime > 0)
@@ -602,8 +634,8 @@ int https_connect_send_header(Download *handle)
 		if (datestr)
 		{
 			// snprintf_append...
-			snprintf(buf+strlen(buf), sizeof(buf)-strlen(buf),
-				 "If-Modified-Since: %s\r\n", datestr);
+			snprintf(buf + strlen(buf), buflen - strlen(buf),
+			         "If-Modified-Since: %s\r\n", datestr);
 		}
 	}
 	if (handle->request->headers)
@@ -617,16 +649,17 @@ int https_connect_send_header(Download *handle)
 				snprintf(nbuf, sizeof(nbuf), "%s: %s\r\n", n->name, n->value);
 			else
 				snprintf(nbuf, sizeof(nbuf), "%s:\r\n", n->name);
-			if (strlen(buf)+strlen(nbuf) > sizeof(buf)-8)
+			if (strlen(buf) + strlen(nbuf) > 8192 - 8)
 				break;
-			strlcat(buf, nbuf, sizeof(buf));
+			strlcat(buf, nbuf, buflen);
 		}
 	}
-	strlcat(buf, "\r\n", sizeof(buf));
+	strlcat(buf, "\r\n", buflen);
 	if (handle->request->body)
-		strlcat(buf, handle->request->body, sizeof(buf));
+		strlcat(buf, handle->request->body, buflen);
 
 	ssl_err = SSL_write(handle->ssl, buf, strlen(buf));
+	safe_free(buf);
 	if (ssl_err < 0)
 		return https_fatal_tls_error(ssl_err, ERRNO, handle);
 	fd_setselect(handle->fd, FD_SELECT_WRITE, NULL, handle);
@@ -640,7 +673,7 @@ void https_receive_response(int fd, int revents, void *data)
 	int n;
 	char readbuf[2048];
 
-	n = SSL_read(handle->ssl, readbuf, sizeof(readbuf)-1);
+	n = SSL_read(handle->ssl, readbuf, sizeof(readbuf) - 1);
 	if (n == 0)
 	{
 		/* Graceful close */
@@ -675,8 +708,7 @@ void https_receive_response(int fd, int revents, void *data)
 	{
 		https_handle_response_header(handle, readbuf, n);
 		return;
-	} else
-	if (handle->got_response)
+	} else if (handle->got_response)
 	{
 		if (!https_handle_response_body(handle, readbuf, n))
 			return; /* handle is already freed! */
@@ -690,7 +722,7 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 	int r, end_of_request;
 	char netbuf[4096], netbuf2[4096];
 	char *lastloc = NULL;
-	int maxcopy, nprefix=0;
+	int maxcopy, nprefix = 0;
 	int totalsize;
 
 	/* Yeah, totally paranoid: */
@@ -715,10 +747,10 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 		https_cancel(handle, "Oversized line in HTTP response");
 		return 0;
 	}
-	memcpy(netbuf+nprefix, readbuf, n); /* SAFE: see checking above */
+	memcpy(netbuf + nprefix, readbuf, n); /* SAFE: see checking above */
 	totalsize = n + nprefix;
 	netbuf[totalsize] = '\0';
-	memcpy(netbuf2, netbuf, totalsize+1); // copy, including the "always present \0 at the end just in case we use strstr etc".
+	memcpy(netbuf2, netbuf, totalsize + 1); // copy, including the "always present \0 at the end just in case we use strstr etc".
 	safe_free(handle->lefttoparse);
 
 	/** Now step through the lines.. **/
@@ -735,8 +767,7 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 				/* 304 Not Modified: cache hit */
 				https_done_cached(handle);
 				return 0;
-			}
-			else if ((handle->http_status_code >= 301) && (handle->http_status_code <= 308))
+			} else if ((handle->http_status_code >= 301) && (handle->http_status_code <= 308))
 			{
 				/* Redirect */
 				if (handle->request->max_redirects == 0)
@@ -747,23 +778,19 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 				/* Let it continue.. we handle it later, as we need to
 				 * receive the "Location" header as well.
 				 */
-			}
-			else if (handle->http_status_code != 200)
+			} else if (handle->http_status_code != 200)
 			{
 				/* HTTP Failure code */
 				https_cancel(handle, "HTTP Error: %s", value);
 				return 0;
 			}
-		} else
-		if (!strcasecmp(key, "Last-Modified") && value)
+		} else if (!strcasecmp(key, "Last-Modified") && value)
 		{
 			handle->last_modified = rfc2616_time_to_unix_time(value);
-		} else
-		if (!strcasecmp(key, "Location") && value)
+		} else if (!strcasecmp(key, "Location") && value)
 		{
 			safe_strdup(handle->redirect_new_location, value);
-		} else
-		if (!strcasecmp(key, "Transfer-Encoding") && value)
+		} else if (!strcasecmp(key, "Transfer-Encoding") && value)
 		{
 			if (value && !strcasecmp(value, "chunked"))
 				handle->transfer_encoding = TRANSFER_ENCODING_CHUNKED;
@@ -790,7 +817,8 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 			{
 				https_redirect(handle);
 				return 0; /* this old request dies */
-			} else {
+			} else
+			{
 				https_cancel(handle, "HTTP Redirect encountered but no URL specified!?");
 				return 0;
 			}
@@ -804,26 +832,31 @@ int https_handle_response_header(Download *handle, char *readbuf, int n)
 		}
 	}
 
-	if (lastloc)
+	if (!end_of_request && lastloc)
 	{
-		/* Last line was cut somewhere, save it for next round. */
+		/* Save a cut-off (incomplete) header line for the next packet.
+		 * Only while still reading headers: once end_of_request is set,
+		 * lastloc points at body data that https_handle_response_body()
+		 * already owns via handle->lefttoparse/lefttoparselen, so touching
+		 * it here would desync those two and cause an out-of-bounds read.
+		 */
 		safe_strdup(handle->lefttoparse, lastloc);
 	}
 
 	return 1;
 }
 
-int https_handle_response_body_memory(Download *handle, const char *ptr, int write_sz)
+long long https_handle_response_body_memory(Download *handle, const char *ptr, long long write_sz)
 {
 	// DUPLICATE CODE: same as src/url_curl.c, well... sortof
-	int size_required = handle->memory_data_len + write_sz;
+	long long size_required = handle->memory_data_len + write_sz;
 
 	if (handle->memory_data == NULL)
 		return 0; /* Normally does not happen as it is preallocated, but could happen upon unwinding cancels.. */
 
 	if (size_required >= handle->memory_data_allocated - 1) // the -1 is for zero termination, even though it is binary..
 	{
-		int newsize = ((size_required / URL_MEMORY_BACKED_CHUNK_SIZE)+1)*URL_MEMORY_BACKED_CHUNK_SIZE;
+		long long newsize = ((size_required / URL_MEMORY_BACKED_CHUNK_SIZE) + 1) * URL_MEMORY_BACKED_CHUNK_SIZE;
 		char *newptr = realloc(handle->memory_data, newsize);
 		if (!newptr)
 		{
@@ -858,9 +891,23 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 	{
 		/* Ohh.. so easy! */
 		if (handle->request->store_in_file == 0)
+		{
+			if (handle->memory_data_len + pktsize > handle->request->max_size)
+			{
+				https_cancel(handle, "Response too large (maximum: %lld bytes)", handle->request->max_size);
+				return 0; /* handle freed */
+			}
 			https_handle_response_body_memory(handle, readbuf, pktsize);
-		else if (handle->file_fd)
+		} else if (handle->file_fd)
+		{
+			if (handle->bytes_written_to_file + pktsize > handle->request->max_size)
+			{
+				https_cancel(handle, "Response too large (maximum: %lld bytes)", handle->request->max_size);
+				return 0; /* handle freed */
+			}
 			fwrite(readbuf, 1, pktsize, handle->file_fd);
+			handle->bytes_written_to_file += pktsize;
+		}
 		return 1;
 	}
 
@@ -872,10 +919,11 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 		n = handle->lefttoparselen + pktsize;
 		free_this_buffer = buf = safe_alloc(n);
 		memcpy(buf, handle->lefttoparse, handle->lefttoparselen);
-		memcpy(buf+handle->lefttoparselen, readbuf, pktsize);
+		memcpy(buf + handle->lefttoparselen, readbuf, pktsize);
 		safe_free(handle->lefttoparse);
 		handle->lefttoparselen = 0;
-	} else {
+	} else
+	{
 		n = pktsize;
 		buf = readbuf;
 	}
@@ -886,18 +934,34 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 		if (handle->chunk_remaining > 0)
 		{
 			/* Eat it */
-			int eat = MIN(handle->chunk_remaining, n);
+			long long eat = MIN(handle->chunk_remaining, n);
 			if (handle->request->store_in_file == 0)
+			{
+				if (handle->memory_data_len + eat > handle->request->max_size)
+				{
+					https_cancel(handle, "Response too large (maximum: %lld bytes)", handle->request->max_size);
+					safe_free(free_this_buffer);
+					return 0; /* handle freed */
+				}
 				https_handle_response_body_memory(handle, buf, eat);
-			else if (handle->file_fd)
+			} else if (handle->file_fd)
+			{
+				if (handle->bytes_written_to_file + eat > handle->request->max_size)
+				{
+					https_cancel(handle, "Response too large (maximum: %lld bytes)", handle->request->max_size);
+					safe_free(free_this_buffer);
+					return 0; /* handle freed */
+				}
 				fwrite(buf, 1, eat, handle->file_fd);
+				handle->bytes_written_to_file += eat;
+			}
 			n -= eat;
 			buf += eat;
 			handle->chunk_remaining -= eat;
 		} else
 		{
 			int gotlf = 0;
-			int i;
+			long long i;
 
 			/* First check if it is a (trailing) empty line,
 			 * eg from a previous chunk. Skip over.
@@ -906,8 +970,7 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 			{
 				buf += 2;
 				n -= 2;
-			} else
-			if ((n >= 1) && !strncmp(buf, "\n", 1))
+			} else if ((n >= 1) && !strncmp(buf, "\n", 1))
 			{
 				buf++;
 				n--;
@@ -917,7 +980,7 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 			 * this is or example '7f' + newline.
 			 * So first, check if we have a newline at all.
 			 */
-			for (i=0; i < n; i++)
+			for (i = 0; i < n; i++)
 			{
 				if (buf[i] == '\n')
 				{
@@ -931,6 +994,16 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 				 * as it does not contain an \n. Wait for more data
 				 * from the network socket.
 				 */
+				if (n > HTTPS_MAX_CHUNK_HEADER_LEN)
+				{
+					/* A chunk-size line should never be this long;
+					 * refuse to keep buffering otherwise a malicious
+					 * server can grow lefttoparse without bound.
+					 */
+					https_cancel(handle, "Chunk size line too long (%lld bytes, no LF)", n);
+					safe_free(free_this_buffer);
+					return 0;
+				}
 				if (n > 0)
 				{
 					/* Store what we have first.. */
@@ -943,10 +1016,17 @@ int https_handle_response_body(Download *handle, char *readbuf, int pktsize)
 			}
 			buf[i] = '\0'; /* cut at LF */
 			i++; /* point to next data */
-			handle->chunk_remaining = strtol(buf, NULL, 16);
+			errno = 0;
+			handle->chunk_remaining = strtoll(buf, NULL, 16);
+			if (errno == ERANGE)
+			{
+				https_cancel(handle, "Chunk size out of range: '%s'", buf);
+				safe_free(free_this_buffer);
+				return 0;
+			}
 			if (handle->chunk_remaining < 0)
 			{
-				https_cancel(handle, "Negative chunk encountered (%ld)", handle->chunk_remaining);
+				https_cancel(handle, "Negative chunk encountered (%lld)", handle->chunk_remaining);
 				safe_free(free_this_buffer);
 				return 0;
 			}
@@ -1016,7 +1096,8 @@ void https_redirect(Download *handle)
 		safe_free(r->actual_url);
 		r->actual_url = safe_alloc(sz);
 		snprintf(r->actual_url, sz, "https://%s:%d%s", handle->hostname, handle->port, handle->redirect_new_location);
-	} else {
+	} else
+	{
 		safe_strdup(r->actual_url, handle->redirect_new_location);
 	}
 
@@ -1069,7 +1150,7 @@ int https_parse_header(char *buffer, int len, char **key, char **value, char **l
 	/* Note: p *could* point to the NUL byte ('\0') */
 
 	/* Special handling for response line itself. */
-	if (!strncmp(p, "HTTP/1", 6) && (strlen(p)>=13))
+	if (!strncmp(p, "HTTP/1", 6) && (strlen(p) >= 13))
 	{
 		k = "RESPONSE";
 		p += 9;
@@ -1080,11 +1161,10 @@ int https_parse_header(char *buffer, int len, char **key, char **value, char **l
 			if (*p == '\r')
 			{
 				*p = '\0'; /* eat silently, but don't consider EOL */
-			}
-			else if (*p == '\n')
+			} else if (*p == '\n')
 			{
 				*p = '\0';
-				nextptr = p+1; /* safe, there is data or at least a \0 there */
+				nextptr = p + 1; /* safe, there is data or at least a \0 there */
 				break;
 			}
 		}
@@ -1140,11 +1220,10 @@ int https_parse_header(char *buffer, int len, char **key, char **value, char **l
 				if (*p == '\r')
 				{
 					*p = '\0'; /* eat silently, but don't consider EOL */
-				}
-				else if (*p == '\n')
+				} else if (*p == '\n')
 				{
 					*p = '\0';
-					nextptr = p+1; /* safe, there is data or at least a \0 there */
+					nextptr = p + 1; /* safe, there is data or at least a \0 there */
 					break;
 				}
 			}
@@ -1175,15 +1254,14 @@ char *url_find_end_of_request(char *header, int totalsize, int *remaining_bytes)
 		if (nextframe1 < nextframe2)
 		{
 			nextframe = nextframe1 + 4;
-		} else {
+		} else
+		{
 			nextframe = nextframe2 + 2;
 		}
-	} else
-	if (nextframe1)
+	} else if (nextframe1)
 	{
 		nextframe = nextframe1 + 4;
-	} else
-	if (nextframe2)
+	} else if (nextframe2)
 	{
 		nextframe = nextframe2 + 2;
 	}
@@ -1224,7 +1302,7 @@ void url_init(void)
 	if (!https_ctx)
 	{
 		unreal_log(ULOG_ERROR, "url", "HTTPS_NEW_CTX_FAILED", NULL,
-			   "Unable to initialize SSL context");
+		           "Unable to initialize SSL context");
 		exit(-1);
 	}
 	EventAdd(NULL, "url_socket_timeout", url_socket_timeout, NULL, 500, 0);

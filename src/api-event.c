@@ -62,7 +62,7 @@ Event *EventAdd(Module *module, const char *name, vFP event, void *data, long ev
 	newevent->last_run.tv_sec = timeofday_tv.tv_sec;
 	newevent->last_run.tv_usec = timeofday_tv.tv_usec;
 	newevent->owner = module;
-	AddListItem(newevent,events);
+	AddListItem(newevent, events);
 	if (module)
 	{
 		ModuleObject *eventobj = safe_alloc(sizeof(ModuleObject));
@@ -72,7 +72,6 @@ Event *EventAdd(Module *module, const char *name, vFP event, void *data, long ev
 		module->errorcode = MODERR_NOERROR;
 	}
 	return newevent;
-	
 }
 
 /** Mark the Event for deletion.
@@ -144,6 +143,10 @@ static void CleanupEvents(void)
 	}
 }
 
+/** Find an event by name.
+ * @param name		The event name to search for
+ * @returns The Event pointer, or NULL if not found
+ */
 Event *EventFind(const char *name)
 {
 	Event *eventptr;

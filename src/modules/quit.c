@@ -21,24 +21,23 @@
 #include "unrealircd.h"
 
 /* Defines */
-#define MSG_QUIT        "QUIT"  /* QUIT */
+#define MSG_QUIT "QUIT"  /* QUIT */
 
 /* Structs */
-ModuleHeader MOD_HEADER
-  = {
-	"quit",	/* Name of module */
-	"5.0", /* Version */
-	"command /quit", /* Short description of module */
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "quit", /* Name of module */
+    "5.0", /* Version */
+    "command /quit", /* Short description of module */
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Forward declarations */
 CMD_FUNC(cmd_quit);
 void _exit_client(Client *client, MessageTag *recv_mtags, const char *comment);
 void _exit_client_fmt(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...) __attribute__((format(printf, 3, 4)));
 void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
-void _banned_client(Client *client, const char *bantype, const char *reason, int global, int noexit);
+void _banned_client(Client *client, const char *bantype, const char *reason, TKL *tkl, int global, int noexit);
 static void remove_dependents(Client *client, Client *from, MessageTag *mtags, const char *comment, const char *splitstr);
 static void exit_one_client(Client *, MessageTag *mtags_i, const char *);
 static int should_hide_ban_reason(Client *client, const char *reason);
@@ -56,7 +55,7 @@ MOD_TEST()
 MOD_INIT()
 {
 	MARK_AS_OFFICIAL_MODULE(modinfo);
-	CommandAdd(modinfo->handle, MSG_QUIT, cmd_quit, 1, CMD_UNREGISTERED|CMD_USER|CMD_VIRUS|CMD_TEXTANALYSIS);
+	CommandAdd(modinfo->handle, MSG_QUIT, cmd_quit, 1, CMD_UNREGISTERED | CMD_USER | CMD_VIRUS | CMD_TEXTANALYSIS);
 	return MOD_SUCCESS;
 }
 
@@ -84,7 +83,8 @@ CMD_FUNC(cmd_quit)
 	{
 		strlncpy(commentbuf, parv[1], sizeof(commentbuf), iConf.quit_length);
 		comment = commentbuf;
-	} else {
+	} else
+	{
 		comment = client->name;
 	}
 
@@ -112,10 +112,10 @@ CMD_FUNC(cmd_quit)
 			if (IsDead(client))
 				return;
 		}
-		
-		if (!ValidatePermissionsForPath("immune:anti-spam-quit-message-time",client,NULL,NULL,NULL) && ANTI_SPAM_QUIT_MSG_TIME)
+
+		if (!ValidatePermissionsForPath("immune:anti-spam-quit-message-time", client, NULL, NULL, NULL) && ANTI_SPAM_QUIT_MSG_TIME)
 		{
-			if (client->local->creationtime+ANTI_SPAM_QUIT_MSG_TIME > TStime())
+			if (client->local->creationtime + ANTI_SPAM_QUIT_MSG_TIME > TStime())
 				comment = client->name;
 		}
 
@@ -156,7 +156,8 @@ CMD_FUNC(cmd_quit)
 						strlcpy(tmp, newcomment, sizeof(tmp));
 						parx[2] = tmp;
 						parx[3] = NULL;
-					} else {
+					} else
+					{
 						parx[2] = NULL;
 					}
 
@@ -172,7 +173,7 @@ CMD_FUNC(cmd_quit)
 		{
 			comment = (*(tmphook->func.stringfunc))(client, comment);
 			if (!comment)
-			{			
+			{
 				comment = client->name;
 				break;
 			}
@@ -184,8 +185,7 @@ CMD_FUNC(cmd_quit)
 			strlcpy(commentbuf2, comment, sizeof(commentbuf2));
 
 		exit_client(client, recv_mtags, commentbuf2);
-	}
-	else
+	} else
 	{
 		/* Remote quits and non-person quits always use their original comment.
 		 * Also pass recv_mtags so to keep the msgid and such.
@@ -261,8 +261,7 @@ void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, con
 		if (client->server && client->server->conf)
 		{
 			client->server->conf->refcount--;
-			if (!client->server->conf->refcount
-			  && client->server->conf->flag.temporary)
+			if (!client->server->conf->refcount && client->server->conf->flag.temporary)
 			{
 				delete_linkblock(client->server->conf);
 				client->server->conf = NULL;
@@ -274,8 +273,8 @@ void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, con
 			if (!IsServerDisconnectLogged(client))
 			{
 				unreal_log(ULOG_ERROR, "link", "LINK_DISCONNECTED", client,
-					   "Lost server link to $client [$client.ip]: $reason",
-					   log_data_string("reason", comment));
+				           "Lost server link to $client [$client.ip]: $reason",
+				           log_data_string("reason", comment));
 			}
 		}
 		free_pending_net(client);
@@ -285,12 +284,11 @@ void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, con
 			long connected_time = TStime() - client->local->creationtime;
 			RunHook(HOOKTYPE_LOCAL_QUIT, client, recv_mtags, comment);
 			unreal_log(ULOG_INFO, "connect", "LOCAL_CLIENT_DISCONNECT", client,
-				   "Client exiting: $client ($client.user.username@$client.hostname) [$client.ip] ($reason)",
-				   log_data_string("extended_client_info", get_connect_extinfo(client)),
-				   log_data_string("reason", comment),
-				   log_data_integer("connected_time", connected_time));
-		} else
-		if (IsUnknown(client))
+			           "Client exiting: $client ($client.user.username@$client.hostname) [$client.ip] ($reason)",
+			           log_data_string("extended_client_info", get_connect_extinfo(client)),
+			           log_data_string("reason", comment),
+			           log_data_integer("connected_time", connected_time));
+		} else if (IsUnknown(client))
 		{
 			RunHook(HOOKTYPE_UNKUSER_QUIT, client, recv_mtags, comment);
 		}
@@ -301,16 +299,15 @@ void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, con
 				sendto_one(client, NULL, "ERROR :Closing Link: %s (%s)", get_client_name(client, FALSE), comment);
 		}
 		close_connection(client);
-	}
-	else if (IsUser(client) && !IsULine(client))
+	} else if (IsUser(client) && !IsULine(client))
 	{
 		if (client->uplink != &me)
 		{
 			unreal_log(ULOG_INFO, "connect", "REMOTE_CLIENT_DISCONNECT", client,
-				   "Client exiting: $client ($client.user.username@$client.hostname) [$client.ip] ($reason)",
-				   log_data_string("extended_client_info", get_connect_extinfo(client)),
-				   log_data_string("reason", comment),
-				   log_data_string("from_server_name", client->user->server));
+			           "Client exiting: $client ($client.user.username@$client.hostname) [$client.ip] ($reason)",
+			           log_data_string("extended_client_info", get_connect_extinfo(client)),
+			           log_data_string("reason", comment),
+			           log_data_string("from_server_name", client->user->server));
 		}
 	}
 
@@ -339,8 +336,7 @@ void _exit_client_ex(Client *client, Client *origin, MessageTag *recv_mtags, con
 				free_client(acptr);
 
 		RunHook(HOOKTYPE_SERVER_QUIT, client, recv_mtags);
-	}
-	else if (IsUser(client) && !IsKilled(client))
+	} else if (IsUser(client) && !IsKilled(client))
 	{
 		sendto_server(client, 0, 0, recv_mtags, ":%s QUIT :%s", client->id, comment);
 	}
@@ -374,7 +370,8 @@ static int should_hide_ban_reason(Client *client, const char *reason)
 				return 1;
 		}
 		return 0;
-	} else {
+	} else
+	{
 		return HIDE_BAN_REASON == HIDE_BAN_REASON_YES ? 1 : 0;
 	}
 }
@@ -484,6 +481,7 @@ static void exit_one_client(Client *client, MessageTag *mtags_i, const char *com
  * @param client   The affected client.
  * @param bantype  The ban type, such as: "K-Lined", "G-Lined" or "realname".
  * @param reason   The specified reason.
+ * @param tkl      The server ban that caused this, or NULL (eg for realname bans).
  * @param global   Whether the ban is global (1) or for this server only (0)
  * @param noexit   Set this to NO_EXIT_CLIENT to make us not call exit_client().
  *                 This is really only needed from the accept code, do not
@@ -491,17 +489,33 @@ static void exit_one_client(Client *client, MessageTag *mtags_i, const char *com
  *
  * @note This function will call exit_client() appropriately.
  */
-void _banned_client(Client *client, const char *bantype, const char *reason, int global, int noexit)
+void _banned_client(Client *client, const char *bantype, const char *reason, TKL *tkl, int global, int noexit)
 {
 	char buf[512];
+	char idbuf[64];
+	const char *banid;
 	char *fmt = global ? iConf.reject_message_gline : iConf.reject_message_kline;
-	const char *vars[6], *values[6];
+	const char *vars[7], *values[7];
 	MessageTag *mtags = NULL;
 
 	if (!MyConnect(client))
 		abort();
 
-	RunHook(HOOKTYPE_BANNED_CLIENT, client, bantype, reason, global);
+	RunHook(HOOKTYPE_BANNED_CLIENT, client, bantype, reason, tkl, global);
+
+	/* Create the tklid. We actually need two buffers:
+	 * 1) 'idbuf' is used in snprintf() in the quit reason and is " [ID: %s]" (or "")
+	 * 2) 'banid' is used by buildvarstring() and is just "[ID: %s]" (or "")
+	 */
+	if (tkl && !BadPtr(tkl->id))
+	{
+		snprintf(idbuf, sizeof(idbuf), " [ID: %s]", tkl->id);
+		banid = idbuf + 1;
+	} else
+	{
+		idbuf[0] = '\0';
+		banid = idbuf;
+	}
 
 	/* This was: "You are not welcome on this %s. %s: %s. %s" but is now dynamic: */
 	vars[0] = "bantype";
@@ -514,8 +528,10 @@ void _banned_client(Client *client, const char *bantype, const char *reason, int
 	values[3] = GLINE_ADDRESS ? GLINE_ADDRESS : KLINE_ADDRESS; /* fallback to klineaddr */
 	vars[4] = "ip";
 	values[4] = GetIP(client);
-	vars[5] = NULL;
-	values[5] = NULL;
+	vars[5] = "banid";
+	values[5] = banid;
+	vars[6] = NULL;
+	values[6] = NULL;
 	buildvarstring(fmt, buf, sizeof(buf), vars, values);
 
 	/* This is a bit extensive but we will send both a YOUAREBANNEDCREEP
@@ -529,6 +545,9 @@ void _banned_client(Client *client, const char *bantype, const char *reason, int
 	{
 		sendnumeric(client, ERR_YOUREBANNEDCREEP, buf);
 		sendnotice(client, "%s", buf);
+	} else
+	{
+		safe_strdup(client->local->deadsocket_reject_message, buf);
 	}
 
 	/* The final message in the ERROR is shorter. */
@@ -537,22 +556,27 @@ void _banned_client(Client *client, const char *bantype, const char *reason, int
 		/* Hide the ban reason, but put the real reason in unrealircd.org/real-quit-reason */
 		MessageTag *m = safe_alloc(sizeof(MessageTag));
 		safe_strdup(m->name, "unrealircd.org/real-quit-reason");
-		snprintf(buf, sizeof(buf), "Banned (%s): %s", bantype, reason);
+		snprintf(buf, sizeof(buf), "Banned (%s): %s%s", bantype, reason, idbuf);
 		safe_strdup(m->value, buf);
 		AddListItem(m, mtags);
 		/* And the quit reason for anyone else, goes here.. */
-		snprintf(buf, sizeof(buf), "Banned (%s)", bantype);
-	} else {
-		snprintf(buf, sizeof(buf), "Banned (%s): %s", bantype, reason);
+		snprintf(buf, sizeof(buf), "Banned (%s)%s", bantype, idbuf);
+	} else
+	{
+		snprintf(buf, sizeof(buf), "Banned (%s): %s%s", bantype, reason, idbuf);
 	}
 
 	if (noexit != NO_EXIT_CLIENT)
 	{
 		exit_client(client, mtags, buf);
-	} else {
+	} else
+	{
 		/* Special handling for direct Z-line code */
 		client->flags |= CLIENT_FLAG_DEADSOCKET_IS_BANNED;
 		dead_socket(client, buf);
+		safe_free_message_tags(client->local->deadsocket_quit_mtags);
+		client->local->deadsocket_quit_mtags = mtags;
+		mtags = NULL;
 	}
 	safe_free_message_tags(mtags);
 }

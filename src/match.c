@@ -33,7 +33,9 @@ ID_Copyright("(C) 1990 Jarkko Oikarinen");
 
 u_char touppertab[], tolowertab[];
 #define tolowertab2 tolowertab
-#define lc(x) tolowertab2[x]
+#define lc(x)       tolowertab2[x]
+
+pcre2_match_context *unreal_pcre2_match_ctx = NULL;
 
 /* Match routine for special cases where escaping is needed in a normal fashion.
  * Checks a string ('name') against a globbing(+more) pattern ('mask').
@@ -55,35 +57,35 @@ int match_esc(const char *mask, const char *name)
 	const u_char *ma = NULL;
 	const u_char *na = name;
 
-	while(1)
+	while (1)
 	{
 		if (*m == '*')
 		{
 			while (*m == '*') /* collapse.. */
 				m++;
-			ma = m; 
+			ma = m;
 			na = n;
 		}
-		
+
 		if (!*m)
 		{
 			if (!*n)
 				return 1;
 			if (!ma)
 				return 0;
-			for (m--; (m > (const u_char *)mask) && (*m == '?'); m--);
+			for (m--; (m > (const u_char *)mask) && (*m == '?'); m--)
+				;
 			if (*m == '*')
 				return 1;
 			m = ma;
 			n = ++na;
-		} else
-		if (!*n)
+		} else if (!*n)
 		{
 			while (*m == '*') /* collapse.. */
 				m++;
 			return (*m == 0);
 		}
-		
+
 		if (*m != '?')
 		{
 			if (*m == '\\')
@@ -117,35 +119,35 @@ int match_simple(const char *mask, const char *name)
 	const u_char *ma = NULL;
 	const u_char *na = name;
 
-	while(1)
+	while (1)
 	{
 		if (*m == '*')
 		{
 			while (*m == '*') /* collapse.. */
 				m++;
-			ma = m; 
+			ma = m;
 			na = n;
 		}
-		
+
 		if (!*m)
 		{
 			if (!*n)
 				return 1;
 			if (!ma)
 				return 0;
-			for (m--; (m > (const u_char *)mask) && (*m == '?'); m--);
+			for (m--; (m > (const u_char *)mask) && (*m == '?'); m--)
+				;
 			if (*m == '*')
 				return 1;
 			m = ma;
 			n = ++na;
-		} else
-		if (!*n)
+		} else if (!*n)
 		{
 			while (*m == '*') /* collapse.. */
 				m++;
 			return (*m == 0);
 		}
-		
+
 		if ((lc(*m) != lc(*n)) && !((*m == '_') && (*n == ' ')) && (*m != '?'))
 		{
 			if (!ma)
@@ -186,8 +188,7 @@ char *collapse(char *pattern)
 				break;
 			else
 				s++;
-		}
-		else if (*s == '*')
+		} else if (*s == '*')
 		{
 			if (*(t = s1 = s + 1) == '*')
 				while (*t == '*')
@@ -212,11 +213,11 @@ char *collapse(char *pattern)
  *		<0, if s1 lexicographically less than s2
  *		>0, if s1 lexicographically greater than s2
  */
-int  smycmp(const char *s1, const char *s2)
+int smycmp(const char *s1, const char *s2)
 {
 	u_char *str1;
 	u_char *str2;
-	int  res;
+	int res;
 
 	str1 = (u_char *)s1;
 	str2 = (u_char *)s2;
@@ -231,6 +232,7 @@ int  smycmp(const char *s1, const char *s2)
 	return (res);
 }
 
+/* clang-format off */
 u_char tolowertab[] = {
 	0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa,
 	0xb, 0xc, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14,
@@ -265,7 +267,9 @@ u_char tolowertab[] = {
 	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
 	0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 };
+/* clang-format on */
 
+/* clang-format off */
 u_char touppertab[] = {
 	0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa,
 	0xb, 0xc, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14,
@@ -300,7 +304,9 @@ u_char touppertab[] = {
 	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
 	0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 };
+/* clang-format on */
 
+/* clang-format off */
 u_char char_atribs[] = {
 /* 0-7 */ CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL,
 /* 8-12 */ CNTRL, CNTRL | SPACE, CNTRL | SPACE, CNTRL | SPACE,
@@ -368,6 +374,18 @@ u_char char_atribs[] = {
 /* e0-ef */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 /* f0-ff */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
+/* clang-format on */
+
+/* Set up global match state. Called once at startup. */
+void init_match(void)
+{
+	unreal_pcre2_match_ctx = pcre2_match_context_create(NULL);
+	if (unreal_pcre2_match_ctx)
+	{
+		pcre2_set_match_limit(unreal_pcre2_match_ctx, UNREAL_PCRE2_MATCH_LIMIT);
+		pcre2_set_depth_limit(unreal_pcre2_match_ctx, UNREAL_PCRE2_DEPTH_LIMIT);
+	}
+}
 
 /** Free up all resources of an Match entry (including the struct itself).
  * NOTE: this function may (also) be called for Match structs that have only been
@@ -384,7 +402,7 @@ void unreal_delete_match(Match *m)
 	safe_free(m);
 }
 
-Match *unreal_create_match(MatchType type, const char *str, char **error)
+Match *unreal_create_match(MatchType type, const char *str, const char **error)
 {
 	Match *m = safe_alloc(sizeof(Match));
 	static char errorbuf[512];
@@ -393,23 +411,22 @@ Match *unreal_create_match(MatchType type, const char *str, char **error)
 
 	safe_strdup(m->str, str);
 	m->type = type;
-	
+
 	if (m->type == MATCH_SIMPLE)
 	{
 		/* Nothing to do */
-	}
-	else if (m->type == MATCH_PCRE_REGEX)
+	} else if (m->type == MATCH_PCRE_REGEX)
 	{
 		int errorcode = 0;
 		PCRE2_SIZE erroroffset = 0;
 		int options = 0;
 		char buf2[512];
-		
+
 		if ((loop.config_status < CONFIG_STATUS_LOAD) ? tempiConf.spamfilter_utf8 : iConf.spamfilter_utf8)
-			options = PCRE2_CASELESS|PCRE2_MATCH_INVALID_UTF;
+			options = PCRE2_CASELESS | PCRE2_MATCH_INVALID_UTF;
 		else
-			options = PCRE2_CASELESS|PCRE2_NEVER_UTF|PCRE2_NEVER_UCP;
-		
+			options = PCRE2_CASELESS | PCRE2_NEVER_UTF | PCRE2_NEVER_UCP;
+
 		m->ext.pcre2_expr = pcre2_compile(str, PCRE2_ZERO_TERMINATED, options, &errorcode, &erroroffset, NULL);
 		if (m->ext.pcre2_expr == NULL)
 		{
@@ -431,8 +448,8 @@ Match *unreal_create_match(MatchType type, const char *str, char **error)
 	} else if (m->type == MATCH_NONE)
 	{
 		/* Nothing to do */
-	}
-	else {
+	} else
+	{
 		/* Unknown type, how did that happen ? */
 		unreal_delete_match(m);
 		return NULL;
@@ -441,28 +458,46 @@ Match *unreal_create_match(MatchType type, const char *str, char **error)
 }
 
 /** Try to match an Match entry ('m') against a string ('str').
+ * @param error  If non-NULL, set to an error string when the regex could not
+ *               complete (eg. a resource limit was hit), or to NULL otherwise.
+ *               Points to a static buffer, valid until the next unreal_match().
  * @returns 1 if matched, 0 if not.
  * @note These (more logical) return values are opposite to the match_simple() function.
  */
-int unreal_match(Match *m, const char *str)
+int unreal_match(Match *m, const char *str, const char **error)
 {
+	static char errbuf[256];
+
+	if (error)
+		*error = NULL;
+
 	if (m->type == MATCH_SIMPLE)
 	{
 		if (match_simple(m->str, str))
 			return 1;
 		return 0;
 	}
-	
+
 	if (m->type == MATCH_PCRE_REGEX)
 	{
 		pcre2_match_data *md = pcre2_match_data_create(9, NULL);
 		int ret;
-		
-		ret = pcre2_match(m->ext.pcre2_expr, str, PCRE2_ZERO_TERMINATED, 0, 0, md, NULL); /* run the regex */
+
+		ret = pcre2_match(m->ext.pcre2_expr, str, PCRE2_ZERO_TERMINATED, 0, 0, md, unreal_pcre2_match_ctx); /* run the regex */
 		pcre2_match_data_free(md); /* yeah, we never use it. unfortunately argument must be non-NULL for pcre2_match() */
-		
+
 		if (ret > 0)
-			return 1; /* MATCH */		
+			return 1; /* MATCH */
+
+		if (error && (ret < 0) && (ret != PCRE2_ERROR_NOMATCH) && (ret != PCRE2_ERROR_PARTIAL))
+		{
+			/* Regex did not finish (eg. hit the match, depth or JIT stack limit).
+			 * Report it so the caller can warn. We still return no-match.
+			 */
+			*errbuf = '\0';
+			pcre2_get_error_message(ret, errbuf, sizeof(errbuf));
+			*error = errbuf;
+		}
 		return 0; /* NO MATCH */
 	}
 
@@ -511,7 +546,7 @@ int fast_badword_match(ConfigItem_badword *badword, const char *line)
 		return (our_strcasestr(line, badword->word) ? 1 : 0);
 
 	p = line;
-	while((p = our_strcasestr(p, badword->word)))
+	while ((p = our_strcasestr(p, badword->word)))
 	{
 		if (!(badword->type & BADW_TYPE_FAST_L))
 		{
@@ -525,7 +560,7 @@ int fast_badword_match(ConfigItem_badword *badword, const char *line)
 		}
 		/* Looks like it matched */
 		return 1;
-next:
+	next:
 		p += bwlen;
 	}
 	return 0;
@@ -551,7 +586,8 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 	int run = 1;
 	int cleaned = 0;
 
-	while(run) {
+	while (run)
+	{
 		pold = our_strcasestr(pold, badword->word);
 		if (!pold)
 			break;
@@ -560,15 +596,19 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 		if (searchn == -1)
 			searchn = strlen(badword->word);
 		/* Hunt for start of word */
-		if (pold > line) {
-			for (startw = pold; (!iswseperator(*startw) && (startw != line)); startw--);
+		if (pold > line)
+		{
+			for (startw = pold; (!iswseperator(*startw) && (startw != line)); startw--)
+				;
 			if (iswseperator(*startw))
 				startw++; /* Don't point at the space/seperator but at the word! */
-		} else {
+		} else
+		{
 			startw = pold;
 		}
 
-		if (!(badword->type & BADW_TYPE_FAST_L) && (pold != startw)) {
+		if (!(badword->type & BADW_TYPE_FAST_L) && (pold != startw))
+		{
 			/* not matched */
 			pold++;
 			continue;
@@ -578,9 +618,11 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 		 * Fix for bug #4909: word will be at least 'searchn' long so we can skip
 		 * 'searchn' bytes and avoid stopping half-way the badword.
 		 */
-		for (endw = pold+searchn; ((*endw != '\0') && (!iswseperator(*endw))); endw++);
+		for (endw = pold + searchn; ((*endw != '\0') && (!iswseperator(*endw))); endw++)
+			;
 
-		if (!(badword->type & BADW_TYPE_FAST_R) && (pold+searchn != endw)) {
+		if (!(badword->type & BADW_TYPE_FAST_R) && (pold + searchn != endw))
+		{
 			/* not matched */
 			pold++;
 			continue;
@@ -589,9 +631,11 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 		cleaned = 1; /* still too soon? Syzop/20050227 */
 
 		/* Do we have any not-copied-yet data? */
-		if (poldx != startw) {
+		if (poldx != startw)
+		{
 			int tmp_n = startw - poldx;
-			if (pnew + tmp_n >= c_eol) {
+			if (pnew + tmp_n >= c_eol)
+			{
 				/* Partial copy and return... */
 				memcpy(pnew, poldx, c_eol - pnew);
 				*c_eol = '\0';
@@ -603,8 +647,10 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 		}
 		/* Now update the word in buf (pnew is now something like startw-in-new-buffer */
 
-		if (replacen) {
-			if ((pnew + replacen) >= c_eol) {
+		if (replacen)
+		{
+			if ((pnew + replacen) >= c_eol)
+			{
 				/* Partial copy and return... */
 				memcpy(pnew, replacew, c_eol - pnew);
 				*c_eol = '\0';
@@ -616,10 +662,12 @@ int fast_badword_replace(ConfigItem_badword *badword, const char *line, char *bu
 		poldx = pold = endw;
 	}
 	/* Copy the last part */
-	if (*poldx) {
+	if (*poldx)
+	{
 		strncpy(pnew, poldx, c_eol - pnew);
 		*(c_eol) = '\0';
-	} else {
+	} else
+	{
 		*pnew = '\0';
 	}
 	return cleaned;
@@ -662,8 +710,7 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
 					*blocked = 1;
 					return NULL;
 				}
-			}
-			else
+			} else
 			{
 				int n;
 				/* fast_badword_replace() does size checking so we can use 512 here instead of 4096 */
@@ -673,23 +720,21 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
 				strcpy(cleanstr, buf);
 				memset(buf, 0, sizeof(buf)); /* regexp likes this somehow */
 			}
-		} else
-		if (this_word->type & BADW_TYPE_REGEX)
+		} else if (this_word->type & BADW_TYPE_REGEX)
 		{
 			if (this_word->action == BADWORD_BLOCK)
 			{
 				pcre2_match_data *md = pcre2_match_data_create(9, NULL);
 				int ret;
 
-				ret = pcre2_match(this_word->pcre2_expr, cleanstr, PCRE2_ZERO_TERMINATED, 0, 0, md, NULL); /* run the regex */
+				ret = pcre2_match(this_word->pcre2_expr, cleanstr, PCRE2_ZERO_TERMINATED, 0, 0, md, unreal_pcre2_match_ctx); /* run the regex */
 				pcre2_match_data_free(md); /* yeah, we never use it. unfortunately argument must be non-NULL for pcre2_match() */
 				if (ret > 0)
 				{
 					*blocked = 1;
 					return NULL;
 				}
-			}
-			else
+			} else
 			{
 				pcre2_match_data *md;
 				int ret;
@@ -697,18 +742,19 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
 				int start, end;
 
 				ptr = cleanstr; /* set pointer to start of string */
-				while(1) {
+				while (1)
+				{
 					md = pcre2_match_data_create(9, NULL);
 					/* ^^ we need to free 'md' in ALL circumstances.
 					 * remember this if you break or continue in this loop!
 					 */
-					ret = pcre2_match(this_word->pcre2_expr, ptr, PCRE2_ZERO_TERMINATED, 0, 0, md, NULL); /* run the regex */
+					ret = pcre2_match(this_word->pcre2_expr, ptr, PCRE2_ZERO_TERMINATED, 0, 0, md, unreal_pcre2_match_ctx); /* run the regex */
 					if (ret > 0)
 					{
 						dd = pcre2_get_ovector_pointer(md);
 						start = (int)dd[0];
 						end = (int)dd[1];
-						if ((start < 0) || (end < 0) || (start > strlen(ptr)) || (end > strlen(ptr)+1))
+						if ((start < 0) || (end < 0) || (start > strlen(ptr)) || (end > strlen(ptr) + 1))
 						{
 							unreal_log(ULOG_FATAL, "main", "BUG_STRIPBADWORDS_PCRE2_MATCH_OOB", NULL,
 							           "[BUG] pcre2_match() returned an ovector with OOB start/end: $start/$end, len $length: '$buf'",
@@ -728,7 +774,7 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
 						matchlen += m;
 						strlncat(buf, ptr, sizeof buf, start);
 						if (this_word->replace)
-							strlcat(buf, this_word->replace, sizeof buf); 
+							strlcat(buf, this_word->replace, sizeof buf);
 						else
 							strlcat(buf, REPLACEWORD, sizeof buf);
 						ptr += end; /* Set pointer after the match pos */
@@ -739,7 +785,7 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
 					break; /* NOMATCH: we are done! */
 				}
 				/* All the better to eat you with! */
-				strlcat(buf, ptr, sizeof buf);	
+				strlcat(buf, ptr, sizeof buf);
 				memcpy(cleanstr, buf, sizeof cleanstr);
 				memset(buf, 0, sizeof(buf));
 				if (matchlen == stringlen)
@@ -761,14 +807,16 @@ const char *stripbadwords(const char *str, ConfigItem_badword *start_bw, int *bl
  */
 const char *badword_config_check_regex(const char *str, int fastsupport, int check_broadness)
 {
-	int regex=0;
+	int regex = 0;
 	const char *tmp;
 	static char errorbuf[512];
 
 	if (fastsupport)
 	{
-		for (tmp = str; *tmp; tmp++) {
-			if (!isalnum(*tmp) && !(*tmp >= 128)) {
+		for (tmp = str; *tmp; tmp++)
+		{
+			if (!isalnum(*tmp) && !(*tmp >= 128))
+			{
 				if ((str == tmp) && (*tmp == '*'))
 					continue;
 				if ((*(tmp + 1) == '\0') && (*tmp == '*'))
@@ -786,7 +834,7 @@ const char *badword_config_check_regex(const char *str, int fastsupport, int che
 		int options = 0;
 		char buf2[512];
 
-		options = PCRE2_CASELESS|PCRE2_NEVER_UTF|PCRE2_NEVER_UCP;
+		options = PCRE2_CASELESS | PCRE2_NEVER_UTF | PCRE2_NEVER_UCP;
 
 		expr = pcre2_compile(str, PCRE2_ZERO_TERMINATED, options, &errorcode, &erroroffset, NULL);
 		if (expr == NULL)
@@ -812,13 +860,17 @@ int badword_config_process(ConfigItem_badword *ca, const char *str)
 	/* The fast badwords routine can do: "blah" "*blah" "blah*" and "*blah*",
 	 * in all other cases use regex.
 	 */
-	for (tmp = str; *tmp; tmp++) {
-		if (!isalnum(*tmp) && !(*tmp >= 128)) {
-			if ((str == tmp) && (*tmp == '*')) {
+	for (tmp = str; *tmp; tmp++)
+	{
+		if (!isalnum(*tmp) && !(*tmp >= 128))
+		{
+			if ((str == tmp) && (*tmp == '*'))
+			{
 				ast_l = 1; /* Asterisk at the left */
 				continue;
 			}
-			if ((*(tmp + 1) == '\0') && (*tmp == '*')) {
+			if ((*(tmp + 1) == '\0') && (*tmp == '*'))
+			{
 				ast_r = 1; /* Asterisk at the right */
 				continue;
 			}
@@ -835,7 +887,7 @@ int badword_config_process(ConfigItem_badword *ca, const char *str)
 		ca->type = BADW_TYPE_REGEX;
 		safe_strdup(ca->word, str);
 
-		options = PCRE2_CASELESS|PCRE2_NEVER_UTF|PCRE2_NEVER_UCP;
+		options = PCRE2_CASELESS | PCRE2_NEVER_UTF | PCRE2_NEVER_UCP;
 
 		ca->pcre2_expr = pcre2_compile(str, PCRE2_ZERO_TERMINATED, options, &errorcode, &erroroffset, NULL);
 		if (ca->pcre2_expr == NULL)
@@ -847,8 +899,7 @@ int badword_config_process(ConfigItem_badword *ca, const char *str)
 			abort();
 		}
 		pcre2_jit_compile(ca->pcre2_expr, PCRE2_JIT_COMPLETE);
-	}
-	else
+	} else
 	{
 		char *tmpw;
 		ca->type = BADW_TYPE_FAST;
@@ -878,4 +929,124 @@ void badword_config_free(ConfigItem_badword *e)
 	if (e->pcre2_expr)
 		pcre2_code_free(e->pcre2_expr);
 	safe_free(e);
+}
+
+/** Mask the lower bits of an IPv6 raw address.
+ *
+ * Bits past 'prefix' are zeroed, leaving only the upper 'prefix' bits set
+ * to whatever they were in 'src'.
+ *
+ * @param src    16-byte source raw IPv6 address.
+ * @param prefix Prefix length in bits (0-128).
+ * @param dst    16-byte destination buffer (may alias src).
+ */
+void mask_ipv6_rawip(const char *src, int prefix, char *dst)
+{
+	int full_bytes, leftover_bits;
+
+	if (prefix < 0)
+		prefix = 0;
+	else if (prefix > 128)
+		prefix = 128;
+
+	full_bytes = prefix / 8;
+	leftover_bits = prefix % 8;
+
+	if (src != dst)
+		memcpy(dst, src, 16);
+
+	if (leftover_bits > 0 && full_bytes < 16)
+	{
+		unsigned char mask = (unsigned char)(0xFF << (8 - leftover_bits));
+		dst[full_bytes] = (char)((unsigned char)src[full_bytes] & mask);
+		full_bytes++;
+	}
+
+	if (full_bytes < 16)
+		memset(dst + full_bytes, 0, 16 - full_bytes);
+}
+
+/** Get the IP address string of a client, masked according to
+ * set::default-ipv6-clone-mask.
+ *
+ * For IPv4 clients: returns client->ip unchanged (no masking applies).
+ * For IPv6 clients: returns the canonical form with bits past
+ *   iConf.default_ipv6_clone_mask zeroed (e.g., "2001:db8:1:2::" for /64).
+ *
+ * Useful for any per-host bookkeeping that should treat all addresses
+ * within a /N as a single "host" — maxperip, connect-flood, reputation, etc.
+ *
+ * @param client The client.
+ * @param buf    Output buffer.
+ * @param buflen Length of buf (recommended: HOSTLEN+1 or larger).
+ * @return       Pointer to buf on success, or NULL on failure.
+ */
+const char *get_clone_mask_ipstr(Client *client, char *buf, size_t buflen)
+{
+	char masked[16];
+
+	if (!client || !client->ip || !buf || buflen == 0)
+		return NULL;
+
+	if (!IsIPV6(client))
+	{
+		strlcpy(buf, client->ip, buflen);
+		return buf;
+	}
+
+	mask_ipv6_rawip(client->rawip, iConf.default_ipv6_clone_mask, masked);
+	return inetntop(AF_INET6, masked, buf, buflen);
+}
+
+/** Format a user-facing reject message for an IPv6 prefix-aware rejection.
+ *
+ * Substitutes $prefix_addr (compressed IPv6 form, e.g. "2001:db8::") and
+ * $prefix_len (decimal) into the supplied template via buildvarstring.
+ *
+ * Used by both maxperip (for /N clone-cap rejections) and connthrottle
+ * (for /56/48/32 wider-prefix rejections).
+ *
+ * Returns a pointer to internal static storage, overwritten on each call.
+ *
+ * @param template     The message template (typically iConf.reject_message_*).
+ * @param masked_rawip 16-byte masked raw IPv6 address.
+ * @param prefix       Prefix length in bits.
+ * @return             Formatted message in static buffer.
+ */
+const char *format_ipv6_prefix_reject_message(const char *template,
+                                              const char *masked_rawip,
+                                              int prefix)
+{
+	static char buf[512];
+	char prefix_len_str[16];
+	char addr_str[128]; /* generously oversized; longest IPv6 string form is ~46 chars */
+	const char *vars[3], *values[3];
+
+	if (!inet_ntop(AF_INET6, masked_rawip, addr_str, sizeof(addr_str)))
+		strlcpy(addr_str, "?", sizeof(addr_str));
+	ircsnprintf(prefix_len_str, sizeof(prefix_len_str), "%d", prefix);
+	vars[0] = "prefix_addr";
+	values[0] = addr_str;
+	vars[1] = "prefix_len";
+	values[1] = prefix_len_str;
+	vars[2] = NULL;
+	values[2] = NULL;
+	buildvarstring(template, buf, sizeof(buf), vars, values);
+	return buf;
+}
+
+/** Format an IPv6 raw address as a compressed string (e.g. "2001:db8::").
+ *
+ * Returns a pointer to internal static storage, overwritten on each call.
+ *
+ * @param rawip 16-byte raw IPv6 address.
+ * @return      inet_ntop result, or "?" on failure.
+ */
+const char *format_ipv6_addr(const char *rawip)
+{
+	static char buf[128]; /* generously oversized; longest IPv6 string form is ~46 chars */
+
+	if (!inet_ntop(AF_INET6, rawip, buf, sizeof(buf)))
+		strlcpy(buf, "?", sizeof(buf));
+	return buf;
 }

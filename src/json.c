@@ -52,9 +52,10 @@ json_t *json_string_unreal(const char *s)
 
 	if (log_json_filter)
 	{
-		stripped = StripControlCodesEx(s, buf1, sizeof(buf1), UNRL_STRIP_LOW_ASCII|UNRL_STRIP_KEEP_LF);
+		stripped = StripControlCodesEx(s, buf1, sizeof(buf1), UNRL_STRIP_LOW_ASCII | UNRL_STRIP_KEEP_LF);
 		verified_s = unrl_utf8_make_valid(buf1, buf2, sizeof(buf2), 0);
-	} else {
+	} else
+	{
 		verified_s = unrl_utf8_make_valid(s, buf2, sizeof(buf2), 0);
 	}
 
@@ -140,13 +141,13 @@ const char *timestamp_iso8601_now(void)
 	tm = gmtime(&sec);
 
 	snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-		tm->tm_year + 1900,
-		tm->tm_mon + 1,
-		tm->tm_mday,
-		tm->tm_hour,
-		tm->tm_min,
-		tm->tm_sec,
-		(int)(t.tv_usec / 1000));
+	         tm->tm_year + 1900,
+	         tm->tm_mon + 1,
+	         tm->tm_mday,
+	         tm->tm_hour,
+	         tm->tm_min,
+	         tm->tm_sec,
+	         (int)(t.tv_usec / 1000));
 
 	return buf;
 }
@@ -165,13 +166,13 @@ const char *timestamp_iso8601(time_t v)
 		return NULL;
 
 	snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-		tm->tm_year + 1900,
-		tm->tm_mon + 1,
-		tm->tm_mday,
-		tm->tm_hour,
-		tm->tm_min,
-		tm->tm_sec,
-		0);
+	         tm->tm_year + 1900,
+	         tm->tm_mon + 1,
+	         tm->tm_mday,
+	         tm->tm_hour,
+	         tm->tm_min,
+	         tm->tm_sec,
+	         0);
 
 	return buf;
 }
@@ -202,10 +203,11 @@ void json_expand_client_security_groups(json_t *parent, Client *client)
  * detail=2:	everything, except 'channels'
  * detail=3:	everything, with 'channels' being a max 384 character string (meant for JSON logging only)
  * detail=4:	everything, with 'channels' object (full).
+ * detail=5:	this also adds "flood" counters
  */
 void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 {
-	char buf[BUFSIZE+1];
+	char buf[BUFSIZE + 1];
 	json_t *child;
 	json_t *user = NULL;
 	time_t ts;
@@ -215,7 +217,8 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 	{
 		child = json_object();
 		json_object_set_new(j, key, child);
-	} else {
+	} else
+	{
 		child = j;
 	}
 
@@ -252,32 +255,36 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			 * but we don't know that, so we assume that is not the case).
 			 */
 			const char *ident;
-			char temp[USERLEN+1];
+			char temp[USERLEN + 1];
 			if (IDENT_CHECK)
 			{
 				if (IsIdentSuccess(client))
 				{
 					/* ident succeeded means: use the identd and no ~ prefix */
 					ident = client->ident;
-				} else {
+				} else
+				{
 					/* ident check failed means ~ prefix */
 					snprintf(temp, sizeof(temp), "~%s", client->user->username);
 					ident = temp;
 				}
-			} else {
+			} else
+			{
 				/* no ident check means no ~ prefix */
 				ident = client->user->username;
 			}
 			snprintf(buf, sizeof(buf), "%s!%s@%s", client->name, ident, client->user->realhost);
 		}
 		json_object_set_new(child, "details", json_string_unreal(buf));
-	} else if (client->ip) {
+	} else if (client->ip)
+	{
 		if (*client->name)
 			snprintf(buf, sizeof(buf), "%s@%s", client->name, client->ip);
 		else
 			snprintf(buf, sizeof(buf), "[%s]", client->ip);
 		json_object_set_new(child, "details", json_string_unreal(buf));
-	} else {
+	} else
+	{
 		json_object_set_new(child, "details", json_string_unreal(client->name));
 	}
 
@@ -295,6 +302,12 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 		json_object_set_new(child, "connected_since", json_timestamp(ts));
 	if (client->local && client->local->idle_since)
 		json_object_set_new(child, "idle_since", json_timestamp(client->local->idle_since));
+
+	/* Flood counters: only at level 5+, so not in JSON-RPC default user.get (level 4)
+	 * or in JSON logs (level 3).
+	 */
+	if (detail >= 5)
+		json_expand_flood_counts(child, "flood", client);
 
 	if (client->user)
 	{
@@ -325,7 +338,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 
 		/* user modes and snomasks */
 		get_usermode_string_r(client, buf, sizeof(buf));
-		json_object_set_new(user, "modes", json_string_unreal(buf+1));
+		json_object_set_new(user, "modes", json_string_unreal(buf + 1));
 		if (client->user->snomask)
 			json_object_set_new(user, "snomasks", json_string_unreal(client->user->snomask));
 
@@ -363,7 +376,8 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 					}
 					json_array_append_new(channels, json_string_unreal(m->channel->name));
 				}
-			} else {
+			} else
+			{
 				/* Long format for JSON-RPC */
 				for (m = client->user->channel; m; m = m->next)
 				{
@@ -376,8 +390,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			}
 		}
 		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_USER, client, detail, child, user);
-	} else
-	if (IsMe(client))
+	} else if (IsMe(client))
 	{
 		json_t *server = json_object();
 		json_t *features;
@@ -412,14 +425,13 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			/* first one is special - wait.. is this still the case? lol. */
 			snprintf(buf, sizeof(buf), "%s%s", CHPAR1, EXPAR1);
 			json_array_append_new(chanmodes, json_string_unreal(buf));
-			for (i=1; i < 4; i++)
+			for (i = 1; i < 4; i++)
 				json_array_append_new(chanmodes, json_string_unreal(extchmstr[i]));
 		}
 		if (!BadPtr(client->server->features.nickchars))
 			json_object_set_new(features, "nick_character_sets", json_string_unreal(charsys_get_current_languages()));
 		RunHook(HOOKTYPE_JSON_EXPAND_CLIENT_SERVER, client, detail, child, server);
-	} else
-	if (IsServer(client) && client->server)
+	} else if (IsServer(client) && client->server)
 	{
 		/* client.server */
 
@@ -454,7 +466,7 @@ void json_expand_client(json_t *j, const char *key, Client *client, int detail)
 			int i;
 			json_t *chanmodes = json_array();
 			json_object_set_new(features, "chanmodes", chanmodes);
-			for (i=0; i < 4; i++)
+			for (i = 0; i < 4; i++)
 				json_array_append_new(chanmodes, json_string_unreal(client->server->features.chanmodes[i]));
 		}
 		if (!BadPtr(client->server->features.nickchars))
@@ -495,7 +507,8 @@ void json_expand_channel(json_t *j, const char *key, Channel *channel, int detai
 	{
 		child = json_object();
 		json_object_set_new(j, key, child);
-	} else {
+	} else
+	{
 		child = j;
 	}
 
@@ -516,10 +529,11 @@ void json_expand_channel(json_t *j, const char *key, Channel *channel, int detai
 	channel_modes(NULL, mode1, mode2, sizeof(mode1), sizeof(mode2), channel, 0);
 	if (*mode2)
 	{
-		snprintf(modes, sizeof(modes), "%s %s", mode1+1, mode2);
+		snprintf(modes, sizeof(modes), "%s %s", mode1 + 1, mode2);
 		json_object_set_new(child, "modes", json_string_unreal(modes));
-	} else {
-		json_object_set_new(child, "modes", json_string_unreal(mode1+1));
+	} else
+	{
+		json_object_set_new(child, "modes", json_string_unreal(mode1 + 1));
 	}
 
 	if (detail > 1)
@@ -540,7 +554,7 @@ void json_expand_channel(json_t *j, const char *key, Channel *channel, int detai
 			json_t *e = json_object();
 			if (*u->member_modes)
 				json_object_set_new(e, "level", json_string_unreal(u->member_modes));
-			json_expand_client(e, NULL, u->client, detail-3);
+			json_expand_client(e, NULL, u->client, detail - 3);
 			json_array_append_new(list, e);
 		}
 	}
@@ -558,13 +572,16 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 	{
 		j = json_object();
 		json_object_set_new(root, key, j);
-	} else {
+	} else
+	{
 		j = root;
 	}
 
 	json_object_set_new(j, "type", json_string_unreal(tkl_type_config_string(tkl))); // Eg 'kline'
 	json_object_set_new(j, "type_string", json_string_unreal(tkl_type_string(tkl))); // Eg 'Soft K-Line'
 	json_object_set_new(j, "set_by", json_string_unreal(tkl->set_by));
+	if (tkl->id[0])
+		json_object_set_new(j, "id", json_string_unreal(tkl->id));
 	json_object_set_new(j, "set_at", json_timestamp(tkl->set_at));
 	json_object_set_new(j, "expire_at", json_timestamp(tkl->expire_at));
 	*buf = '\0';
@@ -575,7 +592,8 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 	{
 		json_object_set_new(j, "expire_at_string", json_string_unreal("Never"));
 		json_object_set_new(j, "duration_string", json_string_unreal("permanent"));
-	} else {
+	} else
+	{
 		*buf = '\0';
 		short_date(tkl->expire_at, buf);
 		strlcat(buf, " GMT", sizeof(buf));
@@ -592,13 +610,19 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		else
 			json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
 		json_object_set_new(j, "reason", json_string_unreal(tkl->ptr.serverban->reason));
-	} else
-	if (TKLIsNameBan(tkl))
+		if (tkl->source[0])
+			json_object_set_new(j, "source", json_string_unreal(tkl->source));
+		if (tkl->spamfilter_id[0])
+			json_object_set_new(j, "spamfilter_id", json_string_unreal(tkl->spamfilter_id));
+		json_object_set_new(j, "hits", json_integer(tkl->hits));
+		json_object_set_new(j, "last_hit_at", json_timestamp(tkl->lasthit));
+	} else if (TKLIsNameBan(tkl))
 	{
 		json_object_set_new(j, "name", json_string_unreal(tkl->ptr.nameban->name));
 		json_object_set_new(j, "reason", json_string_unreal(tkl->ptr.nameban->reason));
-	} else
-	if (TKLIsBanException(tkl))
+		json_object_set_new(j, "hits", json_integer(tkl->hits));
+		json_object_set_new(j, "last_hit_at", json_timestamp(tkl->lasthit));
+	} else if (TKLIsBanException(tkl))
 	{
 		if (tkl->ptr.banexception->match)
 			json_expand_security_group(j, "match", tkl->ptr.banexception->match, 1);
@@ -606,8 +630,7 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 			json_object_set_new(j, "name", json_string_unreal(tkl_uhost(tkl, buf, sizeof(buf), 0)));
 		json_object_set_new(j, "reason", json_string_unreal(tkl->ptr.banexception->reason));
 		json_object_set_new(j, "exception_types", json_string_unreal(tkl->ptr.banexception->bantypes));
-	} else
-	if (TKLIsSpamfilter(tkl))
+	} else if (TKLIsSpamfilter(tkl))
 	{
 		if (tkl->ptr.spamfilter->match->str)
 		{
@@ -617,14 +640,16 @@ void json_expand_tkl(json_t *root, const char *key, TKL *tkl, int detail)
 		if (tkl->ptr.spamfilter->prettyrule)
 			json_object_set_new(j, "rule", json_string_unreal(tkl->ptr.spamfilter->prettyrule));
 		if (tkl->ptr.spamfilter->except)
-			json_expand_security_group(j, "match", tkl->ptr.spamfilter->except, 1);
+			json_expand_security_group(j, "except", tkl->ptr.spamfilter->except, 1);
 		json_object_set_new(j, "ban_action", json_string_unreal(ban_actions_to_string(tkl->ptr.spamfilter->action)));
 		json_object_set_new(j, "ban_duration", json_integer(tkl->ptr.spamfilter->tkl_duration));
 		json_object_set_new(j, "ban_duration_string", json_string_unreal(pretty_time_val_r(buf, sizeof(buf), tkl->ptr.spamfilter->tkl_duration)));
 		json_object_set_new(j, "spamfilter_targets", json_string_unreal(spamfilter_target_inttostring(tkl->ptr.spamfilter->target)));
 		json_object_set_new(j, "reason", json_string_unreal(unreal_decodespace(tkl->ptr.spamfilter->tkl_reason)));
-		json_object_set_new(j, "hits", json_integer(tkl->ptr.spamfilter->hits));
+		json_object_set_new(j, "hits", json_integer(tkl->hits));
+		json_object_set_new(j, "last_hit_at", json_timestamp(tkl->lasthit));
 		json_object_set_new(j, "hits_except", json_integer(tkl->ptr.spamfilter->hits_except));
+		json_object_set_new(j, "last_hit_except_at", json_timestamp(tkl->ptr.spamfilter->lasthit_except));
 	}
 }
 
@@ -638,7 +663,8 @@ void json_expand_textanalysis(json_t *root, const char *key, TextAnalysis *ta, i
 	{
 		j = json_object();
 		json_object_set_new(root, key, j);
-	} else {
+	} else
+	{
 		j = root;
 	}
 
@@ -650,10 +676,54 @@ void json_expand_textanalysis(json_t *root, const char *key, TextAnalysis *ta, i
 
 	blk = json_object();
 	json_object_set_new(j, "unicode_blockmap", blk);
-	for (i=0; i < UNICODE_BLOCK_COUNT; i++)
+	for (i = 0; i < UNICODE_BLOCK_COUNT; i++)
 	{
 		if (ta->unicode_blockmap[i])
 			json_object_set_new(blk, utf8_get_block_name(i), json_integer(ta->unicode_blockmap[i]));
+	}
+}
+
+/** Add a "flood" object to JSON: how often this client hit flood limits this session.
+ * Under it are two parts:
+ * "server"    server flood limits (set::anti-flood): nick, away, join, etc.
+ * "channel"   channel flood protection (+f/+F), totals over the channels the user is in.
+ * If the client hit no flood limits, no flood object is added.
+ *
+ * @param root		The parent JSON object
+ * @param key		Key to put the flood object in, or NULL to write under root directly.
+ * @param client	The client (we only produce output for local clients)
+ */
+void json_expand_flood_counts(json_t *root, const char *key, Client *client)
+{
+	json_t *flood, *server;
+	int i;
+
+	if (!client->local)
+		return; /* counters are per-connection, local clients only */
+
+	flood = key ? json_object() : root;
+
+	/* server-level flood limits (set::anti-flood) */
+	server = json_object();
+	for (i = 0; i < MAXFLOODOPTIONS; i++)
+	{
+		if (floodoption_shortnames[i] && (client->local->flood[i].blocked > 0))
+			json_object_set_new(server, floodoption_shortnames[i], json_integer(client->local->flood[i].blocked));
+	}
+	if (json_object_size(server) > 0)
+		json_object_set_new(flood, "server", server);
+	else
+		json_decref(server);
+
+	/* channel-level flood protection (+f/+F), via floodprot; adds a "channel" object if nonzero */
+	channel_flood_expand_json(flood, client);
+
+	if (key)
+	{
+		if (json_object_size(flood) > 0)
+			json_object_set_new(root, key, flood);
+		else
+			json_decref(flood);
 	}
 }
 
@@ -746,8 +816,7 @@ void json_expand_security_group(json_t *j, const char *key, SecurityGroup *s, in
 	{
 		child = json_object();
 		json_object_set_new(j, key, child);
-	}
-	else
+	} else
 	{
 		child = j;
 	}

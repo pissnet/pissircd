@@ -51,6 +51,19 @@ MODVAR int labeled_response_force = 0;
  */
 MODVAR int labeled_response_inhibit_end = 0;
 
+/* FIXME: in a future major release that allows module API changes,
+ * add sendflags to HOOKTYPE_USERMSG and use a SKIP_ECHO sendflags
+ * flag instead of this global. See HOOKTYPE_CHANMSG which already
+ * has sendflags.
+ */
+MODVAR int echo_message_inhibit = 0;
+
+/* FIXME: in a future major release that allows module API changes,
+ * add SKIP_ECHO and SKIP_HISTORY sendflags flags instead of these
+ * globals. See HOOKTYPE_CHANMSG which already has sendflags.
+ */
+MODVAR int history_inhibit = 0;
+
 /** Set to 1 if an UTF8 incompatible nick character set is in use */
 MODVAR int non_utf8_nick_chars_in_use = 0;
 
@@ -68,7 +81,7 @@ void iNAH_host(Client *client, const char *host)
 	safe_strdup(client->user->virthost, host);
 	if (MyConnect(client))
 		sendto_server(NULL, 0, 0, NULL, ":%s SETHOST :%s", client->id, client->user->virthost);
-	client->umodes |= UMODE_SETHOST|UMODE_HIDE;
+	client->umodes |= UMODE_SETHOST | UMODE_HIDE;
 
 	userhost_changed(client);
 }
@@ -142,7 +155,7 @@ int target_limit_exceeded(Client *client, void *target, const char *name)
 	int max_concurrent_conversations_users, max_concurrent_conversations_new_user_every;
 	FloodSettings *settings;
 
-	if (ValidatePermissionsForPath("immune:max-concurrent-conversations",client,NULL,NULL,NULL))
+	if (ValidatePermissionsForPath("immune:max-concurrent-conversations", client, NULL, NULL, NULL))
 		return 0;
 
 	if (client->local->targets[0] == hash)
@@ -177,6 +190,7 @@ int target_limit_exceeded(Client *client, void *target, const char *name)
 		add_fake_lag(client, 2000); /* lag them up as well */
 
 		flood_limit_exceeded_log(client, "max-concurrent-conversations");
+		flood_blocked_increment(client, FLD_CONVERSATIONS);
 		sendnumeric(client, ERR_TARGETTOOFAST, name, (long long)(client->local->nexttarget - TStime()));
 
 		return 1;
@@ -186,9 +200,9 @@ int target_limit_exceeded(Client *client, void *target, const char *name)
 	 * This is so client->local->nexttarget=0 will become client->local->nexttarget=currenttime-...
 	 */
 	if (TStime() > client->local->nexttarget +
-	    (max_concurrent_conversations_users * max_concurrent_conversations_new_user_every))
+	                   (max_concurrent_conversations_users * max_concurrent_conversations_new_user_every))
 	{
-		client->local->nexttarget = TStime() - ((max_concurrent_conversations_users-1) * max_concurrent_conversations_new_user_every);
+		client->local->nexttarget = TStime() - ((max_concurrent_conversations_users - 1) * max_concurrent_conversations_new_user_every);
 	}
 
 	client->local->nexttarget += max_concurrent_conversations_new_user_every;
@@ -209,7 +223,7 @@ char *canonize(const char *buffer)
 	static char cbuf[2048];
 	char tbuf[2048];
 	char *s, *t, *cp = cbuf;
-	int  l = 0;
+	int l = 0;
 	char *p = NULL, *p2;
 
 	*cp = '\0';
@@ -223,13 +237,12 @@ char *canonize(const char *buffer)
 		if (l)
 		{
 			for (p2 = NULL, t = strtoken(&p2, cbuf, ","); t;
-			    t = strtoken(&p2, NULL, ","))
+			     t = strtoken(&p2, NULL, ","))
 				if (!mycmp(s, t))
 					break;
 				else if (p2)
 					p2[-1] = ',';
-		}
-		else
+		} else
 			t = NULL;
 		if (!t)
 		{
@@ -240,8 +253,7 @@ char *canonize(const char *buffer)
 			strcpy(cp, s);
 			if (p)
 				cp += (p - s);
-		}
-		else if (p2)
+		} else if (p2)
 			p2[-1] = ',';
 	}
 	return cbuf;
@@ -334,7 +346,7 @@ void set_snomask(Client *client, const char *snomask)
 		remove_all_snomasks(client);
 		return;
 	}
-	
+
 	for (p = snomask; p && *p; p++)
 	{
 		switch (*p)
@@ -351,7 +363,8 @@ void set_snomask(Client *client, const char *snomask)
 					if (!isalpha(*p) || !is_valid_snomask(*p))
 						continue;
 					addlettertodynamicstringsorted(&client->user->snomask, *p);
-				} else {
+				} else
+				{
 					delletterfromstring(client->user->snomask, *p);
 				}
 				break;
@@ -393,8 +406,7 @@ void build_umode_string(Client *client, long old, long sendmask, char *umode_buf
 				*m++ = '-';
 				*m++ = um->letter;
 			}
-		}
-		else if (!(flag & old) && (client->umodes & flag))
+		} else if (!(flag & old) && (client->umodes & flag))
 		{
 			if (what == MODE_ADD)
 				*m++ = um->letter;
@@ -627,32 +639,32 @@ int should_show_connect_info(Client *client)
 static char uid_int_to_char(int v)
 {
 	if (v < 10)
-		return '0'+v;
+		return '0' + v;
 	else
-		return 'A'+v-10;
+		return 'A' + v - 10;
 }
 
 /** Acquire a new unique UID */
 const char *uid_get(void)
 {
 	Client *acptr;
-	static char uid[IDLEN+1];
+	static char uid[IDLEN + 1];
 	static int uidcounter = 0;
 
 	uidcounter++;
-	if (uidcounter == 36*36)
+	if (uidcounter == 36 * 36)
 		uidcounter = 0;
 
 	do
 	{
 		snprintf(uid, sizeof(uid), "%s%c%c%c%c%c%c",
-			me.id,
-			uid_int_to_char(getrandom8() % 36),
-			uid_int_to_char(getrandom8() % 36),
-			uid_int_to_char(getrandom8() % 36),
-			uid_int_to_char(getrandom8() % 36),
-			uid_int_to_char(uidcounter / 36),
-			uid_int_to_char(uidcounter % 36));
+		         me.id,
+		         uid_int_to_char(getrandom8() % 36),
+		         uid_int_to_char(getrandom8() % 36),
+		         uid_int_to_char(getrandom8() % 36),
+		         uid_int_to_char(getrandom8() % 36),
+		         uid_int_to_char(uidcounter / 36),
+		         uid_int_to_char(uidcounter % 36));
 		acptr = find_client(uid, NULL);
 	} while (acptr);
 
@@ -684,8 +696,8 @@ void make_cloakedhost(Client *client, const char *curr, char *buf, size_t buflen
 	const char *mask;
 
 	/* Convert host to lowercase and cut off at 255 bytes just to be sure */
-	for (p = curr, q = host; *p && (q < host+sizeof(host)-1); p++, q++)
-		*q =  tolower(*p);
+	for (p = curr, q = host; *p && (q < host + sizeof(host) - 1); p++, q++)
+		*q = tolower(*p);
 	*q = '\0';
 
 	/* Call the cloaking layer */
@@ -708,6 +720,7 @@ void user_account_login(MessageTag *recv_mtags, Client *client)
 		if (find_tkline_match(client, 0) && IsDead(client))
 			return;
 	}
+	update_known_user_cache(client);
 	RunHook(HOOKTYPE_ACCOUNT_LOGIN, client, recv_mtags);
 }
 
@@ -815,7 +828,7 @@ const char *get_connect_extinfo(Client *client)
 	secgroups = get_security_groups(client);
 	if (secgroups)
 		add_nvplist(&list, 100, "security-groups", secgroups);
-	
+
 	/* tkl shunned */
 	if (IsShunned(client))
 		add_nvplist(&list, 110, "shunned", NULL);
@@ -831,7 +844,7 @@ const char *get_connect_extinfo(Client *client)
 	}
 	/* Cut off last space (unless empty string) */
 	if (*retbuf)
-		retbuf[strlen(retbuf)-1] = '\0';
+		retbuf[strlen(retbuf) - 1] = '\0';
 
 	/* Free the list, as it was only used to build retbuf */
 	free_nvplist(list);
@@ -885,6 +898,7 @@ int flood_limit_exceeded(Client *client, FloodOption opt)
 	if (client->local->flood[opt].count > f->limit[opt])
 	{
 		flood_limit_exceeded_log(client, floodoption_names[opt]);
+		flood_blocked_increment(client, opt);
 		return 1; /* Flood limit hit! */
 	}
 
@@ -932,17 +946,62 @@ FloodSettings *get_floodsettings_for_user(Client *client, FloodOption opt)
 }
 
 MODVAR const char *floodoption_names[] = {
-	"nick-flood",
-	"join-flood",
-	"away-flood",
-	"invite-flood",
-	"knock-flood",
-	"max-concurrent-conversations",
-	"lag-penalty",
-	"vhost-flood",
-	"max-channels-per-user",
-	NULL
+    "nick-flood",
+    "join-flood",
+    "away-flood",
+    "invite-flood",
+    "knock-flood",
+    "max-concurrent-conversations",
+    "lag-penalty",
+    "vhost-flood",
+    "multiline",
+    "max-processing-time",
+    NULL,
 };
+
+/* Per-session flood-block counter names, parallel to floodoption_names[].
+ * These are the type names accepted by the server_flood_count() crule function, eg server_flood_count('away'),
+ * for use in security-group::rule and spamfilter::rule to react to users who keep
+ * tripping flood limits. NULL means this flood type is not counted: lag-penalty is a
+ * soft penalty rather than a block, and multiline is not counted.
+ */
+MODVAR const char *floodoption_shortnames[] = {
+    "nick",          /* FLD_NICK */
+    "join",          /* FLD_JOIN */
+    "away",          /* FLD_AWAY */
+    "invite",        /* FLD_INVITE */
+    "knock",         /* FLD_KNOCK */
+    "conversations", /* FLD_CONVERSATIONS */
+    NULL,            /* FLD_LAG_PENALTY: not counted (soft penalty, not a block) */
+    "vhost",         /* FLD_VHOST */
+    NULL,            /* FLD_MULTILINE: not counted */
+    NULL,            /* FLD_MAX_PROCESSING_TIME: not counted (soft yield) */
+    NULL,
+};
+
+/** Count a flood-block for this client.
+ * Used for:
+ *  - increments the per-type session counter, which is read via server_flood_count('away') etc in a crule
+ *  - the bump_tag_serial() call is what lets rule-only spamfilters re-check (eg
+ *    server_flood_count('away') > 5) at the next safe boundary, see parse_client_queued(); flood
+ *    counts share that "something changed, re-check" signal with the tag system.
+ * @param client	The local client that got flood-blocked
+ * @param opt		The flood type (eg FLD_AWAY)
+ */
+void flood_blocked_increment(Client *client, FloodOption opt)
+{
+	if (!MyConnect(client))
+		return;
+
+	/* Some flood types are not counted, eg lag-penalty (a soft penalty, not a block) */
+	if (!floodoption_shortnames[opt])
+		return;
+
+	if (client->local->flood[opt].blocked < 65535)
+		client->local->flood[opt].blocked++;
+
+	bump_tag_serial(client);
+}
 
 /** Lookup GEO information for an IP address.
  * @param ip	The IP to lookup
@@ -1028,14 +1087,17 @@ Tag *find_tag(Client *client, const char *name)
 
 void bump_tag_serial(Client *client)
 {
+	/* This is only ever compared with != (a change counter), so we just need a
+	 * wrap point high enough that it never realistically aliases within a session.
+	 */
 	client->local->tags_serial++;
-	if (client->local->tags_serial > 10000)
+	if (client->local->tags_serial >= INT_MAX)
 		client->local->tags_serial = 0;
 }
 
 Tag *add_tag(Client *client, const char *name, int value)
 {
-	Tag *e = safe_alloc(sizeof(Tag)+strlen(name));
+	Tag *e = safe_alloc(sizeof(Tag) + strlen(name) + 1);
 	strcpy(e->name, name); /* safe, allocated above */
 	e->value = value;
 	AddListItem(e, client->local->tags);
@@ -1096,9 +1158,59 @@ int highest_channel_member_count(Client *client)
 	Membership *m;
 	int highest = 0;
 
-	for (m = client->user->channel; m; m=m->next)
+	for (m = client->user->channel; m; m = m->next)
 		if (m->channel->users > highest)
 			highest = m->channel->users;
 
 	return highest;
+}
+
+/** Update the client->known_user_cached value and call
+ * HOOKTYPE_KNOWN_USER_CACHE_CHANGE hooks if it changed.
+ * @param client	Client
+ * @returns 1 if all OK, 0 if client was killed via dead_socket().
+ */
+int update_known_user_cache(Client *client)
+{
+	char oldvalue = client->known_user_cached;
+	Hook *h;
+
+	client->known_user_cached = user_allowed_by_security_group_name(client, "known-users") ? 1 : 0;
+
+	if (client->known_user_cached != oldvalue)
+	{
+		for (h = Hooks[HOOKTYPE_KNOWN_USER_CACHE_CHANGE]; h; h = h->next)
+		{
+			int n = h->func.intfunc(client);
+			if (n == HOOK_DENY)
+			{
+				/* When using HOOK_DENY, the client must be killed
+				 * by dead_socket().
+				 * A) It should not be forgotten
+				 * B) Not by exit_client() since that is dangerous.
+				 */
+				if (!IsDeadSocket(client) || IsDead(client))
+				{
+					unreal_log(ULOG_WARNING, "user", "BUG_HOOKTYPE_KNOWN_USER_CACHE_CHANGE", client,
+					           "Module $module returned HOOK_DENY but did not use dead_socket(). Dangerous!",
+					           log_data_string("module", h->owner->header->name));
+				}
+#ifdef DEBUGMODE
+				if (IsDead(client))
+					abort(); /* You should have used dead_socket() and not exit_client() */
+#endif
+				if (!IsDeadSocket(client))
+				{
+#ifdef DEBUGMODE
+					abort(); /* You should have used dead_socket() */
+#else
+					dead_socket(client, "Invalid user cache callback");
+#endif
+				}
+				return 0;
+			}
+		}
+	}
+
+	return 1;
 }

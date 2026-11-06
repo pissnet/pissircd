@@ -19,25 +19,25 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"chanmodes/floodprot",
-	"6.0",
-	"Channel Mode +f and +F",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "chanmodes/floodprot",
+    "6.0",
+    "Channel Mode +f and +F",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 typedef enum Flood {
-	CHFLD_CTCP	= 0,
-	CHFLD_JOIN	= 1,
-	CHFLD_KNOCK	= 2,
-	CHFLD_MSG	= 3,
-	CHFLD_NICK	= 4,
-	CHFLD_TEXT	= 5,
-	CHFLD_REPEAT	= 6,
+	CHFLD_CTCP = 0,
+	CHFLD_JOIN = 1,
+	CHFLD_KNOCK = 2,
+	CHFLD_MSG = 3,
+	CHFLD_NICK = 4,
+	CHFLD_TEXT = 5,
+	CHFLD_REPEAT = 6,
+	CHFLD_PASTE = 7,
 } Flood;
-#define NUMFLD	7 /* 7 flood types */
+#define NUMFLD 8 /* 8 flood types */
 
 /** Configuration settings */
 struct {
@@ -63,18 +63,21 @@ typedef struct FloodType {
 /* All the floodtypes that are tracked.
  * IMPORTANT: the first row MUST be in alphabetic order!!
  */
+/* clang-format off */
 FloodType floodtypes[] = {
-	{ 'c', CHFLD_CTCP,	"CTCPflood",		'C',	"",	NULL,						0, },
-	{ 'j', CHFLD_JOIN,	"joinflood",		'i',	"R",	"~security-group:unknown-users",		0, },
-	{ 'k', CHFLD_KNOCK,	"knockflood",		'K',	"",	NULL,						0, },
-	{ 'm', CHFLD_MSG,	"msg/noticeflood",	'm',	"M",	"~quiet:~security-group:unknown-users",		0, },
-	{ 'n', CHFLD_NICK,	"nickflood",		'N',	"",	"~nickchange:~security-group:unknown-users",	0, },
-	{ 't', CHFLD_TEXT,	"msg/noticeflood",	'\0',	"bd",	NULL,						1, },
-	{ 'r', CHFLD_REPEAT,	"repeating",		'\0',	"bd",	NULL,						1, },
+	{ 'c', CHFLD_CTCP,	"CTCPflood",		'C',	"",	NULL,						0 },
+	{ 'j', CHFLD_JOIN,	"joinflood",		'i',	"R",	"~security-group:unknown-users",		0 },
+	{ 'k', CHFLD_KNOCK,	"knockflood",		'K',	"",	NULL,						0 },
+	{ 'm', CHFLD_MSG,	"msg/noticeflood",	'm',	"M",	"~quiet:~security-group:unknown-users",		0 },
+	{ 'n', CHFLD_NICK,	"nickflood",		'N',	"",	"~nickchange:~security-group:unknown-users",	0 },
+	{ 'p', CHFLD_PASTE,	"pasteflood",		'\0',	"mM",	"~quiet:~security-group:unknown-users",		0 },
+	{ 't', CHFLD_TEXT,	"msg/noticeflood",	'\0',	"bd",	NULL,						1 },
+	{ 'r', CHFLD_REPEAT,	"repeating",		'\0',	"bd",	NULL,						1 },
 };
+/* clang-format on */
 
-#define MODEF_DEFAULT_UNSETTIME		cfg.modef_default_unsettime
-#define MODEF_MAX_UNSETTIME		cfg.modef_max_unsettime
+#define MODEF_DEFAULT_UNSETTIME cfg.modef_default_unsettime
+#define MODEF_MAX_UNSETTIME     cfg.modef_max_unsettime
 
 typedef struct ChannelFloodProtection ChannelFloodProtection;
 typedef struct ChannelFloodProfile ChannelFloodProfile;
@@ -105,14 +108,14 @@ struct MemberFlood {
 
 /** Per-channel flood protection settings and counters */
 struct ChannelFloodProtection {
-	unsigned short	per; /**< setting: per <XX> seconds */
-	time_t		timer[NUMFLD]; /**< runtime: timers */
-	unsigned short	counter[NUMFLD]; /**< runtime: counters */
-	unsigned short	counter_unknown_users[NUMFLD]; /**< runtime: counters */
-	unsigned short	limit[NUMFLD]; /**< setting: limit */
-	unsigned char	action[NUMFLD]; /**< setting: action */
-	unsigned char	remove_after[NUMFLD]; /**< setting: remove-after <this> minutes */
-	unsigned char   timers_running[MAXCHMODEFACTIONS+1]; /**< if for example a '-m' timer is running then this contains 'm' */
+	unsigned short per; /**< setting: per <XX> seconds */
+	time_t timer[NUMFLD]; /**< runtime: timers */
+	unsigned short counter[NUMFLD]; /**< runtime: counters */
+	unsigned short counter_unknown_users[NUMFLD]; /**< runtime: counters */
+	unsigned short limit[NUMFLD]; /**< setting: limit */
+	unsigned char action[NUMFLD]; /**< setting: action */
+	unsigned char remove_after[NUMFLD]; /**< setting: remove-after <this> minutes */
+	unsigned char timers_running[MAXCHMODEFACTIONS + 1]; /**< if for example a '-m' timer is running then this contains 'm' */
 	char *profile;
 };
 
@@ -123,6 +126,26 @@ struct ChannelFloodProfile {
 
 /* Global variables */
 ModDataInfo *mdflood = NULL;
+
+/* Per-local-client tally of how many times the user was blocked by channel flood
+ * protection (+f/+F), per flood type. Read via the channel_flood_blocked_count efunc
+ * (eg the total_channel_flood_count() crule). Local-only, freed on disconnect.
+ */
+typedef struct ChannelFloodBlocks {
+	int blocked[NUMFLD];
+} ChannelFloodBlocks;
+ModDataInfo *md_channelflood_blocked = NULL;
+/* Friendly type names for the efunc/crule, indexed by enum Flood. KEEP IN SYNC. */
+static const char *channelfloodtype_names[NUMFLD] = {
+    "ctcp",   /* CHFLD_CTCP   */
+    "join",   /* CHFLD_JOIN   */
+    "knock",  /* CHFLD_KNOCK  */
+    "msg",    /* CHFLD_MSG    */
+    "nick",   /* CHFLD_NICK   */
+    "text",   /* CHFLD_TEXT   */
+    "repeat", /* CHFLD_REPEAT */
+    "paste",  /* CHFLD_PASTE  */
+};
 Cmode_t EXTMODE_FLOODLIMIT = 0L;
 Cmode_t EXTMODE_FLOOD_PROFILE = 0L;
 static int timedban_available = 1; /**< Set to 1 if extbans/timedban module is loaded. Assumed 1 during config load due to set::modes-on-join race. */
@@ -131,7 +154,7 @@ ChannelFloodProfile *channel_flood_profiles = NULL;
 char *floodprot_msghash_key = NULL;
 long long floodprot_splittime = 0;
 
-#define IsFloodLimit(x)	(((x)->mode.mode & EXTMODE_FLOODLIMIT) || ((x)->mode.mode & EXTMODE_FLOOD_PROFILE) || (cfg.default_profile && GETPARASTRUCT(channel, 'F')))
+#define IsFloodLimit(x) (((x)->mode.mode & EXTMODE_FLOODLIMIT) || ((x)->mode.mode & EXTMODE_FLOOD_PROFILE) || (cfg.default_profile && GETPARASTRUCT((x), 'F')))
 
 /* Forward declarations */
 static void init_config(void);
@@ -177,15 +200,26 @@ void floodprot_free_msghash_key(ModData *m);
 CMD_OVERRIDE_FUNC(floodprot_override_mode);
 ChannelFloodProtection *get_channel_flood_profile(const char *name);
 int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int strict, Client *client, const char **error_out);
-int parse_channel_mode_flood_failed(const char **error_out, ChannelFloodProtection *fld, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf,3,4)));
+int parse_channel_mode_flood_failed(const char **error_out, ChannelFloodProtection *fld, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf, 3, 4)));
 int floodprot_server_quit(Client *client, MessageTag *mtags);
 void inherit_settings(ChannelFloodProtection *from, ChannelFloodProtection *to);
 void reapply_profiles(void);
+int _get_floodprot_channel_max_lines(Channel *channel);
+int _floodprot_check_multiline_batch(Channel *channel, Client *client, int line_count);
+void channelfloodblocks_free(ModData *m);
+static void channel_flood_blocked_increment(Client *client, int what);
+int _channel_flood_blocked_count(Client *client, const char *type);
+void _channel_flood_expand_json(json_t *root, Client *client);
 
 MOD_TEST()
 {
+	MARK_AS_OFFICIAL_MODULE(modinfo);
 	HookAdd(modinfo->handle, HOOKTYPE_CONFIGTEST, 0, floodprot_config_test_set_block);
 	HookAdd(modinfo->handle, HOOKTYPE_CONFIGTEST, 0, floodprot_config_test_antiflood_block);
+	EfunctionAdd(modinfo->handle, EFUNC_GET_FLOODPROT_CHANNEL_MAX_LINES, _get_floodprot_channel_max_lines);
+	EfunctionAdd(modinfo->handle, EFUNC_FLOODPROT_CHECK_MULTILINE_BATCH, _floodprot_check_multiline_batch);
+	EfunctionAdd(modinfo->handle, EFUNC_CHANNEL_FLOOD_BLOCKED_COUNT, _channel_flood_blocked_count);
+	EfunctionAddVoid(modinfo->handle, EFUNC_CHANNEL_FLOOD_EXPAND_JSON, _channel_flood_expand_json);
 	return MOD_SUCCESS;
 }
 
@@ -234,7 +268,16 @@ MOD_INIT()
 	mreq.free = memberflood_free;
 	mdflood = ModDataAdd(modinfo->handle, mreq);
 	if (!mdflood)
-	        abort();
+		abort();
+
+	memset(&mreq, 0, sizeof(mreq));
+	mreq.name = "channelfloodblocks";
+	mreq.type = MODDATATYPE_LOCAL_CLIENT;
+	mreq.free = channelfloodblocks_free;
+	md_channelflood_blocked = ModDataAdd(modinfo->handle, mreq);
+	if (!md_channelflood_blocked)
+		abort();
+
 	if (!floodprot_msghash_key)
 	{
 		floodprot_msghash_key = safe_alloc(16);
@@ -332,27 +375,27 @@ static void init_default_channel_flood_profiles(void)
 	ChannelFloodProfile *f;
 
 	f = safe_alloc(sizeof(ChannelFloodProfile));
-	cmodef_put_param(&f->settings, "[10j#R10,30m#M10,7c#C15,5n#N15,10k#K15]:15");
+	cmodef_put_param(&f->settings, "[10j#R10,30m#M10,7c#C15,5n#N15,10k#K15,1p]:15");
 	safe_strdup(f->settings.profile, "very-strict");
 	AddListItem(f, channel_flood_profiles);
 
 	f = safe_alloc(sizeof(ChannelFloodProfile));
-	cmodef_put_param(&f->settings, "[15j#R10,40m#M10,7c#C15,8n#N15,10k#K15]:15");
+	cmodef_put_param(&f->settings, "[15j#R10,40m#M10,7c#C15,8n#N15,10k#K15,1p]:15");
 	safe_strdup(f->settings.profile, "strict");
 	AddListItem(f, channel_flood_profiles);
 
 	f = safe_alloc(sizeof(ChannelFloodProfile));
-	cmodef_put_param(&f->settings, "[30j#R10,40m#M10,7c#C15,8n#N15,10k#K15]:15");
+	cmodef_put_param(&f->settings, "[30j#R10,40m#M10,7c#C15,8n#N15,10k#K15,2p]:15");
 	safe_strdup(f->settings.profile, "normal");
 	AddListItem(f, channel_flood_profiles);
 
 	f = safe_alloc(sizeof(ChannelFloodProfile));
-	cmodef_put_param(&f->settings, "[45j#R10,60m#M10,7c#C15,10n#N15,10k#K15]:15");
+	cmodef_put_param(&f->settings, "[45j#R10,60m#M10,7c#C15,10n#N15,10k#K15,2p]:15");
 	safe_strdup(f->settings.profile, "relaxed");
 	AddListItem(f, channel_flood_profiles);
 
 	f = safe_alloc(sizeof(ChannelFloodProfile));
-	cmodef_put_param(&f->settings, "[60j#R10,90m#M10,7c#C15,10n#N15,10k#K15]:15");
+	cmodef_put_param(&f->settings, "[60j#R10,90m#M10,7c#C15,10n#N15,10k#K15,3p]:15");
 	safe_strdup(f->settings.profile, "very-relaxed");
 	AddListItem(f, channel_flood_profiles);
 
@@ -387,36 +430,36 @@ int floodprot_config_test_set_block(ConfigFile *cf, ConfigEntry *ce, int type, i
 		if (!ce->value)
 		{
 			config_error_empty(ce->file->filename, ce->line_number,
-				"set", ce->name);
+			                   "set", ce->name);
 			errors++;
-		} else {
+		} else
+		{
 			int v = atoi(ce->value);
 			if ((v <= 0) || (v > 255))
 			{
 				config_error("%s:%i: set::modef-default-unsettime: value '%d' out of range (should be 1-255)",
-					ce->file->filename, ce->line_number, v);
+				             ce->file->filename, ce->line_number, v);
 				errors++;
 			}
 		}
-	} else
-	if (!strcmp(ce->name, "modef-max-unsettime"))
+	} else if (!strcmp(ce->name, "modef-max-unsettime"))
 	{
 		if (!ce->value)
 		{
 			config_error_empty(ce->file->filename, ce->line_number,
-				"set", ce->name);
+			                   "set", ce->name);
 			errors++;
-		} else {
+		} else
+		{
 			int v = atoi(ce->value);
 			if ((v <= 0) || (v > 255))
 			{
 				config_error("%s:%i: set::modef-max-unsettime: value '%d' out of range (should be 1-255)",
-					ce->file->filename, ce->line_number, v);
+				             ce->file->filename, ce->line_number, v);
 				errors++;
 			}
 		}
-	} else
-	if (!strcmp(ce->name, "modef-boot-delay"))
+	} else if (!strcmp(ce->name, "modef-boot-delay"))
 	{
 		config_error("%s:%i: set::modef-boot-delay is now called set::anti-flood::channel::boot-delay. "
 		             "See https://www.unrealircd.org/docs/Channel_anti-flood_settings#config",
@@ -479,27 +522,26 @@ int floodprot_config_test_antiflood_block(ConfigFile *cf, ConfigEntry *ce, int t
 				errors++;
 				continue;
 			}
-		} else
-		if (!strcmp(ce->name, "boot-delay") || !strcmp(ce->name, "split-delay"))
+		} else if (!strcmp(ce->name, "boot-delay") || !strcmp(ce->name, "split-delay"))
 		{
 			if (!ce->value)
 			{
 				config_error_empty(ce->file->filename, ce->line_number,
-					"set", ce->name);
+				                   "set", ce->name);
 				errors++;
-			} else {
+			} else
+			{
 				long v = config_checkval(ce->value, CFG_TIME);
 				if ((v < 0) || (v > 600))
 				{
 					config_error("%s:%i: set::anti-flood::channel::%s: value '%ld' out of range (should be 0-600)",
-						ce->file->filename, ce->line_number,
-						ce->name,
-						v);
+					             ce->file->filename, ce->line_number,
+					             ce->name,
+					             v);
 					errors++;
 				}
 			}
-		} else
-		if (!strcmp(ce->name, "profile"))
+		} else if (!strcmp(ce->name, "profile"))
 		{
 			if (!ce->value)
 			{
@@ -541,9 +583,9 @@ int floodprot_config_test_antiflood_block(ConfigFile *cf, ConfigEntry *ce, int t
 					} else if (!BadPtr(err))
 					{
 						config_warn("%s:%i: set::anti-flood::channel::profile %s::flood-mode: %s",
-						             cep->file->filename, cep->line_number,
-						             ce->value,
-						             err);
+						            cep->file->filename, cep->line_number,
+						            ce->value,
+						            err);
 					}
 					if (fld.limit[CHFLD_TEXT] || fld.limit[CHFLD_REPEAT])
 					{
@@ -553,9 +595,10 @@ int floodprot_config_test_antiflood_block(ConfigFile *cf, ConfigEntry *ce, int t
 						             ce->value);
 						errors++;
 					}
-				} else {
+				} else
+				{
 					config_error_unknown(cep->file->filename, cep->line_number,
-							     "set::anti-flood::channel::profile", cep->name);
+					                     "set::anti-flood::channel::profile", cep->name);
 					errors++;
 				}
 			}
@@ -587,16 +630,13 @@ int floodprot_config_run_antiflood_block(ConfigFile *cf, ConfigEntry *ce, int ty
 			/* Let's handle 'off' in a special way -> becomes NULL */
 			if (!strcmp(cfg.default_profile, "off"))
 				safe_free(cfg.default_profile);
-		} else
-		if (!strcmp(ce->name, "boot-delay"))
+		} else if (!strcmp(ce->name, "boot-delay"))
 		{
 			cfg.boot_delay = config_checkval(ce->value, CFG_TIME);
-		} else
-		if (!strcmp(ce->name, "split-delay"))
+		} else if (!strcmp(ce->name, "split-delay"))
 		{
 			cfg.split_delay = config_checkval(ce->value, CFG_TIME);
-		} else
-		if (!strcmp(ce->name, "profile"))
+		} else if (!strcmp(ce->name, "profile"))
 		{
 			for (cep = ce->items; cep; cep = cep->next)
 			{
@@ -611,7 +651,7 @@ int floodprot_config_run_antiflood_block(ConfigFile *cf, ConfigEntry *ce, int ty
 FloodType *find_floodprot_by_letter(char c)
 {
 	int i;
-	for (i=0; i < ARRAY_SIZEOF(floodtypes); i++)
+	for (i = 0; i < ARRAY_SIZEOF(floodtypes); i++)
 		if (floodtypes[i].letter == c)
 			return &floodtypes[i];
 
@@ -621,7 +661,7 @@ FloodType *find_floodprot_by_letter(char c)
 FloodType *find_floodprot_by_index(Flood index)
 {
 	int i;
-	for (i=0; i < ARRAY_SIZEOF(floodtypes); i++)
+	for (i = 0; i < ARRAY_SIZEOF(floodtypes); i++)
 		if (floodtypes[i].index == index)
 			return &floodtypes[i];
 
@@ -651,7 +691,7 @@ int parse_channel_mode_flood_failed(const char **error_out, ChannelFloodProtecti
 	va_end(vl);
 
 	/* Zero out all settings */
-	for (v=0; v < NUMFLD; v++)
+	for (v = 0; v < NUMFLD; v++)
 	{
 		fld->limit[v] = 0;
 		fld->action[v] = 0;
@@ -694,7 +734,7 @@ int floodprot_valid_alternate_action(char action, FloodType *floodtype)
 int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int strict, Client *client, const char **error_out)
 {
 	static char retbuf[512];
-	char xbuf[256], c, a, *p, *p2, *x = xbuf+1;
+	char xbuf[256], c, a, *p, *p2, *x = xbuf + 1;
 	int v;
 	unsigned short breakit;
 	unsigned char r;
@@ -708,7 +748,7 @@ int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int
 		*error_out = NULL;
 
 	/* always reset settings (l, a, r) */
-	for (v=0; v < NUMFLD; v++)
+	for (v = 0; v < NUMFLD; v++)
 	{
 		fld->limit[v] = 0;
 		fld->action[v] = 0;
@@ -721,19 +761,22 @@ int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int
 		return parse_channel_mode_flood_failed(error_out, fld, "Invalid format (brackets missing)");
 
 	/* '['<number><1 letter>[optional: '#'+1 letter],[next..]']'':'<number> */
-	p2 = strchr(xbuf+1, ']');
+	p2 = strchr(xbuf + 1, ']');
 	if (!p2)
 		return parse_channel_mode_flood_failed(error_out, fld, "Invalid format (brackets missing)");
 	*p2 = '\0';
-	if (*(p2+1) != ':')
+	if (*(p2 + 1) != ':')
 		return parse_channel_mode_flood_failed(error_out, fld, "Invalid format (:XX period missing)");
 
 	breakit = 0;
-	for (x = strtok(xbuf+1, ","); x; x = strtok(NULL, ","))
+	for (x = strtok(xbuf + 1, ","); x; x = strtok(NULL, ","))
 	{
 		/* <number><1 letter>[optional: '#'+1 letter] */
 		p = x;
-		while(isdigit(*p)) { p++; }
+		while (isdigit(*p))
+		{
+			p++;
+		}
 
 		/* letter */
 		c = *p;
@@ -808,7 +851,7 @@ int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int
 	if (v < fld->per)
 	{
 		int i;
-		for (i=0; i < NUMFLD; i++)
+		for (i = 0; i < NUMFLD; i++)
 		{
 			fld->timer[i] = 0;
 			fld->counter[i] = 0;
@@ -819,9 +862,9 @@ int parse_channel_mode_flood(const char *param, ChannelFloodProtection *fld, int
 
 	/* Is anything turned on? (to stop things like '+f []:15' */
 	breakit = 1;
-	for (v=0; v < NUMFLD; v++)
+	for (v = 0; v < NUMFLD; v++)
 		if (fld->limit[v])
-			breakit=0;
+			breakit = 0;
 	if (breakit)
 	{
 		/* Nothing is turned on.. */
@@ -849,8 +892,7 @@ int cmodef_is_ok(Client *client, Channel *channel, char mode, const char *param,
 		if (type == EXCHK_ACCESS_ERR) /* can only be due to being halfop */
 			sendnumeric(client, ERR_NOTFORHALFOPS, 'f');
 		return EX_DENY;
-	} else
-	if (type == EXCHK_PARAM)
+	} else if (type == EXCHK_PARAM)
 	{
 		ChannelFloodProtection fld;
 		const char *err;
@@ -972,7 +1014,7 @@ int cmodef_sjoin_check(Channel *channel, void *ourx, void *theirx)
 		return EXSJ_SAME;
 
 	our->per = MAX(our->per, their->per);
-	for (i=0; i < NUMFLD; i++)
+	for (i = 0; i < NUMFLD; i++)
 	{
 		our->limit[i] = MAX(our->limit[i], their->limit[i]);
 		our->action[i] = MAX(our->action[i], their->action[i]);
@@ -1019,8 +1061,7 @@ int cmodef_profile_is_ok(Client *client, Channel *channel, char mode, const char
 		if (type == EXCHK_ACCESS_ERR) /* can only be due to being halfop */
 			sendnumeric(client, ERR_NOTFORHALFOPS, 'f');
 		return EX_DENY;
-	} else
-	if (type == EXCHK_PARAM)
+	} else if (type == EXCHK_PARAM)
 	{
 		if (get_channel_flood_profile(param))
 			return EX_ALLOW;
@@ -1040,7 +1081,7 @@ void inherit_settings(ChannelFloodProtection *from, ChannelFloodProtection *to)
 	/* If new 'per xxx seconds' is smaller than current 'per' then reset timers/counters (t, c) */
 	if (from->per < to->per)
 	{
-		for (i=0; i < NUMFLD; i++)
+		for (i = 0; i < NUMFLD; i++)
 		{
 			to->timer[i] = 0;
 			to->counter[i] = 0;
@@ -1049,7 +1090,7 @@ void inherit_settings(ChannelFloodProtection *from, ChannelFloodProtection *to)
 	}
 
 	/* inherit settings (limit/action/remove_after) */
-	for (i=0; i < NUMFLD; i++)
+	for (i = 0; i < NUMFLD; i++)
 	{
 		to->limit[i] = from->limit[i];
 		to->action[i] = from->action[i];
@@ -1132,7 +1173,7 @@ int is_floodprot_exempt(Client *client, Channel *channel, char flood_type_letter
 	b->channel = channel;
 	b->ban_check_types = BANCHK_MSG;
 
-	for (ban = channel->exlist; ban; ban=ban->next)
+	for (ban = channel->exlist; ban; ban = ban->next)
 	{
 		char *p, *x;
 		char *matchby;
@@ -1187,9 +1228,12 @@ int floodprot_join(Client *client, Channel *channel, MessageTag *mtags)
 	    (MyUser(client) || client->uplink->server->flags.synced) &&
 	    (client->uplink->server->boottime && (TStime() - client->uplink->server->boottime >= cfg.boot_delay)) &&
 	    (TStime() - floodprot_splittime >= cfg.split_delay) &&
+#ifdef TESTSUITE
+	    strncasecmp(channel->name, "#__SYNC__", 9) &&
+#endif
 	    !IsULine(client))
 	{
-	    do_floodprot(channel, client, CHFLD_JOIN);
+		do_floodprot(channel, client, CHFLD_JOIN);
 	}
 	return 0;
 }
@@ -1228,8 +1272,8 @@ int cmodef_channel_destroy(Channel *channel, int *should_destroy)
 /* [just a helper for channel_modef_string()] */
 static inline char *chmodefstrhelper(char *buf, char t, char tdef, unsigned short l, unsigned char a, unsigned char r)
 {
-char *p;
-char tmpbuf[16], *p2 = tmpbuf;
+	char *p;
+	char tmpbuf[16], *p2 = tmpbuf;
 
 	sprintf(buf, "%hd", l);
 	p = buf + strlen(buf);
@@ -1260,7 +1304,7 @@ char *channel_modef_string(ChannelFloodProtection *x, char *retbuf)
 
 	*p++ = '[';
 
-	for (i=0; i < ARRAY_SIZEOF(floodtypes); i++)
+	for (i = 0; i < ARRAY_SIZEOF(floodtypes); i++)
 	{
 		f = &floodtypes[i];
 		if (x->limit[f->index])
@@ -1281,15 +1325,59 @@ ChannelFloodProtection *get_channel_flood_settings(Channel *channel, int what)
 	if (channel->mode.mode & EXTMODE_FLOODLIMIT)
 	{
 		fld = (ChannelFloodProtection *)GETPARASTRUCT(channel, 'f');
-		if (fld->action[what])
+		if (fld->limit[what])
 			return fld;
 	}
 
 	fld = (ChannelFloodProtection *)GETPARASTRUCT(channel, 'F');
-	if (fld && fld->action[what])
+	if (fld && fld->limit[what])
 		return fld;
 
 	return NULL;
+}
+
+/** Return the maximum number of lines permitted by +f/+F 'm' and 't' limits.
+ * Returns INT_MAX if no relevant flood protection is set.
+ */
+int _get_floodprot_channel_max_lines(Channel *channel)
+{
+	ChannelFloodProtection *fld;
+	int result = INT_MAX;
+
+	fld = get_channel_flood_settings(channel, CHFLD_MSG);
+	if (fld && fld->limit[CHFLD_MSG])
+		result = MIN(result, fld->limit[CHFLD_MSG]);
+
+	fld = get_channel_flood_settings(channel, CHFLD_TEXT);
+	if (fld && fld->limit[CHFLD_TEXT])
+		result = MIN(result, fld->limit[CHFLD_TEXT]);
+
+	return result;
+}
+
+/** Check if a multiline batch is allowed by the channel's +f 'p' (paste) limit.
+ * Called from multiline.c before delivering a batch to the channel.
+ * @param channel  The target channel
+ * @param client   The user sending the batch
+ * @param line_count Number of lines in the batch
+ * @returns 0 if allowed, 1 if denied (paste limit exceeded)
+ */
+int _floodprot_check_multiline_batch(Channel *channel, Client *client, int line_count)
+{
+	/* Exempt short batches (2 lines or less) — that's just normal conversation */
+	if (line_count < 3)
+		return 0;
+
+	if (!IsFloodLimit(channel))
+		return 0;
+
+	if (check_channel_access(client, channel, "hoaq") || IsULine(client))
+		return 0;
+
+	if (do_floodprot(channel, client, CHFLD_PASTE))
+		return 1; /* paste flood detected, reject batch */
+
+	return 0;
 }
 
 int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *lp, const char **msg, const char **errmsg, SendType sendtype, ClientContext *clictx)
@@ -1298,7 +1386,7 @@ int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *
 	ChannelFloodProtection *fld;
 	MemberFlood *memberflood;
 	uint64_t msghash;
-	unsigned char is_flooding_text=0, is_flooding_repeat=0;
+	unsigned char is_flooding_text = 0, is_flooding_repeat = 0;
 	static char errbuf[256];
 
 	/* This is redundant, right? */
@@ -1308,8 +1396,13 @@ int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *
 	if (sendtype == SEND_TYPE_TAGMSG)
 		return 0; // TODO: some TAGMSG specific limit? (1 of 2)
 
-	if (ValidatePermissionsForPath("channel:override:flood",client,NULL,channel,NULL) || !IsFloodLimit(channel) || check_channel_access(client, channel, "hoaq"))
+	if (ValidatePermissionsForPath("channel:override:flood", client, NULL, channel, NULL) || !IsFloodLimit(channel) || check_channel_access(client, channel, "hoaq"))
 		return HOOK_CONTINUE;
+
+#ifdef TESTSUITE
+	if (!strncasecmp(channel->name, "#__SYNC__", 9))
+		return HOOK_CONTINUE;
+#endif
 
 	if (!(mb = find_membership_link(client->user->channel, channel)))
 		return HOOK_CONTINUE; /* not in channel */
@@ -1396,6 +1489,8 @@ int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *
 			flood_type = CHFLD_TEXT;
 		}
 
+		channel_flood_blocked_increment(client, flood_type);
+
 		if (fld->action[flood_type] == 'd')
 		{
 			/* Drop the message */
@@ -1412,7 +1507,8 @@ int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *
 					snprintf(mask, sizeof(mask), "~time:%d:*!*@%s", fld->remove_after[flood_type], GetHost(client));
 				else
 					snprintf(mask, sizeof(mask), "~t:%d:*!*@%s", fld->remove_after[flood_type], GetHost(client));
-			} else {
+			} else
+			{
 				snprintf(mask, sizeof(mask), "*!*@%s", GetHost(client));
 			}
 			if (add_listmode(&channel->banlist, &me, channel, mask) == 1)
@@ -1421,7 +1517,7 @@ int floodprot_can_send_to_channel(Client *client, Channel *channel, Membership *
 				new_message(&me, NULL, &mtags);
 				sendto_server(NULL, 0, 0, mtags, ":%s MODE %s +b %s 0", me.id, channel->name, mask);
 				sendto_channel(channel, &me, NULL, 0, 0, SEND_LOCAL, mtags,
-				    ":%s MODE %s +b %s", me.name, channel->name, mask);
+				               ":%s MODE %s +b %s", me.name, channel->name, mask);
 				free_message_tags(mtags);
 			} /* else.. ban list is full or already exists */
 		}
@@ -1438,6 +1534,11 @@ int floodprot_post_chanmsg(Client *client, Channel *channel, int sendflags, cons
 	if (!IsFloodLimit(channel) || check_channel_access(client, channel, "hoaq") || IsULine(client))
 		return 0;
 
+#ifdef TESTSUITE
+	if (!strncasecmp(channel->name, "#__SYNC__", 9))
+		return 0;
+#endif
+
 	if (sendtype == SEND_TYPE_TAGMSG)
 		return 0; // TODO: some TAGMSG specific limit? (2 of 2)
 
@@ -1445,7 +1546,7 @@ int floodprot_post_chanmsg(Client *client, Channel *channel, int sendflags, cons
 
 	do_floodprot(channel, client, CHFLD_MSG);
 
-	if ((text[0] == '\001') && strncmp(text+1, "ACTION ", 7))
+	if ((text[0] == '\001') && strncmp(text + 1, "ACTION ", 7))
 		do_floodprot(channel, client, CHFLD_CTCP);
 
 	return 0;
@@ -1484,7 +1585,7 @@ int floodprot_nickchange(Client *client, MessageTag *mtags, const char *oldnick)
 void floodprot_chanmode_del_helper(ChannelFloodProtection *fld, char modechar)
 {
 	/* reset joinflood on -i, reset msgflood on -m, etc.. */
-	switch(modechar)
+	switch (modechar)
 	{
 		case 'C':
 			fld->counter[CHFLD_CTCP] = 0;
@@ -1551,7 +1652,7 @@ RemoveChannelModeTimer *floodprottimer_find(Channel *channel, char mflag)
 {
 	RemoveChannelModeTimer *e;
 
-	for (e=removechannelmodetimer_list; e; e=e->next)
+	for (e = removechannelmodetimer_list; e; e = e->next)
 	{
 		if ((e->channel == channel) && (e->m == mflag))
 			return e;
@@ -1562,7 +1663,8 @@ RemoveChannelModeTimer *floodprottimer_find(Channel *channel, char mflag)
 /** strcat-like */
 void strccat(char *s, char c)
 {
-	for (; *s; s++);
+	for (; *s; s++)
+		;
 	*s++ = c;
 	*s++ = '\0';
 }
@@ -1582,7 +1684,7 @@ void strccat(char *s, char c)
 void floodprottimer_add(Channel *channel, ChannelFloodProtection *fld, char mflag, time_t when)
 {
 	RemoveChannelModeTimer *e = NULL;
-	unsigned char add=1;
+	unsigned char add = 1;
 
 	if (strchr(fld->timers_running, mflag))
 	{
@@ -1594,7 +1696,7 @@ void floodprottimer_add(Channel *channel, ChannelFloodProtection *fld, char mfla
 
 	if (!strchr(fld->timers_running, mflag))
 	{
-		if (strlen(fld->timers_running)+1 >= sizeof(fld->timers_running))
+		if (strlen(fld->timers_running) + 1 >= sizeof(fld->timers_running))
 		{
 			unreal_log(ULOG_WARNING, "flood", "BUG_FLOODPROTTIMER_ADD", NULL,
 			           "[BUG] floodprottimer_add: too many timers running for $channel ($timers_running)",
@@ -1630,15 +1732,15 @@ void floodprottimer_del(Channel *channel, ChannelFloodProtection *fld, char mfla
 	safe_free(e);
 
 	if (fld)
-        {
-                char newtf[MAXCHMODEFACTIONS+1];
-                char *i, *o;
-                for (i=fld->timers_running, o=newtf; *i; i++)
-                        if (*i != mflag)
-                                *o++ = *i;
-                *o = '\0';
-                strcpy(fld->timers_running, newtf); /* always shorter (or equal) */
-        }
+	{
+		char newtf[MAXCHMODEFACTIONS + 1];
+		char *i, *o;
+		for (i = fld->timers_running, o = newtf; *i; i++)
+			if (*i != mflag)
+				*o++ = *i;
+		*o = '\0';
+		strcpy(fld->timers_running, newtf); /* always shorter (or equal) */
+	}
 }
 
 EVENT(modef_event)
@@ -1705,28 +1807,28 @@ int do_floodprot(Channel *channel, Client *client, int what)
 
 	unknown_user = user_allowed_by_security_group_name(client, "known-users") ? 0 : 1;
 
-	if (fld->limit[what])
+	if (TStime() - fld->timer[what] >= fld->per)
 	{
-		if (TStime() - fld->timer[what] >= fld->per)
-		{
-			/* reset */
-			fld->timer[what] = TStime();
-			fld->counter[what] = 1;
-			fld->counter_unknown_users[what] = unknown_user;
-		} else
-		{
-			fld->counter[what]++;
+		/* reset */
+		fld->timer[what] = TStime();
+		fld->counter[what] = 1;
+		fld->counter_unknown_users[what] = unknown_user;
+	} else
+	{
+		fld->counter[what]++;
 
-			if (unknown_user)
-				fld->counter_unknown_users[what]++;
+		if (unknown_user)
+			fld->counter_unknown_users[what]++;
 
-			if ((fld->counter[what] > fld->limit[what]) &&
-			    (TStime() - fld->timer[what] < fld->per))
+		if ((fld->counter[what] > fld->limit[what]) &&
+		    (TStime() - fld->timer[what] < fld->per))
+		{
+			if (MyUser(client))
 			{
-				if (MyUser(client))
-					do_floodprot_action(channel, what);
-				return 1; /* flood detected! */
+				do_floodprot_action(channel, what);
+				channel_flood_blocked_increment(client, what);
 			}
+			return 1; /* flood detected! */
 		}
 	}
 	return 0;
@@ -1749,8 +1851,8 @@ void do_floodprot_action_standard(Channel *channel, int what, FloodType *floodty
 	            text, fld->limit[what], fld->per, m, channel->name);
 	ircsnprintf(target, sizeof(target), "%%%s", channel->name);
 	sendto_channel(channel, &me, NULL, "ho",
-		       0, SEND_ALL, mtags,
-		       ":%s NOTICE %s :%s", me.name, target, comment);
+	               0, SEND_ALL, mtags,
+	               ":%s NOTICE %s :%s", me.name, target, comment);
 	free_message_tags(mtags);
 
 	/* Then the MODE broadcast */
@@ -1796,11 +1898,11 @@ int do_floodprot_action_alternative(Channel *channel, int what, FloodType *flood
 	ircsnprintf(comment, sizeof(comment),
 	            "*** Channel %s detected (limit is %d per %d seconds), "
 	            "mostly caused by 'unknown-users', setting mode +b %s",
-		text, fld->limit[what], fld->per, ban);
+	            text, fld->limit[what], fld->per, ban);
 	ircsnprintf(target, sizeof(target), "%%%s", channel->name);
 	sendto_channel(channel, &me, NULL, "ho",
-		       0, SEND_ALL, mtags,
-		       ":%s NOTICE %s :%s", me.name, target, comment);
+	               0, SEND_ALL, mtags,
+	               ":%s NOTICE %s :%s", me.name, target, comment);
 	free_message_tags(mtags);
 
 	/* Then the MODE broadcast */
@@ -1855,7 +1957,7 @@ void do_floodprot_action(Channel *channel, int what)
 		if (!ban_exists)
 		{
 			/* Calculate the percentage of unknown-users that is responsible for the action trigger */
-			perc = ((double)fld->counter_unknown_users[what] / (double)fld->counter[what])*100;
+			perc = ((double)fld->counter_unknown_users[what] / (double)fld->counter[what]) * 100;
 			if (perc >= cfg.modef_alternate_action_percentage_threshold)
 			{
 				/* ACTION: We need to add the ban (+b) */
@@ -1909,7 +2011,7 @@ uint64_t gen_floodprot_msghash(const char *text)
 			plaintext += 7;
 	}
 
-	return siphash(text, floodprot_msghash_key);
+	return siphash(plaintext, floodprot_msghash_key);
 }
 
 // FIXME: REMARK: make sure you can only do a +f/-f once (latest in line wins).
@@ -1935,6 +2037,87 @@ void memberflood_free(ModData *md)
 	safe_free(md->ptr);
 }
 
+void channelfloodblocks_free(ModData *m)
+{
+	safe_free(m->ptr);
+}
+
+/* Count a channel-flood-block (+f/+F) for this local user, by flood type (enum Flood).
+ * bump_tag_serial() lets rule-only spamfilters re-check at the next safe boundary
+ * (eg total_channel_flood_count('nick') > 5), see parse_client_queued().
+ */
+static void channel_flood_blocked_increment(Client *client, int what)
+{
+	ChannelFloodBlocks *b;
+
+	if (!MyConnect(client) || (what < 0) || (what >= NUMFLD))
+		return;
+
+	if (moddata_local_client(client, md_channelflood_blocked).ptr == NULL)
+		moddata_local_client(client, md_channelflood_blocked).ptr = safe_alloc(sizeof(ChannelFloodBlocks));
+
+	b = (ChannelFloodBlocks *)moddata_local_client(client, md_channelflood_blocked).ptr;
+	if (b->blocked[what] < 65535)
+		b->blocked[what]++;
+
+	bump_tag_serial(client);
+}
+
+/* efunc: how many times this local user was channel-flood-blocked of type 'type'
+ * (a name from channelfloodtype_names[], or "all" for the grand total). Unknown -> 0.
+ */
+int _channel_flood_blocked_count(Client *client, const char *type)
+{
+	ChannelFloodBlocks *b;
+	int i, total = 0;
+
+	if (!client || !MyConnect(client))
+		return 0;
+	if (moddata_local_client(client, md_channelflood_blocked).ptr == NULL)
+		return 0;
+	b = (ChannelFloodBlocks *)moddata_local_client(client, md_channelflood_blocked).ptr;
+
+	if (!strcasecmp(type, "all"))
+	{
+		for (i = 0; i < NUMFLD; i++)
+			total += b->blocked[i];
+		return total;
+	}
+
+	for (i = 0; i < NUMFLD; i++)
+		if (!strcasecmp(channelfloodtype_names[i], type))
+			return b->blocked[i];
+
+	return 0;
+}
+
+/* efunc: add a "channel" object (type -> count) to 'root' for this local user, listing only
+ * the channel-flood-block (+f/+F) types with a nonzero count this session. Adds nothing when
+ * there is no data. Used for: spamreport and JSON-RPC (via json_expand_flood_counts()).
+ */
+void _channel_flood_expand_json(json_t *root, Client *client)
+{
+	ChannelFloodBlocks *b;
+	json_t *channel;
+	int i;
+
+	if (!client || !MyConnect(client))
+		return;
+	if (moddata_local_client(client, md_channelflood_blocked).ptr == NULL)
+		return;
+	b = (ChannelFloodBlocks *)moddata_local_client(client, md_channelflood_blocked).ptr;
+
+	channel = json_object();
+	for (i = 0; i < NUMFLD; i++)
+		if (b->blocked[i] > 0)
+			json_object_set_new(channel, channelfloodtype_names[i], json_integer(b->blocked[i]));
+
+	if (json_object_size(channel) > 0)
+		json_object_set_new(root, "channel", channel);
+	else
+		json_decref(channel);
+}
+
 int floodprot_stats(Client *client, const char *flag)
 {
 	if (*flag != 'S')
@@ -1950,7 +2133,7 @@ void floodprot_free_removechannelmodetimer_list(ModData *m)
 {
 	RemoveChannelModeTimer *e, *e_next;
 
-	for (e=removechannelmodetimer_list; e; e=e_next)
+	for (e = removechannelmodetimer_list; e; e = e_next)
 	{
 		e_next = e->next;
 		safe_free(e);
@@ -1984,19 +2167,18 @@ CMD_OVERRIDE_FUNC(floodprot_override_mode)
 		if (!advanced && !profile)
 		{
 			sendnotice(client, "No channel mode +f/+F is active on %s", channel->name);
-		} else
-		if (advanced && !profile)
+		} else if (advanced && !profile)
 		{
 			channel_modef_string(advanced, buf);
 			sendnotice(client, "Channel '%s' has effective flood setting '%s' (custom settings via +f)",
 			           channel->name, buf);
-		} else
-		if (profile && !advanced)
+		} else if (profile && !advanced)
 		{
 			channel_modef_string(profile, buf);
 			sendnotice(client, "Channel '%s' has effective flood setting '%s' (flood profile '%s')",
 			           channel->name, buf, profile->profile);
-		} else {
+		} else
+		{
 			/* Both +f and +F are set */
 			int v;
 			ChannelFloodProtection mix;
@@ -2004,9 +2186,9 @@ CMD_OVERRIDE_FUNC(floodprot_override_mode)
 			char overridden[64];
 			*overridden = '\0';
 			memcpy(&mix, profile, sizeof(mix));
-			for (v=0; v < NUMFLD; v++)
+			for (v = 0; v < NUMFLD; v++)
 			{
-				if ((advanced->limit[v]>0) && (mix.limit[v]>0))
+				if ((advanced->limit[v] > 0) && (mix.limit[v] > 0))
 				{
 					mix.limit[v] = 0;
 					mix.action[v] = 0;
@@ -2019,11 +2201,12 @@ CMD_OVERRIDE_FUNC(floodprot_override_mode)
 			if (*overridden)
 			{
 				sendnotice(client, "Channel '%s' uses flood profile '%s', without action(s) '%s' as they are overridden by +f.",
-					   channel->name, profile->profile, overridden);
+				           channel->name, profile->profile, overridden);
 				sendnotice(client, "Effective flood setting via +F: '%s'", buf);
-			} else {
+			} else
+			{
 				sendnotice(client, "Channel '%s' has effective flood setting '%s' (flood profile '%s')",
-					   channel->name, buf, profile->profile);
+				           channel->name, buf, profile->profile);
 			}
 			channel_modef_string(advanced, buf);
 			sendnotice(client, "Plus flood setting via +f: '%s'", buf);
@@ -2056,7 +2239,7 @@ void reapply_profiles(void)
 {
 	Channel *channel;
 
-	for (channel = channels; channel; channel=channel->nextch)
+	for (channel = channels; channel; channel = channel->nextch)
 	{
 		ChannelFloodProtection *fld = GETPARASTRUCT(channel, 'F');
 		ChannelFloodProtection *base;
@@ -2078,7 +2261,8 @@ void reapply_profiles(void)
 				if (!fld)
 				{
 					cmodef_channel_create(channel);
-				} else {
+				} else
+				{
 					base = get_channel_flood_profile(cfg.default_profile);
 					if (base)
 					{
@@ -2086,7 +2270,8 @@ void reapply_profiles(void)
 						safe_strdup(fld->profile, cfg.default_profile);
 					}
 				}
-			} else {
+			} else
+			{
 				if (fld)
 				{
 					/* Not +F, previously we had a default profile

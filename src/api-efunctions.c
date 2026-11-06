@@ -55,10 +55,10 @@ const char *(*tkl_type_string)(TKL *tk);
 const char *(*tkl_type_config_string)(TKL *tk);
 char *(*tkl_uhost)(TKL *tkl, char *buf, size_t buflen, int options);
 TKL *(*tkl_add_serverban)(int type, const char *usermask, const char *hostmask, SecurityGroup *match,
-                              const char *reason, const char *setby,
-                              time_t expire_at, time_t set_at, int soft, int flags);
+                          const char *reason, const char *setby,
+                          time_t expire_at, time_t set_at, int soft, int flags);
 TKL *(*tkl_add_nameban)(int type, const char *name, int hold, const char *reason, const char *setby,
-                            time_t expire_at, time_t set_at, int flags);
+                        time_t expire_at, time_t set_at, int flags);
 TKL *(*tkl_add_spamfilter)(int type, const char *id, unsigned short target, BanAction *action,
                            Match *match, const char *rule, SecurityGroup *except,
                            const char *setby,
@@ -72,17 +72,21 @@ TKL *(*tkl_add_banexception)(int type, const char *usermask, const char *hostmas
                              time_t expire_at, time_t set_at, int soft, const char *bantypes, int flags);
 void (*tkl_del_line)(TKL *tkl);
 void (*tkl_check_local_remove_shun)(TKL *tmp);
-int (*find_tkline_match)(Client *client, int skip_soft);
+int (*find_tkline_match)(Client *client, int flags);
+void (*tkl_hit)(Client *client, TKL *tkl);
+void (*remove_config_tkls)(int flag);
+void (*config_tkl_hits_restore)(void);
 int (*find_shun)(Client *client);
-int(*find_spamfilter_user)(Client *client, int flags);
+int (*find_spamfilter_user)(Client *client, int flags);
 TKL *(*find_qline)(Client *client, const char *nick, int *ishold);
 TKL *(*find_tkline_match_zap)(Client *client);
 void (*tkl_stats)(Client *client, int type, const char *para, int *cnt);
 void (*tkl_sync)(Client *client);
 void (*cmd_tkl)(ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[]);
-int (*take_action)(Client *client, BanAction *action, const char *reason, long duration, int take_action_flags, int *stopped);
+int (*take_action)(Client *client, BanAction *action, const char *source, const char *reason, long duration, int take_action_flags, int *stopped, TKL *spamfilter);
 int (*match_spamfilter)(Client *client, const char *str_in, int type, const char *cmd, const char *target, int flags, ClientContext *clictx, TKL **rettk);
 int (*match_spamfilter_mtags)(Client *client, MessageTag *mtags, const char *cmd);
+void (*run_deferred_rule_only_spamfilters)(Client *client);
 int (*join_viruschan)(Client *client, TKL *tk, int type);
 const char *(*StripColors)(const char *text);
 void (*spamfilter_build_user_string)(char *buf, const char *nick, Client *client);
@@ -118,6 +122,7 @@ int (*is_services_but_not_ulined)(Client *client);
 void (*parse_message_tags)(Client *client, char **str, MessageTag **mtag_list);
 const char *(*mtags_to_string)(MessageTag *m, Client *client);
 int (*can_send_to_channel)(Client *client, Channel *channel, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx);
+int (*can_send_to_user)(Client *client, Client *target, const char **msgtext, const char **errmsg, SendType sendtype, ClientContext *clictx, int flags);
 void (*broadcast_md_globalvar)(ModDataInfo *mdi, ModData *md);
 void (*broadcast_md_globalvar_cmd)(Client *except, Client *sender, const char *varname, const char *value);
 int (*tkl_ip_hash)(const char *ip);
@@ -129,6 +134,7 @@ TKL *(*find_tkl_serverban)(int type, const char *usermask, const char *hostmask,
 TKL *(*find_tkl_banexception)(int type, const char *usermask, const char *hostmask, int softban);
 TKL *(*find_tkl_nameban)(int type, const char *name, int hold);
 TKL *(*find_tkl_spamfilter)(int type, const char *match_string, BanActionValue action, unsigned short target);
+TKL *(*find_tkl_spamfilter_by_id)(const char *id);
 int (*find_tkl_exception)(int ban_type, Client *client);
 int (*server_ban_parse_mask)(Client *client, int add, char type, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
 int (*server_ban_exception_parse_mask)(Client *client, int add, const char *bantypes, const char *str, char **usermask_out, char **hostmask_out, int *soft, const char **error);
@@ -167,7 +173,7 @@ int (*websocket_create_packet_simple)(int opcode, const char **buf, int *len);
 const char *(*check_deny_link)(ConfigItem_link *link, int auto_connect);
 void (*mtag_add_issued_by)(MessageTag **mtags, Client *client, MessageTag *recv_mtags);
 void (*cancel_ident_lookup)(Client *client);
-int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by);
+int (*spamreport)(Client *client, const char *ip, NameValuePrioList *details, const char *spamreport_block, Client *by, const char *source, const char *reason, TKL *tkl, int flags);
 int (*crule_test)(const char *rule);
 CRuleNode *(*crule_parse)(const char *rule);
 int (*crule_eval)(crule_context *context, CRuleNode *rule);
@@ -175,7 +181,7 @@ void (*crule_free)(CRuleNode **);
 const char *(*crule_errstring)(int errcode);
 void (*ban_act_set_reputation)(Client *client, BanAction *action);
 const char *(*get_central_api_key)(void);
-int (*central_spamreport)(Client *target, Client *by, const char *url);
+int (*central_spamreport)(Client *target, Client *by, const char *source, const char *reason, TKL *tkl, NameValuePrioList *details, const char *url);
 int (*central_spamreport_enabled)(void);
 void (*sasl_succeeded)(Client *client);
 void (*sasl_failed)(Client *client);
@@ -183,13 +189,18 @@ int (*decode_authenticate_plain)(const char *param, char **authorization_id, cha
 void (*exit_client)(Client *client, MessageTag *recv_mtags, const char *comment);
 void (*exit_client_fmt)(Client *client, MessageTag *recv_mtags, FORMAT_STRING(const char *pattern), ...);
 void (*exit_client_ex)(Client *client, Client *origin, MessageTag *recv_mtags, const char *comment);
-void (*banned_client)(Client *client, const char *bantype, const char *reason, int global, int noexit);
+void (*banned_client)(Client *client, const char *bantype, const char *reason, TKL *tkl, int global, int noexit);
 char *(*unreal_expand_string)(const char *str, char *buf, size_t buflen, NameValuePrioList *nvp, int buildvarstring_options, Client *client);
 char *(*utf8_convert_confusables)(const char *i, char *obuf, int olen);
 const char *(*utf8_get_block_name)(int i);
 int (*utf8_get_block_number)(const char *name);
 void (*send_isupport)(Client *client);
 void (*isupport_check_for_changes)(void);
+int (*get_connections_from_ip)(Client *client);
+int (*get_floodprot_channel_max_lines)(Channel *channel);
+int (*floodprot_check_multiline_batch)(Channel *channel, Client *client, int line_count);
+int (*channel_flood_blocked_count)(Client *client, const char *type);
+void (*channel_flood_expand_json)(json_t *root, Client *client);
 
 Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
@@ -198,10 +209,24 @@ Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(),
 	if (!module || !(module->options & MOD_OPT_OFFICIAL))
 	{
 		if (module)
+		{
+			unreal_log(ULOG_ERROR, "module", "BUG_EFUNCTIONADD_NOT_OFFICIAL", NULL,
+			           "[BUG] EfunctionAdd() called by unofficial module '$module_name'.",
+			           log_data_string("module_name", module->header->name));
 			module->errorcode = MODERR_INVALID;
+		}
 		return NULL;
 	}
-	
+
+	if (loop.config_status != CONFIG_STATUS_TEST)
+	{
+		unreal_log(ULOG_ERROR, "module", "BUG_EFUNCTIONADD_NOT_MOD_TEST", NULL,
+		           "[BUG] EfunctionAdd() called by module '$module_name' outside of MOD_TEST().",
+		           log_data_string("module_name", module->header->name));
+		module->errorcode = MODERR_INVALID;
+		return NULL;
+	}
+
 	p = safe_alloc(sizeof(Efunction));
 	if (func)
 		p->func.intfunc = func;
@@ -227,6 +252,12 @@ Efunction *EfunctionAddMain(Module *module, EfunctionType eftype, int (*func)(),
 	return p;
 }
 
+/** Delete an efunction.
+ * @param cb	The efunction to delete
+ * @returns The next Efunction in the list, or NULL.
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 Efunction *EfunctionDel(Efunction *cb)
 {
 	Efunction *p, *q;
@@ -272,7 +303,7 @@ static int num_efunctions(EfunctionType eftype)
 	for (e = Efunctions[eftype]; e; e = e->next)
 		if (!e->willberemoved)
 			cnt++;
-			
+
 	return cnt;
 }
 
@@ -280,9 +311,9 @@ static int num_efunctions(EfunctionType eftype)
 /** Ensure that all efunctions are present. */
 int efunctions_check(void)
 {
-	int i, n, errors=0;
+	int i, n, errors = 0;
 
-	for (i=0; i < MAXEFUNCTIONS; i++)
+	for (i = 0; i < MAXEFUNCTIONS; i++)
 	{
 		if (efunction_table[i].name)
 		{
@@ -298,8 +329,7 @@ int efunctions_check(void)
 				             "load all required modules! (hint: see modules.default.conf)",
 				             efunction_table[i].name);
 				errors++;
-			} else
-			if (n > 1)
+			} else if (n > 1)
 			{
 				config_error("ERROR: efunction '%s' was found %d times, perhaps you "
 				             "loaded a module multiple times??",
@@ -332,7 +362,7 @@ void efunctions_switchover(void)
 	 * as 'willberemoved' if needed.
 	 */
 
-	for (i=0; i < MAXEFUNCTIONS; i++)
+	for (i = 0; i < MAXEFUNCTIONS; i++)
 	{
 		int found = 0;
 		for (e = Efunctions[i]; e; e = e->next)
@@ -398,6 +428,9 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_TKL_DEL_LINE, tkl_del_line, NULL, 0);
 	efunc_init_function(EFUNC_TKL_CHECK_LOCAL_REMOVE_SHUN, tkl_check_local_remove_shun, NULL, 0);
 	efunc_init_function(EFUNC_FIND_TKLINE_MATCH, find_tkline_match, NULL, 0);
+	efunc_init_function(EFUNC_TKL_HIT, tkl_hit, NULL, 0);
+	efunc_init_function(EFUNC_REMOVE_CONFIG_TKLS, remove_config_tkls, NULL, 0);
+	efunc_init_function(EFUNC_CONFIG_TKL_HITS_RESTORE, config_tkl_hits_restore, NULL, 0);
 	efunc_init_function(EFUNC_FIND_SHUN, find_shun, NULL, 0);
 	efunc_init_function(EFUNC_FIND_SPAMFILTER_USER, find_spamfilter_user, NULL, 0);
 	efunc_init_function(EFUNC_FIND_QLINE, find_qline, NULL, 0);
@@ -408,6 +441,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_TAKE_ACTION, take_action, NULL, 0);
 	efunc_init_function(EFUNC_MATCH_SPAMFILTER, match_spamfilter, NULL, 0);
 	efunc_init_function(EFUNC_MATCH_SPAMFILTER_MTAGS, match_spamfilter_mtags, NULL, 0);
+	efunc_init_function(EFUNC_RUN_DEFERRED_RULE_ONLY_SPAMFILTERS, run_deferred_rule_only_spamfilters, NULL, 0);
 	efunc_init_function(EFUNC_JOIN_VIRUSCHAN, join_viruschan, NULL, 0);
 	efunc_init_function(EFUNC_STRIPCOLORS, StripColors, NULL, 0);
 	efunc_init_function(EFUNC_SPAMFILTER_BUILD_USER_STRING, spamfilter_build_user_string, NULL, 0);
@@ -447,6 +481,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_TKL_TYPE_STRING, tkl_type_string, NULL, 0);
 	efunc_init_function(EFUNC_TKL_TYPE_CONFIG_STRING, tkl_type_config_string, NULL, 0);
 	efunc_init_function(EFUNC_CAN_SEND_TO_CHANNEL, can_send_to_channel, NULL, 0);
+	efunc_init_function(EFUNC_CAN_SEND_TO_USER, can_send_to_user, NULL, 0);
 	efunc_init_function(EFUNC_BROADCAST_MD_GLOBALVAR, broadcast_md_globalvar, NULL, 0);
 	efunc_init_function(EFUNC_BROADCAST_MD_GLOBALVAR_CMD, broadcast_md_globalvar_cmd, NULL, 0);
 	efunc_init_function(EFUNC_TKL_IP_HASH, tkl_ip_hash, NULL, 0);
@@ -460,6 +495,7 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_FIND_TKL_BANEXCEPTION, find_tkl_banexception, NULL, 0);
 	efunc_init_function(EFUNC_FIND_TKL_NAMEBAN, find_tkl_nameban, NULL, 0);
 	efunc_init_function(EFUNC_FIND_TKL_SPAMFILTER, find_tkl_spamfilter, NULL, 0);
+	efunc_init_function(EFUNC_FIND_TKL_SPAMFILTER_BY_ID, find_tkl_spamfilter_by_id, NULL, 0);
 	efunc_init_function(EFUNC_FIND_TKL_EXCEPTION, find_tkl_exception, NULL, 0);
 	efunc_init_function(EFUNC_SERVER_BAN_PARSE_MASK, server_ban_parse_mask, NULL, 0);
 	efunc_init_function(EFUNC_SERVER_BAN_EXCEPTION_PARSE_MASK, server_ban_exception_parse_mask, NULL, 0);
@@ -522,4 +558,9 @@ void efunctions_init(void)
 	efunc_init_function(EFUNC_UTF8_GET_BLOCK_NUMBER, utf8_get_block_number, utf8_get_block_number_default_handler, 0);
 	efunc_init_function(EFUNC_SEND_ISUPPORT, send_isupport, NULL, 0);
 	efunc_init_function(EFUNC_ISUPPORT_CHECK_FOR_CHANGES, isupport_check_for_changes, NULL, 0);
+	efunc_init_function(EFUNC_GET_CONNECTIONS_FROM_IP, get_connections_from_ip, get_connections_from_ip_default_handler, 0);
+	efunc_init_function(EFUNC_GET_FLOODPROT_CHANNEL_MAX_LINES, get_floodprot_channel_max_lines, get_floodprot_channel_max_lines_default_handler, 0);
+	efunc_init_function(EFUNC_FLOODPROT_CHECK_MULTILINE_BATCH, floodprot_check_multiline_batch, floodprot_check_multiline_batch_default_handler, 0);
+	efunc_init_function(EFUNC_CHANNEL_FLOOD_BLOCKED_COUNT, channel_flood_blocked_count, channel_flood_blocked_count_default_handler, 0);
+	efunc_init_function(EFUNC_CHANNEL_FLOOD_EXPAND_JSON, channel_flood_expand_json, channel_flood_expand_json_default_handler, 0);
 }

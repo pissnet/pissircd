@@ -11,17 +11,16 @@
  * are executed as fast as possible.
  */
 
-ModuleHeader MOD_HEADER
-= {
-	"history_backend_mem",
-	"2.0",
-	"History backend: memory",
-	"UnrealIRCd Team",
-	"unrealircd-6",
+ModuleHeader MOD_HEADER = {
+    "history_backend_mem",
+    "2.0",
+    "History backend: memory",
+    "UnrealIRCd Team",
+    "unrealircd-6",
 };
 
 /* Defines */
-#define OBJECTLEN	((NICKLEN > CHANNELLEN) ? NICKLEN : CHANNELLEN)
+#define OBJECTLEN                           ((NICKLEN > CHANNELLEN) ? NICKLEN : CHANNELLEN)
 #define HISTORY_BACKEND_MEM_HASH_TABLE_SIZE 1019
 
 /* The regular history cleaning (by timer) is spread out
@@ -41,20 +40,20 @@ ModuleHeader MOD_HEADER
  * in case of persistent it will save every 5 minutes.
  */
 #if 0 //was: DEBUGMODE
-#define HISTORY_CLEAN_PER_LOOP HISTORY_BACKEND_MEM_HASH_TABLE_SIZE
-#define HISTORY_TIMER_EVERY 5
+ #define HISTORY_CLEAN_PER_LOOP HISTORY_BACKEND_MEM_HASH_TABLE_SIZE
+ #define HISTORY_TIMER_EVERY    5
 #else
-#define HISTORY_SPREAD	60
-#define HISTORY_MAX_OFF_SECS	300
-#define HISTORY_CLEAN_PER_LOOP	(HISTORY_BACKEND_MEM_HASH_TABLE_SIZE/HISTORY_SPREAD)
-#define HISTORY_TIMER_EVERY	(HISTORY_MAX_OFF_SECS/HISTORY_SPREAD)
+ #define HISTORY_SPREAD         60
+ #define HISTORY_MAX_OFF_SECS   300
+ #define HISTORY_CLEAN_PER_LOOP (HISTORY_BACKEND_MEM_HASH_TABLE_SIZE / HISTORY_SPREAD)
+ #define HISTORY_TIMER_EVERY    (HISTORY_MAX_OFF_SECS / HISTORY_SPREAD)
 #endif
 
 /* Some magic numbers used in the database format */
-#define HISTORYDB_MAGIC_FILE_START	0xFEFEFEFE
-#define HISTORYDB_MAGIC_FILE_END	0xEFEFEFEF
-#define HISTORYDB_MAGIC_ENTRY_START	0xFFFFFFFF
-#define HISTORYDB_MAGIC_ENTRY_END	0xEEEEEEEE
+#define HISTORYDB_MAGIC_FILE_START  0xFEFEFEFE
+#define HISTORYDB_MAGIC_FILE_END    0xEFEFEFEF
+#define HISTORYDB_MAGIC_ENTRY_START 0xFFFFFFFF
+#define HISTORYDB_MAGIC_ENTRY_END   0xEEEEEEEE
 
 /* Definitions (structs, etc.) -- all for persistent history */
 struct cfgstruct {
@@ -74,7 +73,7 @@ struct HistoryLogObject {
 	int max_lines; /**< Maximum number of lines permitted */
 	long max_time; /**< Maximum number of seconds to retain history */
 	int dirty; /**< Dirty flag, used for disk writing */
-	char name[OBJECTLEN+1];
+	char name[OBJECTLEN + 1];
 };
 
 /* Global variables */
@@ -98,6 +97,7 @@ static void hbm_init_hashes(ModuleInfo *m);
 static void init_history_storage(ModuleInfo *modinfo);
 int hbm_modechar_del(Channel *channel, int modechar);
 int hbm_history_add(const char *object, MessageTag *mtags, const char *line);
+int hbm_history_add_multiline(const char *object, MessageTag *mtags, const char *source, const char *cmd, const char *target, MLine *lines);
 int hbm_history_cleanup(HistoryLogObject *h);
 HistoryResult *hbm_history_request(const char *object, HistoryFilter *filter);
 int hbm_history_destroy(const char *object);
@@ -162,6 +162,7 @@ MOD_INIT()
 	hbi.history_destroy = hbm_history_destroy;
 	hbi.history_delete = hbm_history_delete;
 	hbi.history_set_limit = hbm_history_set_limit;
+	hbi.history_add_multiline = hbm_history_add_multiline;
 	if (!HistoryBackendAdd(modinfo->handle, &hbi))
 		return MOD_FAILED;
 
@@ -178,7 +179,7 @@ MOD_LOAD()
 	SavePersistentPointer(modinfo, hbm_posthash);
 
 	EventAdd(modinfo->handle, "history_mem_init", history_mem_init, NULL, 1, 1);
-	EventAdd(modinfo->handle, "history_mem_clean", history_mem_clean, NULL, HISTORY_TIMER_EVERY*1000, 0);
+	EventAdd(modinfo->handle, "history_mem_clean", history_mem_clean, NULL, HISTORY_TIMER_EVERY * 1000, 0);
 	init_history_storage(modinfo);
 	return MOD_SUCCESS;
 }
@@ -275,13 +276,13 @@ int hbm_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 		if (!ce->value)
 		{
 			config_error("%s:%i: missing parameter",
-				ce->file->filename, ce->line_number);
+			             ce->file->filename, ce->line_number);
 			errors++;
-		} else {
+		} else
+		{
 			test.persist = config_checkval(ce->value, CFG_YESNO);
 		}
-	} else
-	if (!strcmp(ce->name, "db-secret"))
+	} else if (!strcmp(ce->name, "db-secret"))
 	{
 		const char *err;
 		if ((err = unrealdb_test_secret(ce->value)))
@@ -290,13 +291,12 @@ int hbm_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 			errors++;
 		}
 		safe_strdup(test.db_secret, ce->value);
-	} else
-	if (!strcmp(ce->name, "directory")) // or "path" ?
+	} else if (!strcmp(ce->name, "directory")) // or "path" ?
 	{
 		if (!ce->value)
 		{
 			config_error("%s:%i: missing parameter",
-				ce->file->filename, ce->line_number);
+			             ce->file->filename, ce->line_number);
 			errors++;
 		} else
 		{
@@ -320,15 +320,13 @@ int hbm_config_posttest(int *errs)
 	if (test.db_secret && !test.persist)
 	{
 		config_error("set::history::channel::db-secret is set but set::history::channel::persist is disabled, this makes no sense. "
-			     "Either use 'persist yes' or comment out / delete 'db-secret'.");
+		             "Either use 'persist yes' or comment out / delete 'db-secret'.");
 		errors++;
-	} else
-	if (!test.db_secret && test.persist)
+	} else if (!test.db_secret && test.persist)
 	{
 		config_error("set::history::channel::db-secret needs to be set.");
 		errors++;
-	} else
-	if (test.db_secret && test.persist)
+	} else if (test.db_secret && test.persist)
 	{
 		/* Configuration is good, now check if the password is correct
 		 * (if we can check at all, that is)...
@@ -345,12 +343,12 @@ int hbm_config_posttest(int *errs)
 #ifdef _WIN32
 		(void)mkdir(test.directory); /* (errors ignored) */
 #else
-		(void)mkdir(test.directory, S_IRUSR|S_IWUSR|S_IXUSR); /* (errors ignored) */
+		(void)mkdir(test.directory, S_IRUSR | S_IWUSR | S_IXUSR); /* (errors ignored) */
 #endif
 		if (!file_exists(test.directory))
 		{
 			config_error("[history] Directory %s does not exist and could not be created",
-				test.directory);
+			             test.directory);
 			errors++;
 		} else
 		{
@@ -376,14 +374,12 @@ int hbm_config_run(ConfigFile *cf, ConfigEntry *ce, int type)
 	if (!strcmp(ce->name, "persist"))
 	{
 		cfg.persist = config_checkval(ce->value, CFG_YESNO);
-	} else
-	if (!strcmp(ce->name, "directory")) // or "path" ?
+	} else if (!strcmp(ce->name, "directory")) // or "path" ?
 	{
 		safe_strdup(cfg.directory, ce->value);
 		convert_to_absolute_path(&cfg.directory, PERMDATADIR);
 		hbm_set_masterdb_filename(&cfg);
-	} else
-	if (!strcmp(ce->name, "db-secret"))
+	} else if (!strcmp(ce->name, "db-secret"))
 	{
 		safe_strdup(cfg.db_secret, ce->value);
 	} else
@@ -426,6 +422,7 @@ static void init_history_storage(ModuleInfo *modinfo)
 	cap.name = "unrealircd.org/history-storage";
 	cap.flags = CLICAP_FLAGS_ADVERTISE_ONLY;
 	cap.parameter = history_storage_capability_parameter;
+	cap.minimum_cap_version = 302;
 	ClientCapabilityAdd(modinfo->handle, &cap, NULL);
 }
 
@@ -523,13 +520,13 @@ void hbm_duplicate_mtags(HistoryLogLine *l, MessageTag *m)
 		sec = t.tv_sec;
 		tm = gmtime(&sec);
 		snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-			tm->tm_year + 1900,
-			tm->tm_mon + 1,
-			tm->tm_mday,
-			tm->tm_hour,
-			tm->tm_min,
-			tm->tm_sec,
-			(int)(t.tv_usec / 1000));
+		         tm->tm_year + 1900,
+		         tm->tm_mon + 1,
+		         tm->tm_mday,
+		         tm->tm_hour,
+		         tm->tm_min,
+		         tm->tm_sec,
+		         (int)(t.tv_usec / 1000));
 
 		n = safe_alloc(sizeof(MessageTag));
 		safe_strdup(n->name, "time");
@@ -546,7 +543,8 @@ void hbm_duplicate_mtags(HistoryLogLine *l, MessageTag *m)
 	if (n && n->value)
 	{
 		l->msgid = n->value;
-	} else {
+	} else
+	{
 		/* This shouldn't happen. The privmsg/notice layer should always add a msgid.
 		 * So this shouldn't happen even for server/services messages that had no msgid,
 		 * as the first unrealircd server would have added a msgid to it.
@@ -563,7 +561,7 @@ void hbm_duplicate_mtags(HistoryLogLine *l, MessageTag *m)
 #endif
 		n = safe_alloc(sizeof(MessageTag));
 		safe_strdup(n->name, "msgid");
-		n->value = safe_alloc(MSGIDLEN+1);
+		n->value = safe_alloc(MSGIDLEN + 1);
 		gen_random_alnum(n->value, MSGIDLEN);
 		AddListItem(n, l->mtags);
 		l->msgid = n->value;
@@ -584,8 +582,7 @@ void hbm_history_add_line_after_position(HistoryLogObject *h, HistoryLogLine *af
 		n->next = h->head;
 		h->head->prev = n;
 		h->head = n;
-	} else
-	if (after->next == NULL)
+	} else if (after->next == NULL)
 	{
 		/* New tail */
 		if (after != h->tail)
@@ -641,10 +638,12 @@ int hbm_history_add_line_in_time(HistoryLogObject *h, HistoryLogLine *l)
 	return 1;
 }
 
-/** Add a line to a history object */
-void hbm_history_add_line(HistoryLogObject *h, MessageTag *mtags, const char *line)
+/** Add a line to a history object.
+ * @returns The newly added line, or NULL if rejected as duplicate.
+ */
+HistoryLogLine *hbm_history_add_line(HistoryLogObject *h, MessageTag *mtags, const char *line)
 {
-	HistoryLogLine *l = safe_alloc(sizeof(HistoryLogLine) + strlen(line));
+	HistoryLogLine *l = safe_alloc(sizeof(HistoryLogLine) + strlen(line) + 1);
 	strcpy(l->line, line); /* safe, see memory allocation above ^ */
 	hbm_duplicate_mtags(l, mtags);
 	if (h->tail)
@@ -655,29 +654,40 @@ void hbm_history_add_line(HistoryLogObject *h, MessageTag *mtags, const char *li
 			h->tail->next = l;
 			l->prev = h->tail;
 			h->tail = l;
-		} else {
+		} else
+		{
 			/* message has same (rounded) time as tail or is from before */
 			if (!hbm_history_add_line_in_time(h, l))
 			{
 				/* Already exists (uncommon) */
 				free_message_tags(l->mtags);
 				safe_free(l);
-				return;
+				return NULL;
 			}
 		}
-	} else {
+	} else
+	{
 		/* no tail, no head */
 		h->head = h->tail = l;
 	}
 	h->dirty = 1;
 	h->num_lines++;
+	l->num_lines = 1;
+	l->num_bytes = strlen(l->line);
 	if ((l->t < h->oldest_t) || (h->oldest_t == 0))
 		h->oldest_t = l->t;
+	return l;
 }
 
-/** Delete a line from a history object */
+/** Delete a line from a history object.
+ * NOTE: if you add new fields to free here, also update
+ * hbm_history_destroy() which has its own free loop for speed.
+ */
 void hbm_history_del_line(HistoryLogObject *h, HistoryLogLine *l)
 {
+	HistoryLogLine *b, *b_next;
+	int num_lines = l->num_lines;
+
 	if (l->prev)
 		l->prev->next = l->next;
 	if (l->next)
@@ -693,11 +703,19 @@ void hbm_history_del_line(HistoryLogObject *h, HistoryLogLine *l)
 		h->tail = l->prev; /* could be NULL now */
 	}
 
+	/* Free multiline continuation lines (not in main list) */
+	for (b = l->next_in_batch; b; b = b_next)
+	{
+		b_next = b->next_in_batch;
+		free_message_tags(b->mtags);
+		safe_free(b);
+	}
+
 	free_message_tags(l->mtags);
 	safe_free(l);
 
 	h->dirty = 1;
-	h->num_lines--;
+	h->num_lines -= num_lines;
 
 	/* IMPORTANT: updating h->oldest_t takes place at the caller
 	 * because it is in a better position to optimize the process
@@ -720,20 +738,112 @@ int hbm_history_add(const char *object, MessageTag *mtags, const char *line)
 		h->max_time = 86400;
 #endif
 	}
-	if (h->num_lines >= h->max_lines)
-	{
-		/* Delete previous line */
+	while (h->num_lines >= h->max_lines && h->head)
 		hbm_history_del_line(h, h->head);
-	}
 	hbm_history_add_line(h, mtags, line);
+	return 0;
+}
+
+/** Add a multiline batch to history.
+ * Each physical line in the batch counts toward the +H line limit.
+ * If the batch exceeds max_lines on its own, it is still stored
+ * (the alternative would be an empty buffer). The oversized entry
+ * will be evicted when the next message arrives.
+ */
+int hbm_history_add_multiline(const char *object, MessageTag *mtags, const char *source,
+                              const char *cmd, const char *target, MLine *lines)
+{
+	HistoryLogObject *h = hbm_find_or_add_object(object);
+	char buf[512];
+	MLine *ml;
+	HistoryLogLine *head_line, *last;
+	int incoming_count;
+
+	if (!h->max_lines)
+	{
+		unreal_log(ULOG_WARNING, "history", "BUG_HISTORY_ADD_NO_LIMIT", NULL,
+		           "[BUG] hbm_history_add_multiline() called for $object, which has no limit set",
+		           log_data_string("object", h->name));
+#ifdef DEBUGMODE
+		abort();
+#else
+		h->max_lines = 50;
+		h->max_time = 86400;
+#endif
+	}
+
+	if (!lines)
+		return 0;
+
+	/* Count incoming physical lines */
+	incoming_count = 0;
+	for (ml = lines; ml; ml = ml->next)
+		incoming_count++;
+
+	/* Evict enough old entries to make room for the batch.
+	 * Always evict whole entries (atomic). If the batch exceeds
+	 * max_lines on its own, the loop empties the buffer and the
+	 * batch becomes the sole (oversized) entry.
+	 */
+	while (h->num_lines + incoming_count > h->max_lines && h->head)
+		hbm_history_del_line(h, h->head);
+
+	/* Build the batch head from the first line */
+	snprintf(buf, sizeof(buf), ":%s %s %s :%s", source, cmd, target, lines->text ? lines->text : "");
+	head_line = hbm_history_add_line(h, mtags, buf);
+	if (!head_line)
+		return 0; /* Rejected as duplicate */
+
+	head_line->num_lines = incoming_count;
+
+	/* Build continuation lines and link via next_in_batch */
+	last = head_line;
+	for (ml = lines->next; ml; ml = ml->next)
+	{
+		HistoryLogLine *cl;
+		snprintf(buf, sizeof(buf), ":%s %s %s :%s", source, cmd, target, ml->text ? ml->text : "");
+		cl = safe_alloc(sizeof(HistoryLogLine) + strlen(buf) + 1);
+		strcpy(cl->line, buf);
+		cl->concat = ml->concat;
+		/* Continuation lines have no mtags and are NOT in the main list */
+		last->next_in_batch = cl;
+		last = cl;
+		h->num_lines++;
+		head_line->num_bytes += strlen(cl->line);
+	}
+
+	h->dirty = 1;
 	return 0;
 }
 
 HistoryLogLine *duplicate_log_line(HistoryLogLine *l)
 {
-	HistoryLogLine *n = safe_alloc(sizeof(HistoryLogLine) + strlen(l->line));
+	HistoryLogLine *n = safe_alloc(sizeof(HistoryLogLine) + strlen(l->line) + 1);
+	HistoryLogLine *last;
+	HistoryLogLine *b;
+
 	strcpy(n->line, l->line); /* safe, see memory allocation above ^ */
+	n->concat = l->concat;
+	n->num_lines = l->num_lines;
+	n->num_bytes = l->num_bytes;
 	hbm_duplicate_mtags(n, l->mtags);
+
+	/* Duplicate multiline continuation chain */
+	last = n;
+	for (b = l->next_in_batch; b; b = b->next_in_batch)
+	{
+		HistoryLogLine *nb = safe_alloc(sizeof(HistoryLogLine) + strlen(b->line) + 1);
+		strcpy(nb->line, b->line);
+		nb->concat = b->concat;
+		/* Duplicate raw mtags. Don't use hbm_duplicate_mtags() here
+		 * because that one would generate time/msgid, something which
+		 * continuation lines don't have.
+		 */
+		nb->mtags = duplicate_mtags(b->mtags);
+		last->next_in_batch = nb;
+		last = nb;
+	}
+
 	return n;
 }
 
@@ -751,6 +861,8 @@ static void hbm_result_append_line(HistoryResult *r, HistoryLogLine *n)
 		n->prev = r->log_tail;
 		r->log_tail = n; /* we are the new tail */
 	}
+	r->num_lines += n->num_lines;
+	r->num_bytes += n->num_bytes;
 }
 
 /** Quickly prepend a new line 'n' to result 'r' */
@@ -759,6 +871,8 @@ static void hbm_result_prepend_line(HistoryResult *r, HistoryLogLine *n)
 	if (!r->log)
 		r->log_tail = n;
 	AddListItem(n, r->log);
+	r->num_lines += n->num_lines;
+	r->num_bytes += n->num_bytes;
 }
 
 /** Put lines in HistoryResult that are after a certain msgid or
@@ -776,6 +890,7 @@ static int hbm_return_after(HistoryResult *r, HistoryLogObject *h, HistoryFilter
 	HistoryLogLine *l, *n;
 	int written = 0;
 	int started = 0;
+	int reached_end = 1;
 	MessageTag *m;
 
 	for (l = h->head; l; l = l->next)
@@ -786,8 +901,7 @@ static int hbm_return_after(HistoryResult *r, HistoryLogObject *h, HistoryFilter
 			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) > 0))
 			{
 				started = 1;
-			} else
-			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+			} else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 				continue;
@@ -799,20 +913,25 @@ static int hbm_return_after(HistoryResult *r, HistoryLogObject *h, HistoryFilter
 			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				break;
-			} else
-			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
+			} else if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
 
+			/* Limit reached but there are more lines available */
+			if (written >= filter->limit)
+			{
+				reached_end = 0;
+				break;
+			}
 			/* Add line to the return buffer */
 			n = duplicate_log_line(l);
 			hbm_result_append_line(r, n);
-			if (++written >= filter->limit)
-				break;
+			written++;
 		}
 	}
 
+	r->reached_end = reached_end;
 	return written;
 }
 
@@ -829,6 +948,7 @@ static int hbm_return_before(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 	HistoryLogLine *l, *n;
 	int written = 0;
 	int started = 0;
+	int reached_end = 1;
 	MessageTag *m;
 
 	for (l = h->tail; l; l = l->prev)
@@ -839,8 +959,7 @@ static int hbm_return_before(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) < 0))
 			{
 				started = 1;
-			} else
-			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+			} else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 				continue;
@@ -852,20 +971,25 @@ static int hbm_return_before(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) < 0))
 			{
 				break;
-			} else
-			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
+			} else if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
 
+			/* Limit reached but there are more lines available */
+			if (written >= filter->limit)
+			{
+				reached_end = 0;
+				break;
+			}
 			/* Add line to the return buffer */
 			n = duplicate_log_line(l);
 			hbm_result_prepend_line(r, n);
-			if (++written >= filter->limit)
-				break;
+			written++;
 		}
 	}
 
+	r->reached_end = reached_end;
 	return written;
 }
 
@@ -880,22 +1004,28 @@ static int hbm_return_latest(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 {
 	HistoryLogLine *l, *n;
 	int written = 0;
+	int reached_end = 1;
 	MessageTag *m;
 
 	for (l = h->tail; l; l = l->prev)
 	{
 		if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) <= 0))
 			break; /* Stop now */
-		else
-		if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+		else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			break; /* Stop now */
 
+		/* Limit reached but there are more lines available */
+		if (written >= filter->limit)
+		{
+			reached_end = 0;
+			break;
+		}
 		n = duplicate_log_line(l);
 		hbm_result_prepend_line(r, n);
-		if (++written >= filter->limit)
-			break;
+		written++;
 	}
 
+	r->reached_end = reached_end;
 	return written;
 }
 
@@ -970,8 +1100,7 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) < 0))
 			{
 				started = l->next;
-			} else
-			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+			} else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = l;
 				continue;
@@ -983,8 +1112,7 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) < 0))
 			{
 				break;
-			} else
-			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
+			} else if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
@@ -997,7 +1125,8 @@ static int hbm_return_around(HistoryResult *r, HistoryLogObject *h, HistoryFilte
 				/* Normal case */
 				if (++written >= filter->limit / 2)
 					break;
-			} else {
+			} else
+			{
 				/* Special case: if started->next is NULL then started is the end
 				 * of the buffer, so fill just /under/ the limit
 				 */
@@ -1067,8 +1196,7 @@ static int hbm_return_between_figure_out_direction(HistoryLogObject *h, HistoryF
 			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) >= 0))
 			{
 				found_a = 1;
-			} else
-			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+			} else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				found_a = 1;
 			}
@@ -1092,8 +1220,7 @@ static int hbm_return_between_figure_out_direction(HistoryLogObject *h, HistoryF
 			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				found_b = 1;
-			} else
-			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
+			} else if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				found_b = 1;
 			}
@@ -1136,8 +1263,7 @@ static int hbm_return_between(HistoryResult *r, HistoryLogObject *h, HistoryFilt
 	if (direction == 1)
 	{
 		return hbm_return_after(r, h, filter);
-	} else
-	if (direction == 0)
+	} else if (direction == 0)
 	{
 		/* Create a temporary filter, swapping directions */
 		char *x, *y;
@@ -1151,8 +1277,9 @@ static int hbm_return_between(HistoryResult *r, HistoryLogObject *h, HistoryFilt
 		f.msgid_b = filter->msgid_a;
 		return hbm_return_after(r, h, &f);
 	}
-	/* else direction is -1 which means not found / invalid */
 
+	/* else direction is -1 which means not found / invalid */
+	r->reached_end = 1;
 	return 0;
 }
 
@@ -1177,7 +1304,7 @@ HistoryResult *hbm_history_request(const char *object, HistoryFilter *filter)
 	r = safe_alloc(sizeof(HistoryResult));
 	safe_strdup(r->object, object);
 
-	switch(filter->cmd)
+	switch (filter->cmd)
 	{
 		case HFC_BEFORE:
 			hbm_return_before(r, h, filter);
@@ -1215,7 +1342,7 @@ HistoryResult *hbm_history_request(const char *object, HistoryFilter *filter)
  */
 int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_deletes)
 {
-	HistoryLogLine *l;
+	HistoryLogLine *l, *l_next;
 	HistoryLogObject *h = hbm_find_object(object);
 	int deleted = 0;
 	int started = 0;
@@ -1227,16 +1354,16 @@ int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_
 	if (!h)
 		return 0;
 
-	for (l = h->head; l; l = l->next)
+	for (l = h->head; l; l = l_next)
 	{
+		l_next = l->next;
 		/* Not started yet? Check if this is the starting point... */
 		if (!started)
 		{
 			if (filter->timestamp_a && (strcmp(l->time, filter->timestamp_a) > 0))
 			{
 				started = 1;
-			} else
-			if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
+			} else if (filter->msgid_a && !strcmp(l->msgid, filter->msgid_a))
 			{
 				started = 1;
 			}
@@ -1247,8 +1374,7 @@ int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_
 			if (filter->timestamp_b && (strcmp(l->time, filter->timestamp_b) >= 0))
 			{
 				break;
-			} else
-			if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
+			} else if (filter->msgid_b && !strcmp(l->msgid, filter->msgid_b))
 			{
 				break;
 			}
@@ -1258,10 +1384,12 @@ int hbm_history_delete(const char *object, HistoryFilter *filter, int *rejected_
 			 * This means filter->account should probably not be filled directly
 			 * from user input.
 			 */
-			if (filter->account) {
+			if (filter->account)
+			{
 				// TODO: check account-tag module is loaded?
 				m = find_mtag(l->mtags, "account");
-				if (!m || strcmp(m->value, filter->account)) {
+				if (!m || strcmp(m->value, filter->account))
+				{
 					if (rejected_deletes)
 						(*rejected_deletes)++;
 					continue;
@@ -1316,6 +1444,8 @@ int hbm_history_cleanup(HistoryLogObject *h)
 			l_next = l->next;
 			if (h->num_lines > h->max_lines)
 			{
+				if (l_next == NULL)
+					break; /* Keep the most recent entry even if it exceeds the line limit on its own (multiline batch) */
 				hbm_history_del_line(h, l);
 				continue;
 			}
@@ -1337,12 +1467,19 @@ int hbm_history_destroy(const char *object)
 
 	for (l = h->head; l; l = l_next)
 	{
+		HistoryLogLine *b, *b_next;
 		l_next = l->next;
 		/* We could use hbm_history_del_line() here but
 		 * it does unnecessary work, this is quicker.
 		 * The only danger is that we may forget to free some
 		 * fields that are added later there but not here.
 		 */
+		for (b = l->next_in_batch; b; b = b_next)
+		{
+			b_next = b->next_in_batch;
+			free_message_tags(b->mtags);
+			safe_free(b);
+		}
 		free_message_tags(l->mtags);
 		safe_free(l);
 	}
@@ -1401,7 +1538,7 @@ static int hbm_read_masterdb(void)
 	    !unrealdb_read_str(db, &posthash))
 	{
 		config_error("[history] Read error from database file '%s': %s",
-			test.masterdb, unrealdb_get_error_string());
+		             test.masterdb, unrealdb_get_error_string());
 		safe_free(prehash);
 		safe_free(posthash);
 		unrealdb_close(db);
@@ -1412,7 +1549,7 @@ static int hbm_read_masterdb(void)
 	if (!prehash || !posthash)
 	{
 		config_error("[history] Read error from database file '%s': unexpected values encountered",
-			test.masterdb);
+		             test.masterdb);
 		safe_free(prehash);
 		safe_free(posthash);
 		return 0;
@@ -1424,7 +1561,8 @@ static int hbm_read_masterdb(void)
 		/* Identical sets */
 		safe_free(prehash);
 		safe_free(posthash);
-	} else {
+	} else
+	{
 		/* Diffferent */
 		safe_free(hbm_prehash);
 		safe_free(hbm_posthash);
@@ -1448,7 +1586,7 @@ static int hbm_write_masterdb(void)
 	if (!db)
 	{
 		config_error("[history] Unable to write to '%s': %s",
-			test.masterdb, unrealdb_get_error_string());
+		             test.masterdb, unrealdb_get_error_string());
 		return 0;
 	}
 
@@ -1461,7 +1599,7 @@ static int hbm_write_masterdb(void)
 	    !unrealdb_write_str(db, hbm_posthash))
 	{
 		config_error("[history] Unable to write to '%s': %s",
-			test.masterdb, unrealdb_get_error_string());
+		             test.masterdb, unrealdb_get_error_string());
 		return 0;
 	}
 	unrealdb_close(db);
@@ -1514,7 +1652,7 @@ static void hbm_read_dbs(void)
 #ifdef _WIN32
 				(void)mkdir(buf2); /* (errors ignored) */
 #else
-				(void)mkdir(buf2, S_IRUSR|S_IWUSR|S_IXUSR); /* (errors ignored) */
+				(void)mkdir(buf2, S_IRUSR | S_IWUSR | S_IXUSR); /* (errors ignored) */
 #endif
 				snprintf(buf2, sizeof(buf2), "%s/bad/%s", cfg.directory, fname);
 				unlink(buf2);
@@ -1532,31 +1670,37 @@ static void hbm_read_dbs(void)
 #endif
 }
 
-#define RESET_VALUES_LOOP()	do { \
-					safe_free(mtag_name); \
-					safe_free(mtag_value); \
-					safe_free(line); \
-					free_message_tags(mtags); \
-					mtags = NULL; \
-					magic = 0; \
-					line_ts = 0; \
-				} while(0)
+#define RESET_VALUES_LOOP() \
+	do \
+	{ \
+		safe_free(mtag_name); \
+		safe_free(mtag_value); \
+		safe_free(line); \
+		free_message_tags(mtags); \
+		mtags = NULL; \
+		magic = 0; \
+		line_ts = 0; \
+	} while (0)
 
-#define R_SAFE_CLEANUP()	do { \
-					unrealdb_close(db); \
-					RESET_VALUES_LOOP(); \
-					safe_free(prehash); \
-					safe_free(posthash); \
-					safe_free(object); \
-				} while(0)
+#define R_SAFE_CLEANUP() \
+	do \
+	{ \
+		unrealdb_close(db); \
+		RESET_VALUES_LOOP(); \
+		safe_free(prehash); \
+		safe_free(posthash); \
+		safe_free(object); \
+	} while (0)
 #define R_SAFE(x) \
-	do { \
-		if (!(x)) { \
+	do \
+	{ \
+		if (!(x)) \
+		{ \
 			config_warn("[history] Read error from database file '%s' (possible corruption): %s", fname, unrealdb_get_error_string()); \
 			R_SAFE_CLEANUP(); \
 			return 0; \
 		} \
-	} while(0)
+	} while (0)
 
 
 /** Read a channel history db file */
@@ -1591,7 +1735,7 @@ static int hbm_read_db(const char *fname)
 	if (magic != HISTORYDB_MAGIC_FILE_START)
 	{
 		config_warn("[history] Database '%s' has wrong magic value, possibly corrupt (0x%lx), expected HISTORYDB_MAGIC_FILE_START.",
-			fname, (long)magic);
+		            fname, (long)magic);
 		unrealdb_close(db);
 		return 0;
 	}
@@ -1604,10 +1748,10 @@ static int hbm_read_db(const char *fname)
 		unrealdb_close(db);
 		return 0;
 	}
-	if (version > 5000)
+	if (version > 5001)
 	{
 		config_warn("[history] Database '%s' has version %lu while we only support %lu. Did you just downgrade UnrealIRCd? Sorry this is not suported",
-			fname, (unsigned long)version, (unsigned long)5000);
+		            fname, (unsigned long)version, (unsigned long)5001);
 		unrealdb_close(db);
 		return 0;
 	}
@@ -1618,7 +1762,7 @@ static int hbm_read_db(const char *fname)
 	if (!prehash || !posthash || strcmp(prehash, hbm_prehash) || strcmp(posthash, hbm_posthash))
 	{
 		config_warn("[history] Database '%s' does not belong to our 'master.db'. Are you mixing old with new .db files perhaps? This is not supported. File ignored.",
-			fname);
+		            fname);
 		R_SAFE_CLEANUP();
 		return 0;
 	}
@@ -1635,7 +1779,7 @@ static int hbm_read_db(const char *fname)
 		return 1; /* No problem */
 	}
 
-	while(1)
+	while (1)
 	{
 		RESET_VALUES_LOOP();
 		R_SAFE(unrealdb_read_int32(db, &magic));
@@ -1644,13 +1788,13 @@ static int hbm_read_db(const char *fname)
 		if (magic != HISTORYDB_MAGIC_ENTRY_START)
 		{
 			config_warn("[history] Read error from database file '%s': wrong magic value in entry (0x%lx), expected HISTORYDB_MAGIC_ENTRY_START",
-				fname, (long)magic);
+			            fname, (long)magic);
 			R_SAFE_CLEANUP();
 			return 0;
 		}
 
 		R_SAFE(unrealdb_read_int64(db, &line_ts));
-		while(1)
+		while (1)
 		{
 			R_SAFE(unrealdb_read_str(db, &mtag_name));
 			R_SAFE(unrealdb_read_str(db, &mtag_value));
@@ -1664,15 +1808,65 @@ static int hbm_read_db(const char *fname)
 			safe_free(mtag_value);
 		}
 		R_SAFE(unrealdb_read_str(db, &line));
+		while (h->num_lines >= h->max_lines && h->head)
+			hbm_history_del_line(h, h->head);
+		if (version >= 5001)
+		{
+			uint32_t concat_flag, continuation_count;
+			HistoryLogLine *l;
+			R_SAFE(unrealdb_read_int32(db, &concat_flag));
+			R_SAFE(unrealdb_read_int32(db, &continuation_count));
+			/* Add the batch head */
+			l = hbm_history_add_line(h, mtags, line);
+			if (l)
+			{
+				l->concat = concat_flag;
+				l->num_lines = 1 + continuation_count;
+			}
+			/* Read continuation lines from db.
+			 * If head was accepted (l != NULL): attach them.
+			 * If head was rejected as duplicate (l == NULL, uncommon):
+			 * still consume the data to keep the reader in sync.
+			 */
+			if (continuation_count > 0)
+			{
+				HistoryLogLine *last_cl = NULL;
+				uint32_t i;
+				for (i = 0; i < continuation_count; i++)
+				{
+					uint32_t cl_concat;
+					char *cl_line = NULL;
+					R_SAFE(unrealdb_read_int32(db, &cl_concat));
+					R_SAFE(unrealdb_read_str(db, &cl_line));
+					if (l)
+					{
+						HistoryLogLine *cl;
+						cl = safe_alloc(sizeof(HistoryLogLine) + strlen(cl_line) + 1);
+						strcpy(cl->line, cl_line);
+						cl->concat = cl_concat;
+						if (last_cl == NULL)
+							l->next_in_batch = cl;
+						else
+							last_cl->next_in_batch = cl;
+						last_cl = cl;
+						h->num_lines++;
+						l->num_bytes += strlen(cl->line);
+					}
+					safe_free(cl_line);
+				}
+			}
+		} else
+		{
+			hbm_history_add_line(h, mtags, line);
+		}
 		R_SAFE(unrealdb_read_int32(db, &magic));
 		if (magic != HISTORYDB_MAGIC_ENTRY_END)
 		{
 			config_warn("[history] Read error from database file '%s': wrong magic value in entry (0x%lx), expected HISTORYDB_MAGIC_ENTRY_END",
-				fname, (long)magic);
+			            fname, (long)magic);
 			R_SAFE_CLEANUP();
 			return 0;
 		}
-		hbm_history_add(object, mtags, line);
 	}
 
 	/* Prevent directly rewriting the channel, now that we have just read it.
@@ -1757,13 +1951,13 @@ EVENT(history_mem_clean)
 
 		if (hashnum >= HISTORY_BACKEND_MEM_HASH_TABLE_SIZE)
 			hashnum = 0;
-	} while(loopcnt++ < HISTORY_CLEAN_PER_LOOP);
+	} while (loopcnt++ < HISTORY_CLEAN_PER_LOOP);
 }
 
 const char *hbm_history_filename(HistoryLogObject *h)
 {
 	static char fname[512];
-	char oname[OBJECTLEN+1];
+	char oname[OBJECTLEN + 1];
 	char hashdata[512];
 	char hash[128];
 
@@ -1779,21 +1973,24 @@ const char *hbm_history_filename(HistoryLogObject *h)
 }
 
 #define WARN_WRITE_ERROR(fname) \
-	do { \
+	do \
+	{ \
 		unreal_log(ULOG_ERROR, "history", "HISTORYDB_FILE_WRITE_ERROR", NULL, \
-			   "[historydb] Error writing to temporary database file $filename: $system_error", \
-			   log_data_string("filename", fname), \
-			   log_data_string("system_error", unrealdb_get_error_string())); \
-	} while(0)
+		           "[historydb] Error writing to temporary database file $filename: $system_error", \
+		           log_data_string("filename", fname), \
+		           log_data_string("system_error", unrealdb_get_error_string())); \
+	} while (0)
 
 #define W_SAFE(x) \
-	do { \
-		if (!(x)) { \
+	do \
+	{ \
+		if (!(x)) \
+		{ \
 			WARN_WRITE_ERROR(tmpfname); \
 			unrealdb_close(db); \
 			return 0; \
 		} \
-	} while(0)
+	} while (0)
 
 
 // FIXME: the code below will cause massive floods on disk or I/O errors if hundreds of
@@ -1825,7 +2022,7 @@ static int hbm_write_db(HistoryLogObject *h)
 	}
 
 	W_SAFE(unrealdb_write_int32(db, HISTORYDB_MAGIC_FILE_START));
-	W_SAFE(unrealdb_write_int32(db, 5000)); /* VERSION */
+	W_SAFE(unrealdb_write_int32(db, 5001)); /* VERSION */
 	W_SAFE(unrealdb_write_str(db, hbm_prehash));
 	W_SAFE(unrealdb_write_str(db, hbm_posthash));
 	W_SAFE(unrealdb_write_str(db, h->name));
@@ -1845,6 +2042,20 @@ static int hbm_write_db(HistoryLogObject *h)
 		W_SAFE(unrealdb_write_str(db, NULL));
 		W_SAFE(unrealdb_write_str(db, NULL));
 		W_SAFE(unrealdb_write_str(db, l->line));
+		/* v5001: multiline batch data */
+		W_SAFE(unrealdb_write_int32(db, l->concat));
+		{
+			HistoryLogLine *b;
+			int32_t continuation_count = 0;
+			for (b = l->next_in_batch; b; b = b->next_in_batch)
+				continuation_count++;
+			W_SAFE(unrealdb_write_int32(db, continuation_count));
+			for (b = l->next_in_batch; b; b = b->next_in_batch)
+			{
+				W_SAFE(unrealdb_write_int32(db, b->concat));
+				W_SAFE(unrealdb_write_str(db, b->line));
+			}
+		}
 		W_SAFE(unrealdb_write_int32(db, HISTORYDB_MAGIC_ENTRY_END));
 	}
 	W_SAFE(unrealdb_write_int32(db, HISTORYDB_MAGIC_FILE_END));
@@ -1862,7 +2073,7 @@ static int hbm_write_db(HistoryLogObject *h)
 	if (rename(tmpfname, realfname) < 0)
 	{
 		config_error("[history] Error renaming '%s' to '%s': %s (HISTORY NOT SAVED)",
-			tmpfname, realfname, strerror(errno));
+		             tmpfname, realfname, strerror(errno));
 		return 0;
 	}
 

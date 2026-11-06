@@ -19,30 +19,29 @@
 
 #include "unrealircd.h"
 
-#define IsRegOnlyMsg(client)    (client->umodes & UMODE_REGONLYMSG)
+#define IsRegOnlyMsg(client) (client->umodes & UMODE_REGONLYMSG)
 
 /* Module header */
-ModuleHeader MOD_HEADER
-  = {
-	"usermodes/regonlymsg",
-	"4.2",
-	"User Mode +R",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "usermodes/regonlymsg",
+    "4.2",
+    "User Mode +R",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Global variables */
 long UMODE_REGONLYMSG = 0L;
 
 /* Forward declarations */
 int regonlymsg_can_send_to_user(Client *client, Client *target, const char **text, const char **errmsg, SendType sendtype, ClientContext *clictx);
-                    
+
 MOD_INIT()
 {
 	UmodeAdd(modinfo->handle, 'R', UMODE_GLOBAL, 0, umode_allow_all, &UMODE_REGONLYMSG);
-	
+
 	HookAdd(modinfo->handle, HOOKTYPE_CAN_SEND_TO_USER, 0, regonlymsg_can_send_to_user);
-	
+
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 	return MOD_SUCCESS;
 }
@@ -61,10 +60,11 @@ int regonlymsg_can_send_to_user(Client *client, Client *target, const char **tex
 {
 	if (IsRegOnlyMsg(target) && !IsServer(client) && !IsULine(client) && !IsLoggedIn(client))
 	{
-		if (ValidatePermissionsForPath("client:override:message:regonlymsg",client,target,NULL,text?*text:NULL))
+		if (ValidatePermissionsForPath("client:override:message:regonlymsg", client, target, NULL, text ? *text : NULL))
 			return HOOK_CONTINUE; /* bypass this restriction */
 
-		*errmsg = "You must identify to a registered nick to private message this user";
+		if (sendtype != SEND_TYPE_TAGMSG)
+			*errmsg = "You must identify to a registered nick to private message this user";
 		return HOOK_DENY;
 	}
 
