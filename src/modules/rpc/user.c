@@ -5,13 +5,12 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-= {
-	"rpc/user",
-	"1.0.7",
-	"user.* RPC calls",
-	"UnrealIRCd Team",
-	"unrealircd-6",
+ModuleHeader MOD_HEADER = {
+    "rpc/user",
+    "1.0.7",
+    "user.* RPC calls",
+    "UnrealIRCd Team",
+    "unrealircd-6",
 };
 
 /* Forward declarations */
@@ -188,10 +187,11 @@ RPC_CALL_FUNC(rpc_user_list)
 
 RPC_CALL_FUNC(rpc_user_get)
 {
-	json_t *result, *list, *item;
+	json_t *result;
 	const char *nick;
 	Client *acptr;
 	int details;
+	int remote_fetch;
 
 	REQUIRE_PARAM_STRING("nick", nick);
 
@@ -201,10 +201,33 @@ RPC_CALL_FUNC(rpc_user_get)
 		rpc_error(client, request, JSON_RPC_ERROR_INVALID_PARAMS, "Using an 'object_detail_level' of 3 is not allowed in user.* calls, use 0, 1, 2 or 4.");
 		return;
 	}
+	/* Some fields (flood counters, idle time, snomasks, ..) only exist
+	 * on the server where the user is on. If 'object_remote_fetch' is
+	 * set to true, then we forward the request to the corresponding
+	 * server. This defaults to false, except when details >= 5, then
+	 * the default is true. Yeah a bit complicated, but that way with
+	 * level 5+ we actually include the fields you want :D.
+	 * Note that default user.get without object_detail_level defaults
+	 * to detail level 4, so default is off. Which is intended, because
+	 * all of this does come at a cost of network latency (server may
+	 * even be multiple hops away) versus locally responding which is
+	 * much faster.
+	 */
+	OPTIONAL_PARAM_BOOLEAN("object_remote_fetch", remote_fetch, details >= 5);
 
 	if (!(acptr = find_user(nick, NULL)))
 	{
 		rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Nickname not found");
+		return;
+	}
+
+	/* Forward to the user's own server if requested and RRPC is supported
+	 * along the entire routing path. Otherwise, just fall back.
+	 */
+	if (remote_fetch && !MyConnect(acptr) && acptr->uplink &&
+	    rrpc_supported_simple(acptr->uplink, NULL))
+	{
+		rpc_send_request_to_remote(client, acptr->uplink, request);
 		return;
 	}
 
@@ -221,7 +244,7 @@ RPC_CALL_FUNC(rpc_user_set_nick)
 	const char *args[5];
 	const char *nick, *newnick_requested, *str;
 	int force = 0;
-	char newnick[NICKLEN+1];
+	char newnick[NICKLEN + 1];
 	char tsbuf[32];
 	Client *acptr;
 
@@ -254,6 +277,7 @@ RPC_CALL_FUNC(rpc_user_set_nick)
 		/* Check other restrictions */
 		Client *check = find_user(newnick, NULL);
 		int ishold = 0;
+		TKL *tklban;
 
 		/* Check if in use by someone else (do allow case-changing) */
 		if (check && (acptr != check))
@@ -265,8 +289,9 @@ RPC_CALL_FUNC(rpc_user_set_nick)
 		// Can't really check for spamfilter here, since it assumes user is local
 
 		// But we can check q-lines...
-		if (find_qline(acptr, newnick, &ishold))
+		if ((tklban = find_qline(acptr, newnick, &ishold)))
 		{
+			tkl_hit(acptr, tklban);
 			rpc_error(client, request, JSON_RPC_ERROR_INVALID_NAME, "New nickname is forbidden by q-line");
 			return;
 		}
@@ -497,7 +522,7 @@ RPC_CALL_FUNC(rpc_user_set_oper)
 	json_t *result, *list, *item;
 	const char *args[9];
 	const char *nick, *oper_account, *oper_class;
-	const char *class=NULL, *modes=NULL, *snomask=NULL, *vhost=NULL;
+	const char *class = NULL, *modes = NULL, *snomask = NULL, *vhost = NULL;
 	MessageTag *mtags = NULL;
 	Client *acptr;
 	char default_modes[64];
@@ -613,7 +638,7 @@ RPC_CALL_FUNC(rpc_user_join)
 {
 	json_t *result, *list, *item;
 	const char *args[5];
-	const char *nick, *channel, *key=NULL;
+	const char *nick, *channel, *key = NULL;
 	Client *acptr;
 	MessageTag *mtags = NULL;
 	int force = 0;
@@ -640,7 +665,8 @@ RPC_CALL_FUNC(rpc_user_join)
 		args[3] = key;
 		args[4] = NULL;
 		do_cmd(&me, mtags, "SVSJOIN", key ? 4 : 3, args);
-	} else {
+	} else
+	{
 		args[3] = NULL;
 		do_cmd(&me, mtags, "SAJOIN", 3, args);
 	}
@@ -661,7 +687,7 @@ RPC_CALL_FUNC(rpc_user_part)
 {
 	json_t *result, *list, *item;
 	const char *args[5];
-	const char *nick, *channel, *reason=NULL;
+	const char *nick, *channel, *reason = NULL;
 	Client *acptr;
 	MessageTag *mtags = NULL;
 	int force = 0;
@@ -683,7 +709,7 @@ RPC_CALL_FUNC(rpc_user_part)
 	args[3] = reason;
 	args[4] = NULL;
 	mtag_add_issued_by(&mtags, client, NULL);
-	do_cmd(&me, NULL, force ? "SAPART" : "SVSPART", reason ? 4 : 3, args);
+	do_cmd(&me, mtags, force ? "SAPART" : "SVSPART", reason ? 4 : 3, args);
 	safe_free_message_tags(mtags);
 
 	/* Return result. Always 'true' at the moment.

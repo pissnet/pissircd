@@ -18,13 +18,12 @@
  */
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-= {
-	"extbans/asn",
-	"6.0",
-	"ExtBan ~asn - Ban/exempt by ASN (geoip)",
-	"UnrealIRCd Team",
-	"unrealircd-6",
+ModuleHeader MOD_HEADER = {
+    "extbans/asn",
+    "6.0",
+    "ExtBan ~asn - Ban/exempt by ASN (geoip)",
+    "UnrealIRCd Team",
+    "unrealircd-6",
 };
 
 /* Forward declarations */
@@ -42,8 +41,8 @@ Extban *register_asn_extban(ModuleInfo *modinfo)
 	req.is_ok = extban_asn_is_ok;
 	req.conv_param = extban_asn_conv_param;
 	req.is_banned = extban_asn_is_banned;
-	req.is_banned_events = BANCHK_ALL|BANCHK_TKL;
-	req.options = EXTBOPT_INVEX|EXTBOPT_TKL;
+	req.is_banned_events = BANCHK_ALL | BANCHK_TKL;
+	req.options = EXTBOPT_INVEX | EXTBOPT_TKL;
 	return ExtbanAdd(modinfo->handle, req);
 }
 
@@ -90,7 +89,7 @@ int extban_asn_usage(Client *client)
 	if (client)
 	{
 		sendnotice(client, "ERROR: ExtBan ~asn expects the AS number (all digits). "
-				   "For example: +b ~asn:64496");
+		                   "For example: +b ~asn:64496");
 	}
 	return EX_DENY;
 }
@@ -99,17 +98,11 @@ int extban_asn_is_ok(BanContext *b)
 {
 	if (b->is_ok_check == EXCHK_PARAM)
 	{
-		const char *p;
-
 		if (!strcmp(b->banstr, "*"))
 			return EX_ALLOW;
 
-		if (!*b->banstr)
+		if (!str_is_all_digits(b->banstr))
 			return extban_asn_usage(b->client);
-
-		for (p = b->banstr; *p; p++)
-			if (!isdigit(*p))
-				return extban_asn_usage(b->client);
 
 		return EX_ALLOW;
 	}
@@ -121,7 +114,7 @@ const char *extban_asn_conv_param(BanContext *b, Extban *extban)
 {
 	static char retbuf[32];
 	unsigned int asn;
-	char *p=NULL;
+	char *p = NULL;
 
 	if (!isdigit(b->banstr[0]))
 		return NULL;

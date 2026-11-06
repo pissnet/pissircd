@@ -5,13 +5,12 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-= {
-	"rpc/server",
-	"1.0.0",
-	"server.* RPC calls",
-	"UnrealIRCd Team",
-	"unrealircd-6",
+ModuleHeader MOD_HEADER = {
+    "rpc/server",
+    "1.0.0",
+    "server.* RPC calls",
+    "UnrealIRCd Team",
+    "unrealircd-6",
 };
 
 /* Forward declarations */
@@ -134,7 +133,8 @@ RPC_CALL_FUNC(rpc_server_get)
 			rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Server not found");
 			return;
 		}
-	} else {
+	} else
+	{
 		acptr = &me;
 	}
 
@@ -158,7 +158,8 @@ RPC_CALL_FUNC(rpc_server_rehash)
 			rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Server not found");
 			return;
 		}
-	} else {
+	} else
+	{
 		acptr = &me;
 	}
 
@@ -169,7 +170,8 @@ RPC_CALL_FUNC(rpc_server_rehash)
 		{
 			/* Server supports RRPC and will handle the response */
 			rpc_send_request_to_remote(client, acptr, request);
-		} else {
+		} else
+		{
 			/* Server does not support RRPC, so we can only do best effort: */
 			sendto_one(acptr, NULL, ":%s REHASH %s", me.id, acptr->name);
 			result = json_boolean(1);
@@ -244,7 +246,8 @@ RPC_CALL_FUNC(rpc_server_connect)
 			rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Server not found");
 			return;
 		}
-	} else {
+	} else
+	{
 		acptr = &me;
 	}
 	REQUIRE_PARAM_STRING("link", link_name);
@@ -276,6 +279,15 @@ RPC_CALL_FUNC(rpc_server_connect)
 		return;
 	}
 
+	if (link->outgoing_without_certificate_verification)
+	{
+		rpc_error(client, request, JSON_RPC_ERROR_DENIED,
+		          "Link block does not verify the certificate of the other side. "
+		          "Outgoing connects are refused because it allows a man-in-the-middle attack. "
+		          "Please follow this guide to link securely: https://www.unrealircd.org/docs/Linking_servers_(genlinkblock)");
+		return;
+	}
+
 	if ((err = check_deny_link(link, 0)))
 	{
 		rpc_error_fmt(client, request, JSON_RPC_ERROR_DENIED, "Server linking is denied via a deny link { } block: %s", err);
@@ -283,8 +295,8 @@ RPC_CALL_FUNC(rpc_server_connect)
 	}
 
 	unreal_log(ULOG_INFO, "link", "LINK_REQUEST", client,
-		   "CONNECT: Link to $link_block requested by $client",
-		   log_data_link_block(link));
+	           "CONNECT: Link to $link_block requested by $client",
+	           log_data_link_block(link));
 
 	connect_server(link, client, NULL);
 	result = json_boolean(1);
@@ -307,7 +319,8 @@ RPC_CALL_FUNC(rpc_server_disconnect)
 			rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Server not found");
 			return;
 		}
-	} else {
+	} else
+	{
 		acptr = &me;
 	}
 	REQUIRE_PARAM_STRING("link", link_name);
@@ -353,14 +366,15 @@ RPC_CALL_FUNC(rpc_server_disconnect)
 
 void json_expand_module(json_t *j, const char *key, Module *m, int detail)
 {
-	char buf[BUFSIZE+1];
+	char buf[BUFSIZE + 1];
 	json_t *child;
 
 	if (key)
 	{
 		child = json_object();
 		json_object_set_new(j, key, child);
-	} else {
+	} else
+	{
 		child = j;
 	}
 
@@ -388,7 +402,8 @@ RPC_CALL_FUNC(rpc_server_module_list)
 			rpc_error(client, request, JSON_RPC_ERROR_NOT_FOUND, "Server not found");
 			return;
 		}
-	} else {
+	} else
+	{
 		acptr = &me;
 	}
 

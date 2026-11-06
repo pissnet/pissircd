@@ -5,29 +5,28 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"central-blocklist",
-	"1.0.8",
-	"Check users at central blocklist",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "central-blocklist",
+    "1.0.8",
+    "Check users at central blocklist",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 ModDataInfo *centralblocklist_md = NULL;
 Module *cbl_module = NULL;
 
-#define CBL_URL	 "https://centralblocklist.unrealircd-api.org/api/v1"
-#define SPAMREPORT_URL	"https://spamreport.unrealircd-api.org/api/spamreport-v1"
-#define CBL_TRANSFER_TIMEOUT 10
+#define CBL_URL                        "https://centralblocklist.unrealircd-api.org/api/v1"
+#define SPAMREPORT_URL                 "https://spamreport.unrealircd-api.org/api/spamreport-v1"
+#define CBL_TRANSFER_TIMEOUT           10
+#define CBL_MAX_REQUEST_SIZE           65536
 #define SPAMREPORT_NUM_REMEMBERED_CMDS 20
 
-#define WEB(client)		((WebRequest *)moddata_local_client(client, webserver_md).ptr)
-#define WSU(client)		((WebSocketUser *)moddata_client(client, websocket_md).ptr)
+#define WEB(client) ((WebRequest *)moddata_local_client(client, webserver_md).ptr)
+#define WSU(client) ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
 
 typedef struct CBLUser CBLUser;
-struct CBLUser
-{
+struct CBLUser {
 	json_t *handshake;
 	time_t request_sent;
 	char request_pending;
@@ -39,8 +38,7 @@ struct CBLUser
 
 /* For tracking current HTTPS requests */
 typedef struct CBLTransfer CBLTransfer;
-struct CBLTransfer
-{
+struct CBLTransfer {
 	CBLTransfer *prev, *next;
 	time_t started;
 	NameList *clients;
@@ -78,7 +76,7 @@ ModDataInfo *webserver_md = NULL; /* (external module, looked up) */
 ModDataInfo *websocket_md = NULL; /* (external module, looked up) */
 
 /* Forward declarations */
-int _central_spamreport(Client *client, Client *by, const char *url);
+int _central_spamreport(Client *client, Client *by, const char *source, const char *reason, TKL *tkl, NameValuePrioList *details, const char *url);
 int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs);
 int cbl_config_posttest(int *errs);
 int cbl_config_run(ConfigFile *cf, ConfigEntry *ce, int type);
@@ -92,23 +90,31 @@ void cbl_cancel_all_transfers(void);
 EVENT(centralblocklist_bundle_requests);
 EVENT(centralblocklist_timeout_evt);
 void cbl_allow(Client *client);
+void send_request_for_clients(json_t *requests, NameList *clientlist);
 void send_request_for_pending_clients(void);
 const char *get_api_key(void);
 void set_tag(Client *client, const char *tag, int value);
 
-#define CBLRAW(x)		(moddata_local_client(x, centralblocklist_md).ptr)
-#define CBL(x)			((CBLUser *)(moddata_local_client(x, centralblocklist_md).ptr))
+#define CBLRAW(x) (moddata_local_client(x, centralblocklist_md).ptr)
+#define CBL(x)    ((CBLUser *)(moddata_local_client(x, centralblocklist_md).ptr))
 
-#define alloc_cbl_if_needed(x)	do { \
-					if (!moddata_local_client(x, centralblocklist_md).ptr) \
-					{ \
-						CBLUser *u = safe_alloc(sizeof(CBLUser)); \
-						u->handshake = json_object(); \
-						moddata_local_client(x, centralblocklist_md).ptr = u; \
-					} \
-				   } while(0)
+#define alloc_cbl_if_needed(x) \
+	do \
+	{ \
+		if (!moddata_local_client(x, centralblocklist_md).ptr) \
+		{ \
+			CBLUser *u = safe_alloc(sizeof(CBLUser)); \
+			u->handshake = json_object(); \
+			moddata_local_client(x, centralblocklist_md).ptr = u; \
+		} \
+	} while (0)
 
-#define AddScoreAction(item,list) do { item->priority = 0 - item->score; AddListItemPrio(item, list, item->priority); } while(0)
+#define AddScoreAction(item, list) \
+	do \
+	{ \
+		item->priority = 0 - item->score; \
+		AddListItemPrio(item, list, item->priority); \
+	} while (0)
 
 CMD_OVERRIDE_FUNC(cbl_override);
 CMD_OVERRIDE_FUNC(cbl_override_spamreport_gather);
@@ -244,7 +250,8 @@ MOD_LOAD()
 		            "Acquire a key via https://www.unrealircd.org/central-api/ and then "
 		            "make sure the central-api-key module is loaded and set::central-api::api-key set.");
 		return MOD_SUCCESS;
-	} else {
+	} else
+	{
 		safe_strdup(cfg.api_key, central_api_key);
 	}
 
@@ -284,11 +291,11 @@ int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 
 	if (type != CONFIG_SET)
 		return 0;
-	
+
 	/* We are only interrested in set::central-blocklist.. */
 	if (!ce || !ce->name || strcmp(ce->name, "central-blocklist"))
 		return 0;
-	
+
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (!strcmp(cep->name, "api-key"))
@@ -298,18 +305,16 @@ int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 			             "central-api module and put the key in set::central-api::api-key",
 			             cep->file->filename, cep->line_number);
 			errors++;
-		} else
-		if (!strcmp(cep->name, "except"))
+		} else if (!strcmp(cep->name, "except"))
 		{
 			test_match_block(cf, cep, &errors);
-		} else
-		if (!strcmp(cep->name, "score"))
+		} else if (!strcmp(cep->name, "score"))
 		{
 			int v = atoi(cep->value);
 			if ((v < 1) || (v > 99))
 			{
 				config_error("%s:%i: set::central-blocklist::score: must be between 1 - 99 (got: %d)",
-					cep->file->filename, cep->line_number, v);
+				             cep->file->filename, cep->line_number, v);
 				errors++;
 			}
 			if (cep->items)
@@ -320,32 +325,27 @@ int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 					if (!strcmp(cepp->name, "ban-action"))
 					{
 						errors += test_ban_action_config(cepp);
-					} else
-					if (!strcmp(cepp->name, "ban-reason"))
+					} else if (!strcmp(cepp->name, "ban-reason"))
 					{
-					} else
-					if (!strcmp(cepp->name, "ban-time"))
+					} else if (!strcmp(cepp->name, "ban-time"))
 					{
 					} else
 					{
 						config_error("%s:%i: unknown directive set::central-blocklist::score::%s",
-							cepp->file->filename, cepp->line_number, cepp->name);
+						             cepp->file->filename, cepp->line_number, cepp->name);
 						errors++;
 						continue;
 					}
 				}
 			}
-		} else
-		if (!cep->value)
+		} else if (!cep->value)
 		{
 			config_error("%s:%i: set::central-blocklist::%s with no value",
-				cep->file->filename, cep->line_number, cep->name);
+			             cep->file->filename, cep->line_number, cep->name);
 			errors++;
-		} else
-		if (!strcmp(cep->name, "url"))
+		} else if (!strcmp(cep->name, "url"))
 		{
-		} else
-		if (!strcmp(cep->name, "spamreport") || !strcmp(cep->name, "spamreport-enabled"))
+		} else if (!strcmp(cep->name, "spamreport") || !strcmp(cep->name, "spamreport-enabled"))
 		{
 			config_error("%s:%i: set::central-blocklist::%s: This setting is deprecated. "
 			             "Please remove this setting, and, if you wish to use spamreport, add a "
@@ -353,24 +353,20 @@ int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 			             "See https://www.unrealircd.org/docs/Central_spamreport",
 			             cep->file->filename, cep->line_number, cep->name);
 			errors++;
-		} else
-		if (!strcmp(cep->name, "blocklist") || !strcmp(cep->name, "blocklist-enabled"))
+		} else if (!strcmp(cep->name, "blocklist") || !strcmp(cep->name, "blocklist-enabled"))
 		{
-		} else
-		if (!strcmp(cep->name, "spamreport-url"))
+		} else if (!strcmp(cep->name, "spamreport-url"))
 		{
-		} else
-		if (!strcmp(cep->name, "max-downloads"))
+		} else if (!strcmp(cep->name, "max-downloads"))
 		{
 			int v = atoi(cep->value);
 			if ((v < 1) || (v > 500))
 			{
 				config_error("%s:%i: set::central-blocklist::score: must be between 1 - 500 (got: %d)",
-					cep->file->filename, cep->line_number, v);
+				             cep->file->filename, cep->line_number, v);
 				errors++;
 			}
-		} else
-		if (!strcmp(cep->name, "ban-action") || !strcmp(cep->name, "ban-reason") || !strcmp(cep->name, "ban-time"))
+		} else if (!strcmp(cep->name, "ban-action") || !strcmp(cep->name, "ban-reason") || !strcmp(cep->name, "ban-time"))
 		{
 			config_error("%s:%i: set::central-blocklist: you cannot use ban-action/ban-reason/ban-time here. "
 			             "There are now multiple score blocks. "
@@ -380,12 +376,12 @@ int cbl_config_test(ConfigFile *cf, ConfigEntry *ce, int type, int *errs)
 		} else
 		{
 			config_error("%s:%i: unknown directive set::central-blocklist::%s",
-				cep->file->filename, cep->line_number, cep->name);
+			             cep->file->filename, cep->line_number, cep->name);
 			errors++;
 			continue;
 		}
 	}
-	
+
 	*errs = errors;
 	return errors ? -1 : 1;
 }
@@ -405,18 +401,17 @@ int cbl_config_run(ConfigFile *cf, ConfigEntry *ce, int type)
 
 	if (type != CONFIG_SET)
 		return 0;
-	
+
 	/* We are only interrested in set::central-blocklist.. */
 	if (!ce || !ce->name || strcmp(ce->name, "central-blocklist"))
 		return 0;
-	
+
 	for (cep = ce->items; cep; cep = cep->next)
 	{
 		if (!strcmp(cep->name, "api-key"))
 		{
 			safe_strdup(cfg.api_key, cep->value);
-		} else
-		if (!strcmp(cep->name, "score"))
+		} else if (!strcmp(cep->name, "score"))
 		{
 			if (!cep->items)
 			{
@@ -433,47 +428,37 @@ int cbl_config_run(ConfigFile *cf, ConfigEntry *ce, int type)
 					if (!strcmp(cepp->name, "ban-action"))
 					{
 						parse_ban_action_config(cepp, &action->ban_action);
-					} else
-					if (!strcmp(cepp->name, "ban-reason"))
+					} else if (!strcmp(cepp->name, "ban-reason"))
 					{
 						safe_strdup(action->ban_reason, cepp->value);
-					} else
-					if (!strcmp(cepp->name, "ban-time"))
+					} else if (!strcmp(cepp->name, "ban-time"))
 					{
 						action->ban_time = config_checkval(cepp->value, CFG_TIME);
 					}
 				}
 			}
-		} else
-		if (!strcmp(cep->name, "url"))
+		} else if (!strcmp(cep->name, "url"))
 		{
 			safe_strdup(cfg.url, cep->value);
-		} else
-		if (!strcmp(cep->name, "blocklist-enabled"))
+		} else if (!strcmp(cep->name, "blocklist-enabled"))
 		{
 			cfg.blocklist_enabled = config_checkval(cep->value, CFG_YESNO);
-		} else
-		if (!strcmp(cep->name, "spamreport-url"))
+		} else if (!strcmp(cep->name, "spamreport-url"))
 		{
 			safe_strdup(cfg.spamreport_url, cep->value);
-		} else
-		if (!strcmp(cep->name, "max-downloads"))
+		} else if (!strcmp(cep->name, "max-downloads"))
 		{
 			cfg.max_downloads = atoi(cep->value);
-		} else
-		if (!strcmp(cep->name, "ban-action"))
+		} else if (!strcmp(cep->name, "ban-action"))
 		{
 			parse_ban_action_config(cep, &cfg.actions->ban_action);
-		} else
-		if (!strcmp(cep->name, "ban-reason"))
+		} else if (!strcmp(cep->name, "ban-reason"))
 		{
 			safe_strdup(cfg.actions->ban_reason, cep->value);
-		} else
-		if (!strcmp(cep->name, "ban-time"))
+		} else if (!strcmp(cep->name, "ban-time"))
 		{
 			cfg.actions->ban_time = config_checkval(cep->value, CFG_TIME);
-		} else
-		if (!strcmp(cep->name, "except"))
+		} else if (!strcmp(cep->name, "except"))
 		{
 			if (cfg.except)
 			{
@@ -539,12 +524,13 @@ EVENT(centralblocklist_timeout_evt)
 		if (cbl &&
 		    cbl->request_sent &&
 		    !cbl->allowed_in &&
+		    !IsShunned(client) &&
 		    (TStime() - cbl->request_sent > CBL_TRANSFER_TIMEOUT))
 		{
 			unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_TIMEOUT", client,
-				   "Central blocklist too slow to respond. "
-				   "Possible problem with infrastructure at unrealircd.org. "
-				   "Allowing user $client.details in unchecked.");
+			           "Central blocklist too slow to respond. "
+			           "Possible problem with infrastructure at unrealircd.org. "
+			           "Allowing user $client.details in unchecked.");
 			cbl_allow(client);
 		}
 	}
@@ -559,14 +545,57 @@ void show_client_json(Client *client)
 	json_serialized = json_dumps(CBL(client)->handshake, JSON_COMPACT);
 
 	unreal_log(ULOG_DEBUG, "central-blocklist", "DEBUG_CENTRAL_BLOCKLIST", client,
-		   "OUT: $data",
-		   log_data_string("data", json_serialized));
+	           "OUT: $data",
+	           log_data_string("data", json_serialized));
 	safe_free(json_serialized);
+}
+
+/** Parse the HTTP "Cookie" header passed in 'header' and add
+ * the cookies to 'web' under item 'cookies' as 'name' with the
+ * value being a trimmed sha256 hash.
+ * We don't want to see the real cookies, this provides enough info.
+ * Note that this function may be called multiple times, in that
+ * case it will add to the existing 'cookies' item.
+ */
+static void cbl_add_cookies(json_t *web, const char *header)
+{
+	json_t *cookies;
+	char buf[8192];
+	char *p, *name, *eq;
+	const char *value;
+	char hash[65];
+
+	cookies = json_object_get(web, "cookies");
+	if (!cookies)
+	{
+		cookies = json_object();
+		json_object_set_new(web, "cookies", cookies);
+	}
+
+	strlcpy(buf, header, sizeof(buf));
+	for (name = strtoken(&p, buf, ";"); name; name = strtoken(&p, NULL, ";"))
+	{
+		while (*name == ' ')
+			name++;
+		value = "";
+		eq = strchr(name, '=');
+		if (eq)
+		{
+			*eq = '\0';
+			value = eq + 1;
+		}
+		if (!*name)
+			continue;
+		/* Make a SHA256 hash and cut off after 16 hex chars */
+		sha256hash(hash, value, strlen(value));
+		hash[16] = '\0';
+		json_object_set_new(cookies, name, json_string_unreal(hash));
+	}
 }
 
 void cbl_add_client_info(Client *client)
 {
-	char buf[BUFSIZE+1];
+	char buf[BUFSIZE + 1];
 	json_t *cbl = CBL(client)->handshake;
 	json_t *child = json_object();
 	const char *str;
@@ -575,7 +604,7 @@ void cbl_add_client_info(Client *client)
 	json_object_set_new(cbl, "client", child);
 
 	//// THE FOLLOWING IS TAKEN FROM src/json.c AND MODIFIED /////
-	
+
 	/* First the information that is available for ALL client types: */
 	json_object_set_new(child, "name", json_string_unreal(client->name));
 	json_object_set_new(child, "id", json_string_unreal(client->id));
@@ -598,13 +627,15 @@ void cbl_add_client_info(Client *client)
 	{
 		snprintf(buf, sizeof(buf), "%s!%s@%s", client->name, client->user->username, client->user->realhost);
 		json_object_set_new(child, "details", json_string_unreal(buf));
-	} else if (client->ip) {
+	} else if (client->ip)
+	{
 		if (*client->name)
 			snprintf(buf, sizeof(buf), "%s@%s", client->name, client->ip);
 		else
 			snprintf(buf, sizeof(buf), "[%s]", client->ip);
 		json_object_set_new(child, "details", json_string_unreal(buf));
-	} else {
+	} else
+	{
 		json_object_set_new(child, "details", json_string_unreal(client->name));
 	}
 
@@ -635,7 +666,17 @@ void cbl_add_client_info(Client *client)
 		json_object_set_new(child, "web", web);
 		json_object_set_new(web, "headers", headers);
 		for (nv = WEB(client)->headers; nv; nv = nv->next)
+		{
+			if (!strcasecmp(nv->name, "Cookie"))
+			{
+				if (nv->value)
+					cbl_add_cookies(web, nv->value);
+				continue;
+			}
+			if (!strcasecmp(nv->name, "Authorization"))
+				continue; /* filtered out */
 			json_object_set_new(headers, nv->name, json_string_unreal(nv->value));
+		}
 	}
 
 	if (websocket_md && WSU(client))
@@ -669,13 +710,13 @@ void cbl_add_client_info(Client *client)
 		{
 			json_t *j = json_object();
 			json_object_set_new(child, "tcp_info", j);
-			json_object_set_new(j, "rtt", json_integer(MAX(tcp_info.tcpi_rtt,1)/1000));
-			json_object_set_new(j, "rtt_var", json_integer(MAX(tcp_info.tcpi_rttvar,1)/1000));
-#if defined(__FreeBSD__)
+			json_object_set_new(j, "rtt", json_integer(MAX(tcp_info.tcpi_rtt, 1) / 1000));
+			json_object_set_new(j, "rtt_var", json_integer(MAX(tcp_info.tcpi_rttvar, 1) / 1000));
+ #if defined(__FreeBSD__)
 			json_object_set_new(j, "pmtu", json_integer(tcp_info.__tcpi_pmtu));
-#else
+ #else
 			json_object_set_new(j, "pmtu", json_integer(tcp_info.tcpi_pmtu));
-#endif
+ #endif
 			json_object_set_new(j, "snd_cwnd", json_integer(tcp_info.tcpi_snd_cwnd));
 			json_object_set_new(j, "snd_mss", json_integer(tcp_info.tcpi_snd_mss));
 			json_object_set_new(j, "rcv_mss", json_integer(tcp_info.tcpi_rcv_mss));
@@ -699,7 +740,8 @@ CMD_OVERRIDE_FUNC(cbl_override)
 	    !IsUnknown(client) ||
 	    !strcmp(ovr->command->cmd, "PASS") ||
 	    !strcmp(ovr->command->cmd, "WEBIRC") ||
-	    !strcmp(ovr->command->cmd, "AUTHENTICATE"))
+	    !strcmp(ovr->command->cmd, "AUTHENTICATE") ||
+	    !strcmp(ovr->command->cmd, "AUTH"))
 	{
 		CALL_NEXT_COMMAND_OVERRIDE();
 		return;
@@ -736,8 +778,7 @@ CMD_OVERRIDE_FUNC(cbl_override)
 	{
 		isnick = 1;
 		nospoof = client->local->nospoof;
-	} else
-	if (!strcmp(ovr->command->cmd, "PONG") && (parc > 1) && !BadPtr(parv[1]))
+	} else if (!strcmp(ovr->command->cmd, "PONG") && (parc > 1) && !BadPtr(parv[1]))
 	{
 		unsigned long result = strtoul(parv[1], NULL, 16);
 		if (client->local->nospoof && (client->local->nospoof == result))
@@ -789,12 +830,13 @@ int cbl_is_handshake_finished(Client *client)
 	if (!(client->user && *client->user->username && client->name[0] && IsNotSpoof(client)))
 		return 1;
 
+	/* Also for exempt users: spamreport uses this */
+	if (!json_object_get(CBL(client)->handshake, "client"))
+		cbl_add_client_info(client);
+
 	/* User is exempt */
 	if (user_allowed_by_security_group(client, cfg.except))
 		return 1;
-
-	if (!json_object_get(CBL(client)->handshake, "client"))
-		cbl_add_client_info(client);
 
 	if (cfg.blocklist_enabled)
 		return cbl_start_request(client);
@@ -857,21 +899,22 @@ void cbl_handle_response(Client *client, json_t *response)
 			if (highest_ban_action(action->ban_action) <= BAN_ACT_WARN)
 			{
 				unreal_log(ULOG_INFO, "central-blocklist", "CBL_HIT", client,
-					   "CBL: Client $client.details flagged by central-blocklist, but allowed in (score $spam_score)",
-					   log_data_integer("spam_score", spam_score));
-			} else {
+				           "CBL: Client $client.details flagged by central-blocklist, but allowed in (score $spam_score)",
+				           log_data_integer("spam_score", spam_score));
+			} else
+			{
 				unreal_log(ULOG_INFO, "central-blocklist", "CBL_HIT_REJECTED_USER", client,
-					   "CBL: Client $client.details is rejected by central-blocklist (score $spam_score)",
-					   log_data_integer("spam_score", spam_score));
+				           "CBL: Client $client.details is rejected by central-blocklist (score $spam_score)",
+				           log_data_integer("spam_score", spam_score));
 			}
-			if (take_action(client, action->ban_action, action->ban_reason, action->ban_time, 0, NULL) <= BAN_ACT_WARN)
+			if (take_action(client, action->ban_action, "central-blocklist", action->ban_reason, action->ban_time, 0, NULL, NULL) <= BAN_ACT_WARN)
 				cbl_allow(client);
 			return;
 		}
 	}
 	unreal_log(ULOG_DEBUG, "central-blocklist", "DEBUG_CENTRAL_BLOCKLIST", client,
-		   "CBL: Client $client.details is allowed (score $spam_score)",
-		   log_data_integer("spam_score", spam_score));
+	           "CBL: Client $client.details is allowed (score $spam_score)",
+	           log_data_integer("spam_score", spam_score));
 	cbl_allow(client);
 }
 
@@ -889,17 +932,17 @@ void cbl_error_response(CBLTransfer *transfer, const char *error)
 		if (CBL(client) && CBL(client)->allowed_in)
 			continue; /* Client allowed in already (eg due to timeout) */
 		unreal_log(ULOG_DEBUG, "central-blocklist", "DEBUG_CENTRAL_BLOCKLIST_ERROR", client,
-			   "CBL: Client $client.details allowed in due to CBL error: $error",
-			   log_data_string("error", error));
+		           "CBL: Client $client.details allowed in due to CBL error: $error",
+		           log_data_string("error", error));
 		cbl_allow(client);
 		num++;
 	}
 	if (num > 0)
 	{
-		unreal_log(ULOG_INFO, "central-blocklist", "CENTRAL_BLOCKLIST_ERROR", client,
-			   "CBL: Allowed $num_clients client(s) in due to CBL error: $error",
-			   log_data_integer("num_clients", num),
-			   log_data_string("error", error));
+		unreal_log(ULOG_INFO, "central-blocklist", "CENTRAL_BLOCKLIST_ERROR", NULL,
+		           "CBL: Allowed $num_clients client(s) in due to CBL error: $error",
+		           log_data_integer("num_clients", num),
+		           log_data_string("error", error));
 	}
 	del_cbl_transfer(transfer);
 }
@@ -953,6 +996,7 @@ void cbl_download_complete(OutgoingWebRequest *request, OutgoingWebResponse *res
 	if ((str = json_object_get_string(result, "error")))
 	{
 		cbl_error_response(transfer, str);
+		json_decref(result);
 		return;
 	}
 
@@ -971,8 +1015,8 @@ void cbl_download_complete(OutgoingWebRequest *request, OutgoingWebResponse *res
 	responses = json_object_get(result, "responses");
 	if (!responses)
 	{
-		json_decref(result);
 		cbl_error_response(transfer, "no spam scores calculated for users");
+		json_decref(result);
 		return; /* Nothing to do */
 	}
 
@@ -1007,49 +1051,73 @@ void cbl_mdata_free(ModData *m)
 void send_request_for_pending_clients(void)
 {
 	Client *client, *next;
-	OutgoingWebRequest *w;
-	json_t *j, *requests;
-	NameValuePrioList *headers = NULL;
-	int num;
-	char *json_serialized;
-	CBLTransfer *c;
+	json_t *requests = NULL;
 	NameList *clientlist = NULL;
-
-	num = downloads_in_progress();
-	if (num > cfg.max_downloads)
-	{
-		unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_TOO_MANY_CONCURRENT_REQUESTS", NULL,
-			   "Already $num_requests HTTP(S) requests in progress.",
-			   log_data_integer("num_requests", num));
-		return;
-	}
-
-	j = json_object();
-	json_object_set_new(j, "server", json_string_unreal(me.name));
-	json_object_set_new(j, "module_version", json_string_unreal(cbl_module->header->version));
-	json_object_set_new(j, "unrealircd_version", json_string_unreal(VERSIONONLY));
-	requests = json_object();
-	json_object_set_new(j, "requests", requests);
+	char *json_serialized;
+	int num;
+	int size = 0;
 
 	list_for_each_entry_safe(client, next, &unknown_list, lclient_node)
 	{
 		CBLUser *cbl = CBL(client);
 		if (cbl && cbl->request_pending)
 		{
+			if (!requests)
+			{
+				num = downloads_in_progress();
+				if (num > cfg.max_downloads)
+				{
+					unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_TOO_MANY_CONCURRENT_REQUESTS", NULL,
+					           "Already $num_requests HTTP(S) requests in progress.",
+					           log_data_integer("num_requests", num));
+					break;
+				}
+				requests = json_object();
+			}
 			// requests[clientid] => ["client"=>["nick"=>"xyz"...etc...
 			json_object_set_new(requests, client->id, json_deep_copy(cbl->handshake));
 
 			cbl->request_pending = 0;
 			cbl->request_sent = TStime();
 			add_name_list(clientlist, client->id);
+
+			json_serialized = json_dumps(cbl->handshake, JSON_COMPACT);
+			if (json_serialized)
+				size += strlen(json_serialized);
+			safe_free(json_serialized);
+			if (size >= CBL_MAX_REQUEST_SIZE)
+			{
+				send_request_for_clients(requests, clientlist);
+				requests = NULL;
+				clientlist = NULL;
+				size = 0;
+			}
 		}
 	}
+
+	if (requests)
+		send_request_for_clients(requests, clientlist);
+}
+
+void send_request_for_clients(json_t *requests, NameList *clientlist)
+{
+	OutgoingWebRequest *w;
+	json_t *j;
+	NameValuePrioList *headers = NULL;
+	char *json_serialized;
+	CBLTransfer *c;
+
+	j = json_object();
+	json_object_set_new(j, "server", json_string_unreal(me.name));
+	json_object_set_new(j, "module_version", json_string_unreal(cbl_module->header->version));
+	json_object_set_new(j, "unrealircd_version", json_string_unreal(VERSIONONLY));
+	json_object_set_new(j, "requests", requests);
 
 	json_serialized = json_dumps(j, JSON_COMPACT);
 	if (!json_serialized)
 	{
-		unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_BUG_SERIALIZE", client,
-			   "Unable to serialize JSON request. Weird.");
+		unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_BUG_SERIALIZE", NULL,
+		           "Unable to serialize JSON request. Weird.");
 		json_decref(j);
 		free_entire_name_list(clientlist);
 		return;
@@ -1114,7 +1182,8 @@ CMD_OVERRIDE_FUNC(cbl_override_spamreport_gather)
 			if (clictx && clictx->textanalysis)
 			{
 				memcpy(&CBL(client)->last_cmds_textanalysis[slot], clictx->textanalysis, sizeof(TextAnalysis));
-			} else {
+			} else
+			{
 				memset(&CBL(client)->last_cmds_textanalysis[slot], 0, sizeof(TextAnalysis));
 			}
 			CBL(client)->last_cmds_slot++;
@@ -1126,11 +1195,13 @@ CMD_OVERRIDE_FUNC(cbl_override_spamreport_gather)
 	CALL_NEXT_COMMAND_OVERRIDE();
 }
 
-int _central_spamreport(Client *client, Client *by, const char *url)
+int _central_spamreport(Client *client, Client *by, const char *source, const char *reason, TKL *tkl, NameValuePrioList *details, const char *url)
 {
-	json_t *j, *requests, *data, *cmds, *item;
+	json_t *j, *requests, *data, *cmds, *item, *clientobj, *originobj;
 	OutgoingWebRequest *w;
 	NameValuePrioList *headers = NULL;
+	MessageTag *mtags = NULL, *m;
+	const char *str;
 	int num;
 	char *json_serialized;
 	int i, start;
@@ -1147,8 +1218,8 @@ int _central_spamreport(Client *client, Client *by, const char *url)
 	if (num > cfg.max_downloads)
 	{
 		unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_TOO_MANY_CONCURRENT_REQUESTS", NULL,
-			   "Already $num_requests HTTP(S) requests in progress.",
-			   log_data_integer("num_requests", num));
+		           "Already $num_requests HTTP(S) requests in progress.",
+		           log_data_integer("num_requests", num));
 		return 0;
 	}
 
@@ -1156,13 +1227,47 @@ int _central_spamreport(Client *client, Client *by, const char *url)
 	json_object_set_new(j, "server", json_string_unreal(me.name));
 	json_object_set_new(j, "module_version", json_string_unreal(cbl_module->header->version));
 	json_object_set_new(j, "unrealircd_version", json_string_unreal(VERSIONONLY));
-	if (by)
-		json_object_set_new(j, "reporter", json_string_unreal(by->name));
 	requests = json_object();
 	json_object_set_new(j, "reports", requests);
 
+	/* It would be very rare for this to be missing, but if so, add it because it is kinda crucial */
+	if (!json_object_get(CBL(client)->handshake, "client"))
+		cbl_add_client_info(client);
+
 	data = json_deep_copy(CBL(client)->handshake); /* .. deep copy. */
 	json_object_set_new(requests, client->id, data); /* ..and steal reference */
+
+	originobj = json_object();
+	json_object_set_new(data, "origin", originobj);
+	if (source)
+		json_object_set_new(originobj, "source", json_string_unreal(source));
+	if (by)
+	{
+		mtag_add_issued_by(&mtags, by, NULL);
+		if ((m = find_mtag(mtags, "unrealircd.org/issued-by")))
+			json_object_set_new(originobj, "reporter", json_string_unreal(m->value));
+		free_message_tags(mtags);
+	}
+	if (reason)
+		json_object_set_new(originobj, "reason", json_string_unreal(reason));
+	if ((str = get_nvplist(details, "ban_action")))
+		json_object_set_new(originobj, "ban_action", json_string_unreal(str));
+	if ((str = get_nvplist(details, "spamfilter_id")))
+		json_object_set_new(originobj, "spamfilter_id", json_string_unreal(str));
+	if (tkl)
+	{
+		if (TKLIsSpamfilter(tkl))
+			json_expand_tkl(originobj, "spamfilter", tkl, 1);
+		else
+			json_expand_tkl(originobj, "ban", tkl, 1);
+	}
+
+	/* We add the flood counters here explicitly, because when "client" was created
+	 * earlier there were no or limited flood counts yet (during registration phase).
+	 */
+	clientobj = json_object_get(data, "client");
+	json_expand_flood_counts(clientobj ? clientobj : data, "flood", client);
+
 	cmds = json_object();
 	json_object_set_new(data, "commands", cmds);
 	start = CBL(client)->last_cmds_slot;
@@ -1197,7 +1302,7 @@ int _central_spamreport(Client *client, Client *by, const char *url)
 	if (!json_serialized)
 	{
 		unreal_log(ULOG_WARNING, "central-blocklist", "CENTRAL_BLOCKLIST_BUG_SERIALIZE", client,
-			   "Unable to serialize JSON request. Weird.");
+		           "Unable to serialize JSON request. Weird.");
 		json_decref(j);
 		return 0;
 	}

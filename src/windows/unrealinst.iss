@@ -5,21 +5,12 @@
 #define USE_CURL
 
 [Setup]
-<<<<<<< HEAD
 AppName=PissIRCd 6
-AppVerName=PissIRCd 6.1.10-git
+AppVerName=PissIRCd 6.2.8-git
 AppPublisher=PissIRCd Team
 AppPublisherURL=https://piss.network
 AppSupportURL=https://wiki.letspiss.net
 AppUpdatesURL=https://wiki.letspiss.net
-=======
-AppName=UnrealIRCd 6
-AppVerName=UnrealIRCd 6.2.2
-AppPublisher=UnrealIRCd Team
-AppPublisherURL=https://www.unrealircd.org
-AppSupportURL=https://www.unrealircd.org
-AppUpdatesURL=https://www.unrealircd.org
->>>>>>> 641413cfa92dd9be93aa1daa8ca526b56320a3f3
 AppMutex=UnrealMutex,Global\UnrealMutex
 DefaultDirName={pf}\PissIRCd 6
 DefaultGroupName=PissIRCd 6
@@ -52,35 +43,35 @@ Name: "fixperm"; Description: "Make PissIRCd folder writable by current user";
 
 [Files]
 ; UnrealIRCd binaries
-Source: "UnrealIRCd.exe"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
+Source: "UnrealIRCd.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "UnrealIRCd.pdb"; DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "unrealircdctl.exe"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "unrealsvc.exe";  DestDir: "{app}\bin"; Flags: ignoreversion signonce
+Source: "unrealircdctl.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "unrealsvc.exe";  DestDir: "{app}\bin"; Flags: ignoreversion
 
 ; TLS certificate generation helpers
 Source: "src\windows\makecert.bat"; DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "extras\tls.cnf"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "doc\conf\tls\tls.cnf"; DestDir: "{app}\bin"; Flags: ignoreversion
 
 ; UnrealIRCd modules
-Source: "src\modules\*.dll"; DestDir: "{app}\modules"; Flags: ignoreversion signonce
-Source: "src\modules\chanmodes\*.dll"; DestDir: "{app}\modules\chanmodes"; Flags: ignoreversion signonce
-Source: "src\modules\usermodes\*.dll"; DestDir: "{app}\modules\usermodes"; Flags: ignoreversion signonce
-Source: "src\modules\extbans\*.dll"; DestDir: "{app}\modules\extbans"; Flags: ignoreversion signonce
-Source: "src\modules\rpc\*.dll"; DestDir: "{app}\modules\rpc"; Flags: ignoreversion signonce
-Source: "src\modules\third\*.dll"; DestDir: "{app}\modules\third"; Flags: ignoreversion skipifsourcedoesntexist signonce
+Source: "src\modules\*.dll"; DestDir: "{app}\modules"; Flags: ignoreversion
+Source: "src\modules\chanmodes\*.dll"; DestDir: "{app}\modules\chanmodes"; Flags: ignoreversion
+Source: "src\modules\usermodes\*.dll"; DestDir: "{app}\modules\usermodes"; Flags: ignoreversion
+Source: "src\modules\extbans\*.dll"; DestDir: "{app}\modules\extbans"; Flags: ignoreversion
+Source: "src\modules\rpc\*.dll"; DestDir: "{app}\modules\rpc"; Flags: ignoreversion
+Source: "src\modules\third\*.dll"; DestDir: "{app}\modules\third"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Libraries
-Source: "c:\dev\unrealircd-6-libs\pcre2\bin\pcre*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\argon2\vs2015\build\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\libsodium\bin\x64\Release\v142\dynamic\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\jansson\bin\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\c-ares\msvc\cares\dll-release\cares.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\openssl\bin\openssl.exe"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\openssl\bin\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\GeoIP\libGeoIP\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
-Source: "c:\dev\unrealircd-6-libs\setacl.exe"; DestDir: "{app}\tmp"; Flags: ignoreversion signonce
+Source: "c:\dev\unrealircd-6-libs\pcre2\bin\pcre*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\argon2\vs2015\build\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\libsodium\bin\x64\Release\v142\dynamic\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\jansson\bin\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\c-ares\msvc\cares\dll-release\cares.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\openssl\bin\openssl.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\openssl\bin\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\GeoIP\libGeoIP\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "c:\dev\unrealircd-6-libs\setacl.exe"; DestDir: "{app}\tmp"; Flags: ignoreversion
 #ifdef USE_CURL
-Source: "c:\dev\unrealircd-6-libs\curl\builds\libcurl-vc-x64-release-dll-ssl-dll-cares-dll-ipv6-obj-lib\libcurl.dll"; DestDir: "{app}\bin"; Flags: ignoreversion signonce
+Source: "c:\dev\unrealircd-6-libs\curl\bin\libcurl.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
 #endif
 Source: "doc\conf\tls\curl-ca-bundle.crt"; DestDir: "{app}\conf\tls"; Flags: ignoreversion
 
@@ -121,8 +112,17 @@ var
 function InitializeSetup(): Boolean;
 var
 	major: Cardinal;
+	ver: TWindowsVersion;
 begin
 	Result := true;
+
+	GetWindowsVersionEx(ver);
+	if (ver.Major < 10) and (not WizardSilent) then
+	begin
+		MsgBox('Microsoft no longer supports this version of Windows and it no longer receives security updates.' #13 +
+		       'UnrealIRCd only supports Windows 10 or later and Windows Server 2016 or later.' #13 +
+		       'If you click OK the installation will continue but things may fail and we DO NOT provide any support for this.', mbInformation, MB_OK);
+	end;
 
 	if Not RegQueryDWordValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Major', major) then
 	begin

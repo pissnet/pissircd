@@ -396,9 +396,12 @@ AC_LANG_POP(C)
 if test $has_function = 1; then
 	AC_MSG_RESULT([yes])
 	AC_DEFINE([HAS_X509_check_host], [], [Define if ssl library has X509_check_host])
+	OPENSSL_HOSTNAME_VALIDATION_OBJ=""
 else
 	AC_MSG_RESULT([no])
+	OPENSSL_HOSTNAME_VALIDATION_OBJ="openssl_hostname_validation.o"
 fi
+AC_SUBST(OPENSSL_HOSTNAME_VALIDATION_OBJ)
 ])
 
 dnl For geoip-api-c
@@ -439,10 +442,13 @@ AC_DEFUN([CHECK_GEOIP_CLASSIC],
 			AC_MSG_RESULT(configuring GeoIP Classic library)
 			cd GeoIP-$geoip_classic_version
 			save_cflags="$CFLAGS"
-			CFLAGS="$orig_cflags"
-			export CFLAGS
+			save_ldflags="$LDFLAGS"
+			CFLAGS="$orig_cflags $HARDEN_LIB_CFLAGS"
+			LDFLAGS="$HARDEN_LIB_LDFLAGS"
+			export CFLAGS LDFLAGS
 			./configure --prefix=$cur_dir/extras/geoip-classic --libdir=$PRIVATELIBDIR --enable-shared --disable-static || exit 1
 			CFLAGS="$save_cflags"
+			LDFLAGS="$save_ldflags"
 			AC_MSG_RESULT(compiling GeoIP Classic library)
 			$ac_cv_prog_MAKER || exit 1
 			AC_MSG_RESULT(installing GeoIP Classic library)
@@ -464,31 +470,6 @@ AC_DEFUN([CHECK_GEOIP_CLASSIC],
 
 		GEOIP_CLASSIC_OBJECTS="geoip_classic.so"
 		AC_SUBST(GEOIP_CLASSIC_OBJECTS)
+		AC_DEFINE([GEOIP_ENGINE], ["geoip_classic"], [Classic GeoIP engine])
 	]) dnl AS_IF(enable_geoip_classic) 
 ])
-
-AC_DEFUN([CHECK_LIBMAXMINDDB],
-[
-	AC_ARG_ENABLE(libmaxminddb,
-	[AC_HELP_STRING([--enable-libmaxminddb=no/yes],[enable GeoIP libmaxminddb support])],
-	[enable_libmaxminddb=$enableval],
-	[enable_libmaxminddb=no])
-
-	AS_IF([test "x$enable_libmaxminddb" = "xyes"],
-	[
-		dnl see if the system provides it
-		has_system_libmaxminddb="no"
-		PKG_CHECK_MODULES([LIBMAXMINDDB], [libmaxminddb >= 1.4.3],
-		                  [has_system_libmaxminddb=yes])
-		AS_IF([test "x$has_system_libmaxminddb" = "xyes"],
-		[
-
-			AC_SUBST(LIBMAXMINDDB_LIBS)
-			AC_SUBST(LIBMAXMINDDB_CFLAGS)
-
-			GEOIP_MAXMIND_OBJECTS="geoip_maxmind.so"
-			AC_SUBST(GEOIP_MAXMIND_OBJECTS)
-		])
-	])
-])
-

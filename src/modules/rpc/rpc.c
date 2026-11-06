@@ -3,28 +3,27 @@
  * (C)Copyright 2022 Bram Matthys and the UnrealIRCd team
  * License: GPLv2 or later
  */
-   
+
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"rpc/rpc",
-	"1.0.4",
-	"RPC module for remote management",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "rpc/rpc",
+    "1.0.5",
+    "RPC module for remote management",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /** Maximum length of an rpc-user THIS { }.
  * As we use the "RPC:" prefix it is nicklen minus that.
  */
-#define RPCUSERLEN (NICKLEN-4)
+#define RPCUSERLEN (NICKLEN - 4)
 
 /** Timers can be minimum every <this> msec */
 #define RPC_MINIMUM_TIMER_MSEC 250
 
-#define RRPC_PACKET_SMALL	450
-#define RRPC_PACKET_BIGLINES	16000
+#define RRPC_PACKET_SMALL    450
+#define RRPC_PACKET_BIGLINES 16000
 
 /* Structs */
 typedef struct RPCUser RPCUser;
@@ -40,8 +39,8 @@ typedef struct RRPC RRPC;
 struct RRPC {
 	RRPC *prev, *next;
 	int request;
-	char source[IDLEN+1];
-	char destination[IDLEN+1];
+	char source[IDLEN + 1];
+	char destination[IDLEN + 1];
 	char *requestid;
 	dbuf data;
 };
@@ -50,8 +49,8 @@ typedef struct OutstandingRRPC OutstandingRRPC;
 struct OutstandingRRPC {
 	OutstandingRRPC *prev, *next;
 	time_t sent;
-	char source[IDLEN+1];
-	char destination[IDLEN+1];
+	char source[IDLEN + 1];
+	char destination[IDLEN + 1];
 	char *requestid;
 };
 
@@ -63,6 +62,7 @@ struct RPCTimer {
 	char *timer_id;
 	json_t *request;
 	struct timeval last_run;
+	char deleted;
 };
 
 /* Forward declarations */
@@ -73,6 +73,7 @@ int rpc_config_run_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type);
 int rpc_config_test_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type, int *errs);
 int rpc_config_run_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type);
 int rpc_client_accept(Client *client);
+int rpc_accept_check_match(Client *client);
 int rpc_pre_local_handshake_timeout(Client *client, const char **comment);
 void rpc_client_handshake_unix_socket(Client *client);
 void rpc_client_handshake_web(Client *client);
@@ -88,7 +89,7 @@ void rpc_call_text(Client *client, const char *buf, int len);
 void rpc_call_json(Client *client, json_t *request);
 void _rpc_response(Client *client, json_t *request, json_t *result);
 void _rpc_error(Client *client, json_t *request, JsonRpcError error_code, const char *error_message);
-void _rpc_error_fmt(Client *client, json_t *request, JsonRpcError error_code, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf,4,5)));
+void _rpc_error_fmt(Client *client, json_t *request, JsonRpcError error_code, FORMAT_STRING(const char *fmt), ...) __attribute__((format(printf, 4, 5)));
 void _rpc_send_request_to_remote(Client *source, Client *target, json_t *request);
 void _rpc_send_response_to_remote(Client *source, Client *target, json_t *response);
 int _rrpc_supported_simple(Client *target, char **problem_server);
@@ -119,8 +120,8 @@ void rrpc_md_free(ModData *m);
 int rpc_config_listener(ConfigItem_listen *listener);
 
 /* Macros */
-#define RPC_PORT(client)  ((client->local && client->local->listener) ? client->local->listener->rpc_options : 0)
-#define WSU(client)     ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
+#define RPC_PORT(client) ((client->local && client->local->listener) ? client->local->listener->rpc_options : 0)
+#define WSU(client)      ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
 
 /* Global variables */
 ModDataInfo *websocket_md = NULL; /* (imported) */
@@ -129,6 +130,7 @@ ConfigItem_operclass *conf_rpc_class = NULL;
 RRPC *rrpc_list = NULL;
 OutstandingRRPC *outstanding_rrpc_list = NULL;
 RPCTimer *rpc_timer_list = NULL;
+int rpc_timers_iterating = 0; /* prevent deletion of events during list operations */
 ModDataInfo *rrpc_md;
 
 MOD_TEST()
@@ -146,7 +148,7 @@ MOD_TEST()
 	EfunctionAdd(modinfo->handle, EFUNC_RRPC_SUPPORTED_SIMPLE, _rrpc_supported_simple);
 
 	/* Call MOD_INIT very early, since we manage sockets, but depend on websocket_common */
-	ModuleSetOptions(modinfo->handle, MOD_OPT_PRIORITY, WEBSOCKET_MODULE_PRIORITY_INIT+1);
+	ModuleSetOptions(modinfo->handle, MOD_OPT_PRIORITY, WEBSOCKET_MODULE_PRIORITY_INIT + 1);
 
 	return MOD_SUCCESS;
 }
@@ -164,6 +166,7 @@ MOD_INIT()
 	HookAdd(modinfo->handle, HOOKTYPE_CONFIGRUN, 0, rpc_config_run_rpc_user);
 	HookAdd(modinfo->handle, HOOKTYPE_CONFIGRUN, 0, rpc_config_run_rpc_class);
 	HookAdd(modinfo->handle, HOOKTYPE_HANDSHAKE, -5000, rpc_client_accept);
+	HookAdd(modinfo->handle, HOOKTYPE_ACCEPT, 0, rpc_accept_check_match);
 	HookAdd(modinfo->handle, HOOKTYPE_PRE_LOCAL_HANDSHAKE_TIMEOUT, 0, rpc_pre_local_handshake_timeout);
 	HookAdd(modinfo->handle, HOOKTYPE_RAWPACKET_IN, INT_MIN, rpc_packet_in_unix_socket);
 	HookAdd(modinfo->handle, HOOKTYPE_SERVER_QUIT, 0, rpc_handle_server_quit);
@@ -230,19 +233,19 @@ MOD_INIT()
 	LoadPersistentPointer(modinfo, outstanding_rrpc_list, free_outstanding_rrpc_list);
 	LoadPersistentPointer(modinfo, rpc_timer_list, free_rpc_timer_list);
 
-	CommandAdd(modinfo->handle, "RRPC", cmd_rrpc, MAXPARA, CMD_SERVER|CMD_BIGLINES);
+	CommandAdd(modinfo->handle, "RRPC", cmd_rrpc, MAXPARA, CMD_SERVER | CMD_BIGLINES);
 
 	EventAdd(modinfo->handle, "rpc_remote_timeout", rpc_remote_timeout, NULL, 1000, 0);
 	EventAdd(modinfo->handle, "rpc_do_timers", rpc_do_timers, NULL, RPC_MINIMUM_TIMER_MSEC, 0);
 
 	/* Call MOD_LOAD very late, since we manage sockets, but depend on websocket_common */
-	ModuleSetOptions(modinfo->handle, MOD_OPT_PRIORITY, WEBSOCKET_MODULE_PRIORITY_UNLOAD-1);
+	ModuleSetOptions(modinfo->handle, MOD_OPT_PRIORITY, WEBSOCKET_MODULE_PRIORITY_UNLOAD - 1);
 
 	return MOD_SUCCESS;
 }
 
-#define MYRRPCMODULES		me.moddata[rrpc_md->slot].ptr
-#define RRPCMODULES(client)	((NameValuePrioList *)moddata_client(client, rrpc_md).ptr)
+#define MYRRPCMODULES       me.moddata[rrpc_md->slot].ptr
+#define RRPCMODULES(client) ((NameValuePrioList *)moddata_client(client, rrpc_md).ptr)
 
 void rpc_do_moddata(void)
 {
@@ -320,7 +323,8 @@ void rpc_listener_set_handler(ConfigItem_listen *l)
 	if (l->socket_type == SOCKET_TYPE_UNIX)
 	{
 		l->start_handshake = rpc_client_handshake_unix_socket;
-	} else {
+	} else
+	{
 		l->options |= LISTENER_TLS;
 		l->start_handshake = rpc_client_handshake_web;
 		l->webserver = safe_alloc(sizeof(WebServer));
@@ -401,26 +405,24 @@ int rpc_config_test_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type, int *err
 		{
 			has_match = 1;
 			test_match_block(cf, cep, &errors);
-		} else
-		if (!strcmp(cep->name, "password"))
+		} else if (!strcmp(cep->name, "password"))
 		{
 			has_password = 1;
 			if (Auth_CheckError(cep, 0) < 0)
 				errors++;
-		} else
-		if (!strcmp(cep->name, "rpc-class"))
+		} else if (!strcmp(cep->name, "rpc-class"))
 		{
 			has_rpc_class = 1;
 			if (!cep->value)
 			{
 				config_error_empty(cep->file->filename,
-					cep->line_number, "rpc-user", cep->name);
+				                   cep->line_number, "rpc-user", cep->name);
 				errors++;
 			}
 		} else
 		{
 			config_error_unknown(cep->file->filename,
-				cep->line_number, "rpc-user", cep->name);
+			                     cep->line_number, "rpc-user", cep->name);
 			errors++;
 		}
 	}
@@ -428,14 +430,14 @@ int rpc_config_test_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type, int *err
 	if (!has_match)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"rpc-user::mask");
+		                     "rpc-user::mask");
 		errors++;
 	}
 
 	if (!has_password)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"rpc-user::password");
+		                     "rpc-user::password");
 		errors++;
 	}
 
@@ -451,6 +453,22 @@ int rpc_config_test_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type, int *err
 
 	*errs = errors;
 	return errors ? -1 : 1;
+}
+
+/** rpc-user::match may only contain ip and mask items, because it is checked on accept(), before TLS */
+static int rpc_match_is_ip_only(SecurityGroup *s)
+{
+	NameValuePrioList *p;
+
+	for (p = s->printable_list; p; p = p->next)
+	{
+		if (strcmp(p->name, "ip") && strcmp(p->name, "mask") && strcmp(p->name, "include-mask") &&
+		    strcmp(p->name, "exclude-ip") && strcmp(p->name, "exclude-mask"))
+		{
+			return 0;
+		}
+	}
+	return 1;
 }
 
 int rpc_config_run_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type)
@@ -471,12 +489,16 @@ int rpc_config_run_rpc_user(ConfigFile *cf, ConfigEntry *ce, int type)
 		if (!strcmp(cep->name, "match") || !strcmp(cep->name, "mask"))
 		{
 			conf_match_block(cf, cep, &e->match);
-		} else
-		if (!strcmp(cep->name, "password"))
+			if (!rpc_match_is_ip_only(e->match))
+			{
+				config_warn("%s:%d: rpc-user %s: match can only use ip and mask items. "
+				            "It is used as an IP filter before accepting any HTTPS connection",
+				            cep->file->filename, cep->line_number, e->name);
+			}
+		} else if (!strcmp(cep->name, "password"))
 		{
 			AuthBlockToAuthConfig(cep, &e->auth);
-		} else
-		if (!strcmp(cep->name, "rpc-class"))
+		} else if (!strcmp(cep->name, "rpc-class"))
 		{
 			safe_strdup(e->rpc_class, cep->value);
 		}
@@ -498,8 +520,7 @@ int rpc_config_test_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 	{
 		config_error_noname(ce->file->filename, ce->line_number, "rpc-class");
 		errors++;
-	} else
-	if (!valid_operclass_name(ce->value))
+	} else if (!valid_operclass_name(ce->value))
 	{
 		config_error("%s:%d: rpc-class name may only contain alphanumerical characters and "
 		             "characters _-",
@@ -514,18 +535,17 @@ int rpc_config_test_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 			if (has_parent)
 			{
 				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "rpc-class::parent");
+				                      cep->line_number, "rpc-class::parent");
 				continue;
 			}
 			has_parent = 1;
 			continue;
-		} else
-		if (!strcmp(cep->name, "permissions"))
+		} else if (!strcmp(cep->name, "permissions"))
 		{
 			if (has_permissions)
 			{
 				config_warn_duplicate(cep->file->filename,
-					cep->line_number, "rpc-class::permissions");
+				                      cep->line_number, "rpc-class::permissions");
 				continue;
 			}
 			has_permissions = 1;
@@ -533,7 +553,7 @@ int rpc_config_test_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 		} else
 		{
 			config_error_unknown(cep->file->filename,
-				cep->line_number, "rpc-class", cep->name);
+			                     cep->line_number, "rpc-class", cep->name);
 			errors++;
 			continue;
 		}
@@ -542,7 +562,7 @@ int rpc_config_test_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type, int *er
 	if (!has_permissions)
 	{
 		config_error_missing(ce->file->filename, ce->line_number,
-			"rpc-class::permissions");
+		                     "rpc-class::permissions");
 		errors++;
 	}
 
@@ -569,13 +589,12 @@ int rpc_config_run_rpc_class(ConfigFile *cf, ConfigEntry *ce, int type)
 		if (!strcmp(cep->name, "parent"))
 		{
 			safe_strdup(rpc_class->classStruct->ISA, cep->value);
-		}
-		else if (!strcmp(cep->name, "permissions"))
+		} else if (!strcmp(cep->name, "permissions"))
 		{
 			for (cepp = cep->items; cepp; cepp = cepp->next)
 			{
-				OperClassACL *acl = _conf_parseACL(cepp->name,cepp);
-				AddListItem(acl,rpc_class->classStruct->acls);
+				OperClassACL *acl = _conf_parseACL(cepp->name, cepp);
+				AddListItem(acl, rpc_class->classStruct->acls);
 			}
 		}
 	}
@@ -647,7 +666,7 @@ OperPermission ValidatePermissionsForJSONRPC(const char *path, Client *client)
 	operPath = OperClass_parsePath(path);
 	while (oc && operPath)
 	{
-		OperClassACL *acl = OperClass_FindACL(oc->acls,operPath->identifier);
+		OperClassACL *acl = OperClass_FindACL(oc->acls, operPath->identifier);
 		if (acl)
 		{
 			OperPermission perm;
@@ -666,7 +685,8 @@ OperPermission ValidatePermissionsForJSONRPC(const char *path, Client *client)
 		if (ce_operClass)
 		{
 			oc = ce_operClass->classStruct;
-		} else {
+		} else
+		{
 			break; /* parent not found */
 		}
 	}
@@ -687,14 +707,20 @@ int rpc_handle_webrequest(Client *client, WebRequest *web)
 	{
 		if (web->method != HTTP_METHOD_POST)
 		{
-			webserver_send_response(client, 200, "To use the UnrealIRCd RPC API you need to make a POST request. See https://www.unrealircd.org/docs/RPC\n");
+			webserver_send_response(client, 200, "To use the UnrealIRCd RPC API you need to make a POST request. See https://www.unrealircd.org/docs/RPC");
 			return 0;
 		}
-		webserver_send_response(client, 200, NULL); /* continue.. */
-		return 1; /* accept */
+		if ((web->content_length <= 0) && (web->transfer_encoding != TRANSFER_ENCODING_CHUNKED))
+		{
+			webserver_send_response(client, 400, "Empty POST request. JSON expected.");
+			return 0;
+		}
+		/* Allow the same request size as JSON-RPC over websocket (the webserver default is 4k) */
+		web->config_max_request_buffer_size = 16384;
+		return 1; /* accept, the 200 is sent once the body is complete */
 	}
 
-	webserver_send_response(client, 404, "Page not found.\n");
+	webserver_send_response(client, 404, "Page not found.");
 	return 0;
 }
 
@@ -707,7 +733,7 @@ int rpc_handle_webrequest_websocket(Client *client, WebRequest *web)
 
 	if (!websocket_md)
 	{
-		webserver_send_response(client, 405, "Websockets are disabled on this server (module 'websocket_common' not loaded).\n");
+		webserver_send_response(client, 501, "Websockets are disabled on this server (module 'websocket_common' not loaded).");
 		return 0;
 	}
 
@@ -766,10 +792,14 @@ int rpc_handle_webrequest_data(Client *client, WebRequest *web, const char *buf,
 		return rpc_handle_body_websocket(client, web, buf, len);
 	}
 
+	/* Already handled, ignore any data that comes after the body (such as a stray CRLF) */
+	if (web->request_body_complete)
+		return 0;
+
 	/* We only handle POST to /api -- reject all the rest */
 	if (strcmp(web->uri, "/api") || (web->method != HTTP_METHOD_POST))
 	{
-		webserver_send_response(client, 404, "Page not found\n");
+		webserver_send_response(client, 404, "Page not found");
 		return 0;
 	}
 
@@ -777,7 +807,7 @@ int rpc_handle_webrequest_data(Client *client, WebRequest *web, const char *buf,
 	// NB: chunked transfers?
 	if (!webserver_handle_body(client, web, buf, len))
 	{
-		webserver_send_response(client, 400, "Error handling POST body data\n");
+		webserver_send_response(client, 400, "Error handling POST body data");
 		return 0;
 	}
 
@@ -786,10 +816,11 @@ int rpc_handle_webrequest_data(Client *client, WebRequest *web, const char *buf,
 	{
 		if (!web->request_buffer)
 		{
-			webserver_send_response(client, 500, "Error while processing POST body data\n");
+			webserver_send_response(client, 400, "Empty POST request. JSON expected.");
 			return 0;
 		}
 		//config_status("GOT: '%s'", buf);
+		webserver_send_response(client, 200, NULL);
 		rpc_call_text(client, web->request_buffer, web->request_buffer_size);
 		send_queued(client);
 		webserver_close_client(client);
@@ -878,7 +909,7 @@ void rpc_sendto(Client *client, const char *buf, int len)
 	if (MyConnect(client) && IsRPC(client) && WSU(client) && WSU(client)->handshake_completed)
 	{
 		/* Websocket */
-		int utf8bufsize = len*2 + 16;
+		int utf8bufsize = len * 2 + 16;
 		char *utf8buf = safe_alloc(utf8bufsize);
 		char *newbuf = unrl_utf8_make_valid(buf, utf8buf, utf8bufsize, 1);
 		int newlen = strlen(newbuf);
@@ -888,7 +919,8 @@ void rpc_sendto(Client *client, const char *buf, int len)
 		dbuf_put(&client->local->sendQ, newbuf, newlen);
 		safe_free(ws_sendbuf);
 		safe_free(utf8buf);
-	} else {
+	} else
+	{
 		/* Unix domain socket or HTTP */
 		dbuf_put(&client->local->sendQ, buf, len);
 		dbuf_put(&client->local->sendQ, "\n", 1);
@@ -925,8 +957,9 @@ void _rpc_error(Client *client, json_t *request, JsonRpcError error_code, const 
 	json_object_set_new(error, "message", json_string_unreal(error_message));
 
 	unreal_log(ULOG_INFO, "rpc", "RPC_CALL_ERROR", client,
-	           "[rpc] Client $client: RPC call $method",
-	           log_data_string("method", method ? method : "<invalid>"));
+	           "[rpc] Client $client: RPC call $method: $error_message",
+	           log_data_string("method", method ? method : "<invalid>"),
+	           log_data_string("error_message", error_message));
 
 
 	json_serialized = json_dumps(j, 0);
@@ -947,8 +980,8 @@ void _rpc_error(Client *client, json_t *request, JsonRpcError error_code, const 
 
 #ifdef DEBUGMODE
 	unreal_log(ULOG_DEBUG, "rpc", "RPC_CALL_DEBUG", client,
-		   "[rpc] Client $client: RPC result error: $response",
-		   log_data_string("response", json_serialized));
+	           "[rpc] Client $client: RPC result error: $response",
+	           log_data_string("response", json_serialized));
 #endif
 	json_decref(j);
 	safe_free(json_serialized);
@@ -996,8 +1029,8 @@ void _rpc_response(Client *client, json_t *request, json_t *result)
 
 #ifdef DEBUGMODE
 	unreal_log(ULOG_DEBUG, "rpc", "RPC_CALL_DEBUG", client,
-		   "[rpc] Client $client: RPC response result: $response",
-		   log_data_string("response", json_serialized));
+	           "[rpc] Client $client: RPC response result: $response",
+	           log_data_string("response", json_serialized));
 #endif
 	json_decref(j);
 	safe_free(json_serialized);
@@ -1041,8 +1074,7 @@ int sanitize_params(Client *client, json_t *request, json_t *j)
 			if (!sanitize_params(client, request, value))
 				return 0;
 		}
-	} else
-	if (json_is_object(j))
+	} else if (json_is_object(j))
 	{
 		const char *key;
 		json_t *value;
@@ -1076,7 +1108,7 @@ void rpc_call_log(Client *client, RPCHandler *handler, json_t *request, const ch
 		}
 	}
 	if (*params_string)
-		params_string[strlen(params_string)-2] = '\0'; /* cut off last comma */
+		params_string[strlen(params_string) - 2] = '\0'; /* cut off last comma */
 
 	// TODO: pass log_data_json() or something, pass the entire 'request' ? For JSON logging
 
@@ -1085,27 +1117,30 @@ void rpc_call_log(Client *client, RPCHandler *handler, json_t *request, const ch
 		if (*params_string)
 		{
 			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
-				   "[rpc] RPC call $method by $client ($issuer): $params_string",
-				   log_data_string("issuer", client->rpc->issuer),
-				   log_data_string("method", method),
-				   log_data_string("params_string", params_string));
-		} else {
+			           "[rpc] RPC call $method by $client ($issuer): $params_string",
+			           log_data_string("issuer", client->rpc->issuer),
+			           log_data_string("method", method),
+			           log_data_string("params_string", params_string));
+		} else
+		{
 			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
-				   "[rpc] RPC call $method by $client ($issuer)",
-				   log_data_string("issuer", client->rpc->issuer),
-				   log_data_string("method", method));
+			           "[rpc] RPC call $method by $client ($issuer)",
+			           log_data_string("issuer", client->rpc->issuer),
+			           log_data_string("method", method));
 		}
-	} else {
+	} else
+	{
 		if (*params_string)
 		{
 			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
-				   "[rpc] RPC call $method by $client: $params_string",
-				   log_data_string("method", method),
-				   log_data_string("params_string", params_string));
-		} else {
+			           "[rpc] RPC call $method by $client: $params_string",
+			           log_data_string("method", method),
+			           log_data_string("params_string", params_string));
+		} else
+		{
 			unreal_log(handler->loglevel, "rpc", "RPC_CALL", client,
-				   "[rpc] RPC call $method by $client",
-				   log_data_string("method", method));
+			           "[rpc] RPC call $method by $client",
+			           log_data_string("method", method));
 		}
 	}
 }
@@ -1177,7 +1212,7 @@ int parse_rpc_call(Client *client, json_t *mainrequest, json_t *request, const c
 
 	/* Convert e.g. "server_ban.list" to "server_ban:list" which is used by rpc-class/operclass */
 	strlcpy(path, *method, sizeof(path));
-	for (s=path; *s; s++)
+	for (s = path; *s; s++)
 		if (*s == '.')
 			*s = ':';
 
@@ -1225,8 +1260,8 @@ void rpc_call_json(Client *client, json_t *request)
 		if (call)
 		{
 			unreal_log(ULOG_DEBUG, "rpc", "RPC_CALL_DEBUG", client,
-				   "[rpc] Client $client: RPC call: $call",
-				   log_data_string("call", call));
+			           "[rpc] Client $client: RPC call: $call",
+			           log_data_string("call", call));
 			safe_free(call);
 		}
 	}
@@ -1243,6 +1278,24 @@ int rpc_client_accept(Client *client)
 		client->rpc = safe_alloc(sizeof(RPCClient));
 	}
 	return 0;
+}
+
+/** Called on accept(), before TLS: close the connection right away if no rpc-user { } block matches */
+int rpc_accept_check_match(Client *client)
+{
+	RPCUser *r;
+
+	if (!RPC_PORT(client) || (client->local->listener->socket_type == SOCKET_TYPE_UNIX))
+		return HOOK_CONTINUE;
+
+	for (r = rpcusers; r; r = r->next)
+	{
+		if (user_allowed_by_security_group(client, r->match))
+			return HOOK_CONTINUE;
+	}
+
+	dead_socket(client, "Access denied");
+	return 2; /* HOOK_DENY_ALWAYS: close now, without a TLS handshake */
 }
 
 /** Called upon handshake of unix socket (direct JSON usage, no auth) */
@@ -1263,33 +1316,12 @@ void rpc_client_handshake_unix_socket(Client *client)
 /** Called upon handshake, after TLS is ready (before any HTTP header parsing) */
 void rpc_client_handshake_web(Client *client)
 {
-	RPCUser *r;
-	char found = 0;
-
 	/* Explicitly mark as RPC, since the TLS layer may
 	 * have set us to SetUnknown() after the TLS handshake.
 	 */
 	SetRPC(client);
 	if (!client->rpc)
 		client->rpc = safe_alloc(sizeof(RPCClient));
-
-	/* Is the client allowed by any rpc-user { } block?
-	 * If not, reject the client immediately, before
-	 * processing any HTTP data.
-	 */
-	for (r = rpcusers; r; r = r->next)
-	{
-		if (user_allowed_by_security_group(client, r->match))
-		{
-			found = 1;
-			break;
-		}
-	}
-	if (!found)
-	{
-		webserver_send_response(client, 401, "Access denied");
-		return;
-	}
 
 	/* Allow incoming data to be read from now on.. */
 	fd_setselect(client->local->fd, FD_SELECT_READ, read_packet, client);
@@ -1299,16 +1331,20 @@ void rpc_client_handshake_web(Client *client)
 
 int rpc_pre_local_handshake_timeout(Client *client, const char **comment)
 {
+	/* Don't hang up RPC connections on a UNIX socket */
+	if (IsRPC(client) && client->local->listener &&
+	    (client->local->listener->socket_type == SOCKET_TYPE_UNIX))
+		return HOOK_ALLOW;
+
 	/* Don't hang up websocket connections */
 	if (IsRPC(client) && WSU(client) && WSU(client)->handshake_completed)
 	{
 		long t = TStime() - client->local->last_msg_received;
-		if ((t > RPC_WEBSOCKET_PING_TIME*2) && IsPingSent(client))
+		if ((t > RPC_WEBSOCKET_PING_TIME * 2) && IsPingSent(client))
 		{
 			*comment = "No websocket PONG received in time.";
 			return HOOK_CONTINUE;
-		} else
-		if ((t > RPC_WEBSOCKET_PING_TIME) && !IsPingSent(client) && !IsDead(client))
+		} else if ((t > RPC_WEBSOCKET_PING_TIME) && !IsPingSent(client) && !IsDead(client))
 		{
 			char pingbuf[4];
 			const char *pkt = pingbuf;
@@ -1391,7 +1427,7 @@ int rpc_parse_auth_basic_auth(Client *client, WebRequest *web, char **username, 
 
 	p = strchr(auth_header, ' ');
 	skip_whitespace(&p);
-	n = b64_decode(p, buf, sizeof(buf)-1);
+	n = b64_decode(p, buf, sizeof(buf) - 1);
 	if (n <= 1)
 		return 0;
 	buf[n] = '\0';
@@ -1430,7 +1466,7 @@ int rpc_parse_auth_uri(Client *client, WebRequest *web, char **username, char **
 		{
 			p += 9;
 			*password = p;
-			p = strchr(str, '&');
+			p = strchr(p, '&');
 			if (p)
 				*p = '\0';
 		}
@@ -1530,10 +1566,29 @@ void free_outstanding_rrpc_list(ModData *m)
 /** Remove timer from rpc_timer_list and free it */
 void free_rpc_timer(RPCTimer *r)
 {
+	if (rpc_timers_iterating)
+	{
+		/* Don't free mid-iteration, let cleanup_rpc_timers() handle it (#6639) */
+		r->deleted = 1;
+		return;
+	}
 	safe_free(r->timer_id);
 	json_decref(r->request);
 	DelListItem(r, rpc_timer_list);
 	safe_free(r);
+}
+
+/** Free timers that were marked for deletion during rpc_do_timers() */
+static void cleanup_rpc_timers(void)
+{
+	RPCTimer *r, *r_next;
+
+	for (r = rpc_timer_list; r; r = r_next)
+	{
+		r_next = r->next;
+		if (r->deleted)
+			free_rpc_timer(r);
+	}
 }
 
 /* Admin unloading the RPC module for good (not called on rehash) */
@@ -1567,6 +1622,8 @@ RPCTimer *find_rpc_timer(Client *client, const char *timer_id)
 
 	for (r = rpc_timer_list; r; r = r->next)
 	{
+		if (r->deleted)
+			continue;
 		if ((r->client == client) && !strcmp(timer_id, r->timer_id))
 			return r;
 	}
@@ -1689,7 +1746,8 @@ void rrpc_pass_on_split(Client *client, Client *dest, MessageTag *recv_mtags, co
 			saved = data[RRPC_PACKET_SMALL];
 			data[RRPC_PACKET_SMALL] = '\0';
 			remaining -= RRPC_PACKET_SMALL;
-		} else {
+		} else
+		{
 			saved = 0;
 			remaining = 0;
 			continuation = 0;
@@ -1708,14 +1766,13 @@ void rrpc_pass_on_split(Client *client, Client *dest, MessageTag *recv_mtags, co
 			 * last chunk (caveat :D).
 			 */
 			strlcat_letter(status, 'F', sizeof(status));
-		} else
-		if (!first)
+		} else if (!first)
 		{
 			strlcat_letter(status, 'C', sizeof(status));
 		}
 
 		sendto_one(dest, recv_mtags, ":%s RRPC %s %s %s %s %s :%s",
-			   client->id, parv[1], parv[2], parv[3], parv[4], status, data);
+		           client->id, parv[1], parv[2], parv[3], parv[4], status, data);
 
 		if (!saved)
 			break; /* done! */
@@ -1736,8 +1793,8 @@ CMD_FUNC(cmd_rrpc)
 	const char *source, *destination, *requestid, *type, *data;
 	RRPC *r;
 	Client *dest;
-	char sid[SIDLEN+1];
-	char binarydata[BUFSIZE+1];
+	char sid[SIDLEN + 1];
+	char binarydata[BUFSIZE + 1];
 	int binarydatalen;
 
 	if ((parc < 7) || BadPtr(parv[6]))
@@ -1752,7 +1809,8 @@ CMD_FUNC(cmd_rrpc)
 	} else if (!strcmp(parv[1], "RES"))
 	{
 		request = 0;
-	} else {
+	} else
+	{
 		sendnumeric(client, ERR_CANNOTDOCOMMAND, "RRPC", "Invalid parameter");
 		return;
 	}
@@ -1782,7 +1840,8 @@ CMD_FUNC(cmd_rrpc)
 		{
 			/* Hard case */
 			rrpc_pass_on_split(client, dest, recv_mtags, parv);
-		} else {
+		} else
+		{
 			/* Simple case */
 			sendto_one(dest, recv_mtags, ":%s RRPC %s %s %s %s %s :%s",
 			           client->id, parv[1], parv[2], parv[3], parv[4], parv[5], parv[6]);
@@ -1815,8 +1874,7 @@ CMD_FUNC(cmd_rrpc)
 		r->request = request;
 		dbuf_queue_init(&r->data);
 		AddListItem(r, rrpc_list);
-	} else
-	if (strchr(type, 'C') || strchr(type, 'F'))
+	} else if (strchr(type, 'C') || strchr(type, 'F'))
 	{
 		r = find_rrpc(source, destination, requestid);
 		if (!r)
@@ -1866,7 +1924,7 @@ void rpc_call_remote(RRPC *r)
 	json_t *request = NULL;
 	Client *server;
 	Client *client;
-	char sid[SIDLEN+1];
+	char sid[SIDLEN + 1];
 
 	request = rrpc_data(r);
 	if (!request)
@@ -1880,9 +1938,11 @@ void rpc_call_remote(RRPC *r)
 	server = find_server_quick(sid);
 	if (!server)
 	{
+		json_decref(request);
 		return;
 	}
 	client = make_client(server->direction, server);
+	SetRPC(client);
 	strlcpy(client->id, r->source, sizeof(client->id));
 	client->rpc = safe_alloc(sizeof(RPCClient));
 	strlcpy(client->name, "RPC:remote", sizeof(client->name));
@@ -1970,7 +2030,7 @@ void rpc_send_generic_to_remote(Client *source, Client *target, const char *requ
 	int bytes_remaining; /* bytes remaining overall */
 	int start_frame = 1; /* set to 1 if this is the start frame */
 	int packet_split_size; /* chunk size of outgoing packets (depends on BIGLINES support) */
-	char data[RRPC_PACKET_BIGLINES+1];
+	char data[RRPC_PACKET_BIGLINES + 1];
 
 	requestid = rpc_id(json);
 	if (!requestid)
@@ -2004,15 +2064,15 @@ void rpc_send_generic_to_remote(Client *source, Client *target, const char *requ
 				type = "S"; /* start (with later continuation frames) */
 			else
 				type = "SF"; /* start and finish */
-		} else
-		if (bytes_remaining > 0)
+		} else if (bytes_remaining > 0)
 		{
 			type = "C"; /* continuation frame (with later a finish frame) */
-		} else {
+		} else
+		{
 			type = "F"; /* finish frame (the last frame) */
 		}
 
-		strlncpy(data, str, packet_split_size+1, bytes);
+		strlncpy(data, str, packet_split_size + 1, bytes);
 
 		sendto_one(target, NULL, ":%s RRPC %s %s %s %s %s :%s",
 		           me.id,
@@ -2027,7 +2087,7 @@ void rpc_send_generic_to_remote(Client *source, Client *target, const char *requ
 	safe_free(json_serialized);
 }
 
-int _rrpc_supported_simple(Client *target, char **problem_server)
+int rrpc_supported_simple_helper(Client *target, char **problem_server)
 {
 	if (!moddata_client_get(target, "rrpc"))
 	{
@@ -2035,20 +2095,51 @@ int _rrpc_supported_simple(Client *target, char **problem_server)
 			*problem_server = target->name;
 		return 0;
 	}
-	if ((target != target->direction) && !rrpc_supported_simple(target->direction, problem_server))
+	if ((target != target->direction) && !rrpc_supported_simple_helper(target->direction, problem_server))
 		return 0;
 	return 1;
 }
 
+int _rrpc_supported_simple(Client *target, char **problem_server)
+{
+	/* We require the RPC module and at least module version 1.0.5.
+	 * This is because there is a bug in 1.0.4 where remote RPC did
+	 * not work due to an auth check that was only meant locally.
+	 */
+	return rrpc_supported(target, "rpc", "1.0.5", problem_server);
+}
+
 int _rrpc_supported(Client *target, const char *module, const char *minimum_version, char **problem_server)
 {
+	const char *have_version;
+
 	if (!moddata_client_get(target, "rrpc"))
 	{
 		if (problem_server)
 			*problem_server = target->name;
 		return 0;
 	}
-	if ((target != target->direction) && !rrpc_supported_simple(target->direction, problem_server))
+
+	/* If a specific rpc module (and optionally a minimum version) is requested, check that
+	 * 'target' actually advertises it. The module list (name -> version) travels via the
+	 * synced "rrpc" moddata, so we can check this for any server on the network.
+	 */
+	if (module)
+	{
+		have_version = get_nvplist(RRPCMODULES(target), module);
+		if (!have_version ||
+		    (minimum_version && (strnatcmp(have_version, minimum_version) < 0)))
+		{
+			if (problem_server)
+				*problem_server = target->name;
+			return 0;
+		}
+	}
+
+	/* And the entire path towards 'target' must support remote RPC (transport only;
+	 * intermediate servers just relay, so they don't need the module itself).
+	 */
+	if ((target != target->direction) && !rrpc_supported_simple_helper(target->direction, problem_server))
 		return 0;
 	return 1;
 }
@@ -2114,7 +2205,7 @@ const char *rrpc_md_serialize(ModData *m)
 		strlcat(buf, tmp, sizeof(buf));
 	}
 	if (*buf)
-		buf[strlen(buf)-1] = '\0'; // strip last comma
+		buf[strlen(buf) - 1] = '\0'; // strip last comma
 
 	return buf;
 }
@@ -2188,6 +2279,13 @@ RPC_CALL_FUNC(rpc_rpc_add_timer)
 	RPCHandler *handler;
 	RPCTimer *timer;
 
+	/* Remote timers would be weird, complex and are not supported */
+	if (!MyConnect(client))
+	{
+		rpc_error(client, request, JSON_RPC_ERROR_INVALID_REQUEST, "rpc.add_timer is not available for remote RPC requests");
+		return;
+	}
+
 	REQUIRE_PARAM_INTEGER("every_msec", every_msec);
 	REQUIRE_PARAM_STRING("timer_id", timer_id);
 
@@ -2233,17 +2331,21 @@ RPC_CALL_FUNC(rpc_rpc_add_timer)
 
 EVENT(rpc_do_timers)
 {
-	RPCTimer *e, *e_next;
+	RPCTimer *e;
 
-	for (e = rpc_timer_list; e; e = e_next)
+	rpc_timers_iterating++;
+	for (e = rpc_timer_list; e; e = e->next)
 	{
-		e_next = e->next;
+		if (e->deleted)
+			continue;
 		if (minimum_msec_since_last_run(&e->last_run, e->every_msec))
 		{
 			rpc_call_json(e->client, e->request);
 		}
 		// TODO: maybe do counts as well?
 	}
+	if (--rpc_timers_iterating == 0)
+		cleanup_rpc_timers();
 }
 
 /** Client being freed? If RPC then cancel timers, if any */

@@ -4,17 +4,16 @@
  * License: GPLv2 or later
  * The websocket module was sponsored by Aberrant Software Inc.
  */
-   
+
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"websocket_common",
-	"6.1.4",
-	"WebSocket support (RFC6455)",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "websocket_common",
+    "6.1.4",
+    "WebSocket support (RFC6455)",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 #if CHAR_MIN < 0
  #error "In UnrealIRCd char should always be unsigned. Check your compiler"
@@ -24,7 +23,7 @@ ModuleHeader MOD_HEADER
  #define WEBSOCKET_SEND_BUFFER_SIZE 16384
 #endif
 
-#define WSU(client)	((WebSocketUser *)moddata_client(client, websocket_md).ptr)
+#define WSU(client) ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
 
 /* Forward declarations - public functions */
 int _websocket_handle_websocket(Client *client, WebRequest *web, const char *readbuf2, int length2, int callback(Client *client, char *buf, int len));
@@ -39,6 +38,7 @@ int websocket_send_pong(Client *client, const char *buf, int len);
 const char *websocket_mdata_serialize(ModData *m);
 void websocket_mdata_unserialize(const char *str, ModData *m);
 void websocket_mdata_free(ModData *m);
+int websocket_whois(Client *client, Client *target, NameValuePrioList **list);
 
 /* Global variables */
 ModDataInfo *websocket_md;
@@ -74,6 +74,8 @@ MOD_INIT()
 	mreq.priority = -999996;
 	websocket_md = ModDataAdd(modinfo->handle, mreq);
 
+	HookAdd(modinfo->handle, HOOKTYPE_WHOIS, 0, websocket_whois);
+
 	/* Unload last, since we manage sockets */
 	ModuleSetOptions(modinfo->handle, MOD_OPT_PRIORITY, WEBSOCKET_MODULE_PRIORITY_UNLOAD);
 
@@ -99,7 +101,7 @@ int _websocket_handle_websocket(Client *client, WebRequest *web, const char *rea
 	char readbuf[MAXLINELENGTH];
 
 	length = length1 + length2;
-	if (length > sizeof(readbuf)-1)
+	if (length > sizeof(readbuf) - 1)
 	{
 		dead_socket(client, "Illegal buffer stacking/Excess flood");
 		return 0;
@@ -107,13 +109,14 @@ int _websocket_handle_websocket(Client *client, WebRequest *web, const char *rea
 
 	if (length1 > 0)
 		memcpy(readbuf, WSU(client)->lefttoparse, length1);
-	memcpy(readbuf+length1, readbuf2, length2);
+	memcpy(readbuf + length1, readbuf2, length2);
 
 	safe_free(WSU(client)->lefttoparse);
 	WSU(client)->lefttoparselen = 0;
 
 	ptr = readbuf;
-	do {
+	do
+	{
 		n = websocket_handle_packet(client, ptr, length, callback);
 		if (n < 0)
 			return -1; /* killed -- STOP processing */
@@ -130,7 +133,7 @@ int _websocket_handle_websocket(Client *client, WebRequest *web, const char *rea
 		ptr += n;
 		if (length < 0)
 			abort(); /* less than 0 is impossible */
-	} while(length > 0);
+	} while (length > 0);
 
 	return 0;
 }
@@ -162,7 +165,7 @@ int websocket_handle_packet(Client *client, const char *readbuf, int length, int
 	/* fin    = readbuf[0] & 0x80; -- unused */
 	opcode = readbuf[0] & 0x7F;
 	masked = readbuf[1] & 0x80;
-	len    = readbuf[1] & 0x7F;
+	len = readbuf[1] & 0x7F;
 	p = &readbuf[2]; /* point to next element */
 
 	/* actually 'fin' is unused.. we don't care. */
@@ -221,7 +224,7 @@ int websocket_handle_packet(Client *client, const char *readbuf, int length, int
 	if (masked)
 	{
 		memcpy(maskkey, p, maskkeylen);
-		p+= maskkeylen;
+		p += maskkeylen;
 	}
 
 	if (len > 0)
@@ -243,7 +246,7 @@ int websocket_handle_packet(Client *client, const char *readbuf, int length, int
 		}
 	}
 
-	switch(opcode)
+	switch (opcode)
 	{
 		case WSOP_CONTINUATION:
 		case WSOP_TEXT:
@@ -284,8 +287,18 @@ int websocket_handle_packet_ping(Client *client, const char *buf, int len)
 		dead_socket(client, "WebSocket: oversized PING request");
 		return -1;
 	}
-	websocket_send_pong(client, buf, len);
 	add_fake_lag(client, 1000); /* lag penalty of 1 second */
+	/* If client is lagged up considerably then we don't respond
+	 * with a PONG. Instead of <10 we use <60 here. The <10 could
+	 * happen if someone has reached the full fake lag limit, no,
+	 * even 25 could happen with multiline. If maxed out and the
+	 * client application would PING it would not receive a PONG
+	 * back from us. So we play it safe with <60, since 60 cannot
+	 * be reached under any normal circumstances except for Websocket
+	 * PING flooding, basically.
+	 */
+	if (client->local->fake_lag - TStime() < 60)
+		websocket_send_pong(client, buf, len);
 	return 0;
 }
 
@@ -323,7 +336,8 @@ int _websocket_create_packet_simple(int opcode, const char **buf, int *len)
 		memcpy(&sendbuf[2], *buf, *len);
 		*buf = sendbuf;
 		*len += 2;
-	} else {
+	} else
+	{
 		/* Long payload */
 		sendbuf[1] = 126;
 		sendbuf[2] = (char)((*len >> 8) & 0xFF);
@@ -361,7 +375,8 @@ int _websocket_create_packet_ex(int opcode, char **buf, int *len, char *sendbuf,
 	if (*len == 0)
 		return -1;
 
-	do {
+	do
+	{
 		/* Find next \r or \n */
 		for (s2 = s; *s2 && (s2 <= lastbyte); s2++)
 		{
@@ -401,15 +416,15 @@ int _websocket_create_packet_ex(int opcode, char **buf, int *len, char *sendbuf,
 			/* Short payload */
 			o[1] = (char)bytes_to_copy;
 			memcpy(&o[2], s, bytes_to_copy);
-		} else
-		if (bytes_to_copy < 65536)
+		} else if (bytes_to_copy < 65536)
 		{
 			/* Long payload */
 			o[1] = 126;
 			o[2] = (char)((bytes_to_copy >> 8) & 0xFF);
 			o[3] = (char)(bytes_to_copy & 0xFF);
 			memcpy(&o[4], s, bytes_to_copy);
-		} else {
+		} else
+		{
 			/* Longest payload */
 			// XXX: yeah we don't support sending more than 4GB.
 			o[1] = 127;
@@ -429,8 +444,9 @@ int _websocket_create_packet_ex(int opcode, char **buf, int *len, char *sendbuf,
 		bytes_in_sendbuf += bytes_single_frame;
 
 		/* Advance source pointer and skip all trailing \n and \r */
-		for (s = s2; *s && (s <= lastbyte) && ((*s == '\n') || (*s == '\r')); s++);
-	} while(s <= lastbyte);
+		for (s = s2; *s && (s <= lastbyte) && ((*s == '\n') || (*s == '\r')); s++)
+			;
+	} while (s <= lastbyte);
 
 	*buf = sendbuf;
 	*len = bytes_in_sendbuf;
@@ -482,31 +498,59 @@ void websocket_mdata_free(ModData *m)
 		safe_free(wsu->handshake_key);
 		safe_free(wsu->lefttoparse);
 		safe_free(wsu->sec_websocket_protocol);
+		safe_free(wsu->origin);
 		safe_free(m->ptr);
 	}
 }
 
-/** This only serializes wsu->type atm */
+/** Serializes wsu->type and wsu->origin (if set), eg "2;webchat.example.net" */
 const char *websocket_mdata_serialize(ModData *m)
 {
-	static char buf[32];
+	static char buf[512];
 	WebSocketUser *wsu = m->ptr;
 
 	if (!wsu)
 		return NULL; /* not set */
 
-	snprintf(buf, sizeof(buf), "%d", wsu->type);
+	if (wsu->origin)
+		snprintf(buf, sizeof(buf), "%d;%s", wsu->type, wsu->origin);
+	else
+		snprintf(buf, sizeof(buf), "%d", wsu->type);
 	return buf;
 }
 
-/** This only sets wsu->type atm */
+/** Sets wsu->type and wsu->origin (if present and valid) */
 void websocket_mdata_unserialize(const char *str, ModData *m)
 {
 	WebSocketUser *wsu;
+	char buf[512];
+	char *type, *origin, *p = NULL;
+
 	if (m->ptr)
 		websocket_mdata_free(m);
 	if (BadPtr(str))
 		return; /* empty/freed */
 	m->ptr = wsu = safe_alloc(sizeof(WebSocketUser));
-	wsu->type = atoi(str);
+
+	strlcpy(buf, str, sizeof(buf));
+	type = strtoken_noskip(&p, buf, ";");
+	wsu->type = atoi(type);
+	origin = strtoken_noskip(&p, NULL, ";");
+	if (origin && (valid_host(origin, 1) || is_valid_ip(origin)))
+		safe_strdup(wsu->origin, origin);
+}
+
+/** Show the websocket origin in WHOIS */
+int websocket_whois(Client *client, Client *target, NameValuePrioList **list)
+{
+	if (whois_get_policy(client, target, "websocket") <= WHOIS_CONFIG_DETAILS_NONE)
+		return 0;
+
+	if (!WSU(target) || !WSU(target)->origin)
+		return 0;
+
+	add_nvplist_numeric_fmt(list, 40000, "websocket", client, RPL_WHOISGATEWAY,
+	                        "%s * * :is connecting from WebSocket origin %s",
+	                        target->name, WSU(target)->origin);
+	return 0;
 }

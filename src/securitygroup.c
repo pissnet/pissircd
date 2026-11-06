@@ -17,6 +17,7 @@
 
 /* Global variables */
 SecurityGroup *securitygroups = NULL;
+SecurityGroup *known_users = NULL;
 
 /** Free all masks in the mask list */
 void unreal_delete_masks(ConfigItem_mask *m)
@@ -106,7 +107,7 @@ int unreal_mask_match(Client *client, ConfigItem_mask *mask)
 		if (m->mask[0] != '!')
 		{
 			retval = 0; /* no implicit * */
-			if (match_user(m->mask, client, MATCH_CHECK_REAL|MATCH_CHECK_EXTENDED))
+			if (match_user(m->mask, client, MATCH_CHECK_REAL | MATCH_CHECK_EXTENDED))
 			{
 				retval = 1;
 				break;
@@ -119,7 +120,7 @@ int unreal_mask_match(Client *client, ConfigItem_mask *mask)
 		/* We matched. Check for exceptions (with ! prefix) */
 		for (m = mask; m; m = m->next)
 		{
-			if ((m->mask[0] == '!') && match_user(m->mask+1, client, MATCH_CHECK_REAL|MATCH_CHECK_EXTENDED))
+			if ((m->mask[0] == '!') && match_user(m->mask + 1, client, MATCH_CHECK_REAL | MATCH_CHECK_EXTENDED))
 				return 0;
 		}
 	}
@@ -168,7 +169,7 @@ int unreal_mask_match_string(const char *name, ConfigItem_mask *mask)
 		/* We matched. Check for exceptions (with ! prefix) */
 		for (m = mask; m; m = m->next)
 		{
-			if ((m->mask[0] == '!') && match_simple(m->mask+1, name))
+			if ((m->mask[0] == '!') && match_simple(m->mask + 1, name))
 				return 0;
 		}
 	}
@@ -176,28 +177,31 @@ int unreal_mask_match_string(const char *name, ConfigItem_mask *mask)
 	return retval;
 }
 
-#define CheckNullX(x) if ((!(x)->value) || (!(*((x)->value)))) { config_error("%s:%i: missing parameter", (x)->file->filename, (x)->line_number); (*errors)++; return 0; }
+#define CheckNullX(x) \
+	if ((!(x)->value) || (!(*((x)->value)))) \
+	{ \
+		config_error("%s:%i: missing parameter", (x)->file->filename, (x)->line_number); \
+		(*errors)++; \
+		return 0; \
+	}
 int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 {
 	ConfigEntry *cepp;
+	int has_rule = 0, has_exclude_rule = 0;
 
 	if (!strcmp(cep->name, "webirc") || !strcmp(cep->name, "exclude-webirc"))
 	{
 		CheckNullX(cep);
-	} else
-	if (!strcmp(cep->name, "websocket") || !strcmp(cep->name, "exclude-websocket"))
+	} else if (!strcmp(cep->name, "websocket") || !strcmp(cep->name, "exclude-websocket"))
 	{
 		CheckNullX(cep);
-	} else
-	if (!strcmp(cep->name, "identified") || !strcmp(cep->name, "exclude-identified"))
+	} else if (!strcmp(cep->name, "identified") || !strcmp(cep->name, "exclude-identified"))
 	{
 		CheckNullX(cep);
-	} else
-	if (!strcmp(cep->name, "tls") || !strcmp(cep->name, "exclude-tls"))
+	} else if (!strcmp(cep->name, "tls") || !strcmp(cep->name, "exclude-tls"))
 	{
 		CheckNullX(cep);
-	} else
-	if (!strcmp(cep->name, "reputation-score") || !strcmp(cep->name, "exclude-reputation-score"))
+	} else if (!strcmp(cep->name, "reputation-score") || !strcmp(cep->name, "exclude-reputation-score"))
 	{
 		const char *str = cep->value;
 		int v;
@@ -208,11 +212,10 @@ int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 		if ((v < 1) || (v > 10000))
 		{
 			config_error("%s:%i: %s needs to be a value of 1-10000",
-				cep->file->filename, cep->line_number, cep->name);
+			             cep->file->filename, cep->line_number, cep->name);
 			(*errors)++;
 		}
-	} else
-	if (!strcmp(cep->name, "connect-time") || !strcmp(cep->name, "exclude-connect-time"))
+	} else if (!strcmp(cep->name, "connect-time") || !strcmp(cep->name, "exclude-connect-time"))
 	{
 		const char *str = cep->value;
 		long v;
@@ -223,11 +226,10 @@ int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 		if (v < 1)
 		{
 			config_error("%s:%i: %s needs to be a time value (and more than 0 seconds)",
-				cep->file->filename, cep->line_number, cep->name);
+			             cep->file->filename, cep->line_number, cep->name);
 			(*errors)++;
 		}
-	} else
-	if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask") || !strcmp(cep->name, "exclude-mask"))
+	} else if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask") || !strcmp(cep->name, "exclude-mask"))
 	{
 		for (cepp = cep->items; cepp; cepp = cepp->next)
 		{
@@ -242,28 +244,32 @@ int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 				(*errors)++;
 			}
 		}
-	} else
-	if (!strcmp(cep->name, "ip") || !strcmp(cep->name, "exclude-ip"))
+	} else if (!strcmp(cep->name, "ip") || !strcmp(cep->name, "exclude-ip"))
 	{
-	} else
-	if (!strcmp(cep->name, "server-port") || !strcmp(cep->name, "exclude-server-port"))
+	} else if (!strcmp(cep->name, "server-port") || !strcmp(cep->name, "exclude-server-port"))
 	{
-	} else
-	if (!strcmp(cep->name, "security-group") || !strcmp(cep->name, "exclude-security-group"))
+	} else if (!strcmp(cep->name, "security-group") || !strcmp(cep->name, "exclude-security-group"))
 	{
-	} else
-	if (!strcmp(cep->name, "destination") || !strcmp(cep->name, "exclude-destination"))
+	} else if (!strcmp(cep->name, "destination") || !strcmp(cep->name, "exclude-destination"))
 	{
-	} else
-	if (!strcmp(cep->name, "rule") || !strcmp(cep->name, "exclude-rule"))
+	} else if (!strcmp(cep->name, "rule") || !strcmp(cep->name, "exclude-rule"))
 	{
-		int val = crule_test(cep->value);
+		int val;
+
+		CheckNullX(cep);
+		if (!strcmp(cep->name, "rule"))
+			config_detect_duplicate(&has_rule, cep, errors);
+		else if (!strcmp(cep->name, "exclude-rule"))
+			config_detect_duplicate(&has_exclude_rule, cep, errors);
+
+		val = crule_test(cep->value);
 		if (val)
 		{
-			config_error("%s:%i: rule contains an invalid expression: %s",
-				cep->file->filename,
-				cep->line_number,
-				crule_errstring(val));
+			config_error("%s:%i: %s contains an invalid expression: %s",
+			             cep->file->filename,
+			             cep->line_number,
+			             cep->name,
+			             crule_errstring(val));
 			(*errors)++;
 		}
 	} else
@@ -271,7 +277,7 @@ int test_match_item(ConfigFile *conf, ConfigEntry *cep, int *errors)
 		/* Let's see if an extended server ban exists for this item... */
 		Extban *extban;
 		if (!strncmp(cep->name, "exclude-", 8))
-			extban = findmod_by_bantype_raw(cep->name+8, strlen(cep->name+8));
+			extban = findmod_by_bantype_raw(cep->name + 8, strlen(cep->name + 8));
 		else
 			extban = findmod_by_bantype_raw(cep->name, strlen(cep->name));
 		if (extban && (extban->options & EXTBOPT_TKL) && (extban->is_banned_events & BANCHK_TKL))
@@ -300,7 +306,7 @@ int test_match_block(ConfigFile *conf, ConfigEntry *ce, int *errors_out)
 		if (!test_match_item(conf, cep, &errors) && cep->value)
 		{
 			config_error_unknown(cep->file->filename, cep->line_number,
-				ce->name, cep->name);
+			                     ce->name, cep->name);
 			errors++;
 			continue;
 		}
@@ -310,7 +316,7 @@ int test_match_block(ConfigFile *conf, ConfigEntry *ce, int *errors_out)
 	return errors ? 0 : 1;
 }
 
-#define tmbbw_is_wildcard(x)	(!strcmp(x, "*") || !strcmp(x, "*@*"))
+#define tmbbw_is_wildcard(x) (!strcmp(x, "*") || !strcmp(x, "*@*"))
 int test_match_block_too_broad(ConfigFile *conf, ConfigEntry *ce)
 {
 	ConfigEntry *cep, *cepp;
@@ -348,9 +354,10 @@ int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 	if (!ce->value)
 	{
 		config_error("%s:%i: security-group block needs a name, eg: security-group web-users {",
-			ce->file->filename, ce->line_number);
+		             ce->file->filename, ce->line_number);
 		errors++;
-	} else {
+	} else
+	{
 		if (!strcasecmp(ce->value, "unknown-users"))
 		{
 			config_error("%s:%i: The 'unknown-users' group is a special group that is the "
@@ -374,15 +381,13 @@ int _test_security_group(ConfigFile *conf, ConfigEntry *ce)
 		if (!strcmp(cep->name, "public"))
 		{
 			CheckNull(cep);
-		} else
-		if (!strcmp(cep->name, "priority"))
+		} else if (!strcmp(cep->name, "priority"))
 		{
 			CheckNull(cep);
-		} else
-		if (!test_match_item(conf, cep, &errors))
+		} else if (!test_match_item(conf, cep, &errors))
 		{
 			config_error_unknown(cep->file->filename, cep->line_number,
-				"security-group", cep->name);
+			                     "security-group", cep->name);
 			errors++;
 			continue;
 		}
@@ -421,43 +426,35 @@ int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
 	else if (!strcmp(cep->name, "reputation-score"))
 	{
 		if (*cep->value == '<')
-			s->reputation_score = 0 - atoi(cep->value+1);
+			s->reputation_score = 0 - atoi(cep->value + 1);
 		else
 			s->reputation_score = atoi(cep->value);
-	}
-	else if (!strcmp(cep->name, "connect-time"))
+	} else if (!strcmp(cep->name, "connect-time"))
 	{
 		if (*cep->value == '<')
-			s->connect_time = 0 - config_checkval(cep->value+1, CFG_TIME);
+			s->connect_time = 0 - config_checkval(cep->value + 1, CFG_TIME);
 		else
 			s->connect_time = config_checkval(cep->value, CFG_TIME);
-	}
-	else if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask"))
+	} else if (!strcmp(cep->name, "mask") || !strcmp(cep->name, "include-mask"))
 	{
 		unreal_add_masks(&s->mask, cep);
-	}
-	else if (!strcmp(cep->name, "ip"))
+	} else if (!strcmp(cep->name, "ip"))
 	{
 		unreal_add_names(&s->ip, cep);
-	}
-	else if (!strcmp(cep->name, "server-port"))
+	} else if (!strcmp(cep->name, "server-port"))
 	{
 		unreal_add_names(&s->server_port, cep);
-	}
-	else if (!strcmp(cep->name, "security-group"))
+	} else if (!strcmp(cep->name, "security-group"))
 	{
 		unreal_add_names(&s->security_group, cep);
-	}
-	else if (!strcmp(cep->name, "rule"))
+	} else if (!strcmp(cep->name, "rule"))
 	{
 		safe_strdup(s->prettyrule, cep->value);
 		s->rule = crule_parse(s->prettyrule);
-	}
-	else if (!strcmp(cep->name, "destination"))
+	} else if (!strcmp(cep->name, "destination"))
 	{
 		unreal_add_names(&s->destination, cep);
-	}
-	else if (!strcmp(cep->name, "exclude-webirc"))
+	} else if (!strcmp(cep->name, "exclude-webirc"))
 		s->exclude_webirc = config_checkval(cep->value, CFG_YESNO);
 	else if (!strcmp(cep->name, "exclude-websocket"))
 		s->exclude_websocket = config_checkval(cep->value, CFG_YESNO);
@@ -468,36 +465,29 @@ int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
 	else if (!strcmp(cep->name, "exclude-reputation-score"))
 	{
 		if (*cep->value == '<')
-			s->exclude_reputation_score = 0 - atoi(cep->value+1);
+			s->exclude_reputation_score = 0 - atoi(cep->value + 1);
 		else
 			s->exclude_reputation_score = atoi(cep->value);
-	}
-	else if (!strcmp(cep->name, "exclude-mask"))
+	} else if (!strcmp(cep->name, "exclude-mask"))
 	{
 		unreal_add_masks(&s->exclude_mask, cep);
-	}
-	else if (!strcmp(cep->name, "exclude-ip"))
+	} else if (!strcmp(cep->name, "exclude-ip"))
 	{
 		unreal_add_names(&s->exclude_ip, cep);
-	}
-	else if (!strcmp(cep->name, "exclude-server-port"))
+	} else if (!strcmp(cep->name, "exclude-server-port"))
 	{
 		unreal_add_names(&s->exclude_server_port, cep);
-	}
-	else if (!strcmp(cep->name, "exclude-security-group"))
+	} else if (!strcmp(cep->name, "exclude-security-group"))
 	{
 		unreal_add_names(&s->exclude_security_group, cep);
-	}
-	else if (!strcmp(cep->name, "exclude-rule"))
+	} else if (!strcmp(cep->name, "exclude-rule"))
 	{
 		safe_strdup(s->exclude_prettyrule, cep->value);
 		s->exclude_rule = crule_parse(s->exclude_prettyrule);
-	}
-	else if (!strcmp(cep->name, "exclude-destination"))
+	} else if (!strcmp(cep->name, "exclude-destination"))
 	{
 		unreal_add_names(&s->exclude_destination, cep);
-	}
-	else
+	} else
 	{
 		/* Let's see if an extended server ban exists for this item... this needs to be LAST! */
 		Extban *extban;
@@ -511,7 +501,8 @@ int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
 				unreal_add_name_values(&s->exclude_extended, name, cep);
 			else
 				return 0; /* Unhandled */
-		} else {
+		} else
+		{
 			/* Extended (inclusive) */
 			if (findmod_by_bantype_raw(name, strlen(name)))
 				unreal_add_name_values(&s->extended, name, cep);
@@ -526,7 +517,8 @@ int conf_match_item(ConfigFile *conf, ConfigEntry *cep, SecurityGroup **block)
 		ConfigEntry *cep2;
 		for (cep2 = cep->items; cep2; cep2 = cep2->next)
 			add_nvplist(&s->printable_list, s->printable_list_counter++, cep->name, cep2->name);
-	} else {
+	} else
+	{
 		add_nvplist(&s->printable_list, s->printable_list_counter++, cep->name, cep->value);
 	}
 
@@ -573,11 +565,11 @@ int _conf_security_group(ConfigFile *conf, ConfigEntry *ce)
 			s->priority = atoi(cep->value);
 			DelListItem(s, securitygroups);
 			AddListItemPrio(s, securitygroups, s->priority);
-		} else
-		if (!strcmp(cep->name, "public"))
+		} else if (!strcmp(cep->name, "public"))
 		{
 			s->public = config_checkval(cep->value, CFG_YESNO);
-		} else {
+		} else
+		{
 			conf_match_item(conf, cep, &s);
 		}
 	}
@@ -725,20 +717,25 @@ void set_security_group_defaults(void)
 		free_security_group(s);
 	}
 	securitygroups = NULL;
+	known_users = NULL;
 
 	/* Default group: webirc */
 	s = add_security_group("webirc-users", 50);
 	s->public = 1;
+	s->builtin = 1;
 	s->webirc = 1;
 
 	/* Default group: websocket */
 	s = add_security_group("websocket-users", 51);
 	s->public = 1;
+	s->builtin = 1;
 	s->websocket = 1;
 
 	/* Default group: known-users */
 	s = add_security_group("known-users", 100);
+	known_users = s;
 	s->public = 1;
+	s->builtin = 1;
 	s->identified = 1;
 	s->reputation_score = 25;
 	s->webirc = 0;
@@ -746,6 +743,7 @@ void set_security_group_defaults(void)
 	/* Default group: tls-users */
 	s = add_security_group("tls-users", 300);
 	s->public = 1;
+	s->builtin = 1;
 	s->tls = 1;
 }
 
@@ -796,7 +794,7 @@ int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors)
 		b.banstr = cep->value;
 		b.ban_check_types = BANCHK_TKL;
 		b.what = MODE_ADD;
-		if (!extban->conv_param(&b, extban))
+		if (!*cep->value || !extban->conv_param(&b, extban))
 		{
 			config_error("%s:%i: %s has an invalid value",
 			             cep->file->filename, cep->line_number, cep->name);
@@ -807,6 +805,22 @@ int test_extended_list(Extban *extban, ConfigEntry *cep, int *errors)
 
 	for (cep = cep->items; cep; cep = cep->next)
 	{
+		if (cep->value)
+		{
+			config_error("%s:%i: You cannot use a name-value pair here. Your config has %s %s;. You probably meant to write: %s; %s;",
+			             cep->file->filename, cep->line_number,
+			             cep->name, cep->value,
+			             cep->name, cep->value);
+			(*errors)++;
+			return 0;
+		}
+		if (!*cep->name)
+		{
+			config_error("%s:%i: %s has an invalid value",
+			             cep->file->filename, cep->line_number, cep->parent->name);
+			(*errors)++;
+			return 0;
+		}
 		memset(&b, 0, sizeof(BanContext));
 		b.banstr = cep->name;
 		b.ban_check_types = BANCHK_TKL;
@@ -985,13 +999,16 @@ int user_allowed_by_security_group_name(Client *client, const char *secgroupname
 	if (!strcmp(secgroupname, "unknown-users"))
 	{
 		/* This is simply the inverse of 'known-users' */
-		s = find_security_group("known-users");
-		if (!s)
+		if (!known_users)
 			return 0; /* that's weird!? pretty impossible. */
-		return !user_allowed_by_security_group(client, s);
+		return !user_allowed_by_security_group(client, known_users);
 	}
 
-	/* Find the group and evaluate it */
+	/* Shortcut for "known-users" */
+	if (!strcmp(secgroupname, "known-users"))
+		return user_allowed_by_security_group(client, known_users);
+
+	/* Find the security group and evaluate it */
 	s = find_security_group(secgroupname);
 	if (!s)
 		return 0; /* security group not found: no match */
@@ -1014,7 +1031,7 @@ const char *get_security_groups(Client *client)
 	 * in the linked list, hence the special code here,
 	 * and again later in the for loop to skip it.
 	 */
-	if (user_allowed_by_security_group_name(client, "known-users"))
+	if (known_users && user_allowed_by_security_group(client, known_users))
 		strlcat(buf, "known-users,", sizeof(buf));
 	else
 		strlcat(buf, "unknown-users,", sizeof(buf));
@@ -1030,6 +1047,6 @@ const char *get_security_groups(Client *client)
 	}
 
 	if (*buf)
-		buf[strlen(buf)-1] = '\0';
+		buf[strlen(buf) - 1] = '\0';
 	return buf;
 }

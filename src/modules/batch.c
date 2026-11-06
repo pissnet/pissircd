@@ -22,14 +22,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"batch",
-	"5.0",
-	"Batch CAP", 
-	"UnrealIRCd Team",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "batch",
+    "5.0",
+    "Batch CAP",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Forward declarations */
 CMD_FUNC(cmd_batch);
@@ -57,7 +56,7 @@ MOD_INIT()
 	mtag.clicap_handler = c;
 	MessageTagHandlerAdd(modinfo->handle, &mtag);
 
-	CommandAdd(modinfo->handle, "BATCH", cmd_batch, MAXPARA, CMD_USER|CMD_SERVER);
+	CommandAdd(modinfo->handle, "BATCH", cmd_batch, MAXPARA, CMD_USER | CMD_SERVER);
 	return MOD_SUCCESS;
 }
 
@@ -80,7 +79,24 @@ CMD_FUNC(cmd_batch)
 	Client *target;
 	char buf[512];
 
-	if (MyUser(client) || (parc < 3))
+	if (MyUser(client))
+	{
+		/* No module claimed this client-initiated batch */
+		if (parc >= 2 && parv[1][0] == '+')
+		{
+			if (!valid_batch_reference_tag(parv[1] + 1))
+				sendto_one(client, NULL, ":%s FAIL BATCH INVALID_REFTAG %s :Invalid batch reference tag", me.name, parv[1] + 1);
+			else
+				sendto_one(client, NULL, ":%s FAIL BATCH UNKNOWN_TYPE :Unknown batch type", me.name);
+		}
+		return;
+	}
+	if (parc < 3)
+		return;
+
+	if (parv[2][0] != '+' && parv[2][0] != '-')
+		return;
+	if (!valid_batch_reference_tag(parv[2] + 1))
 		return;
 
 	target = find_client(parv[1], NULL);
@@ -99,7 +115,8 @@ CMD_FUNC(cmd_batch)
 		parv[1] = "BATCH";
 		concat_params(buf, sizeof(buf), parc, parv);
 		sendto_prefix_one(target, client, recv_mtags, ":%s %s", client->name, buf);
-	} else {
+	} else
+	{
 		/* Relay the batch message to the server */
 		concat_params(buf, sizeof(buf), parc, parv);
 		sendto_prefix_one(target, client, recv_mtags, ":%s BATCH %s", client->name, buf);
@@ -109,11 +126,16 @@ CMD_FUNC(cmd_batch)
 /** This function verifies if the client sending
  * 'batch' is permitted to do so and uses a permitted
  * syntax.
- * We simply allow batch ONLY from servers and with any syntax.
+ * We allow batch from servers (with any syntax) and from
+ * local users (so modules handling client-initiated batches,
+ * like draft/multiline, can see the tag on recv_mtags).
  */
 int batch_mtag_is_ok(Client *client, const char *name, const char *value)
 {
 	if (IsServer(client))
+		return 1;
+
+	if (MyUser(client) && !BadPtr(value) && valid_batch_reference_tag(value))
 		return 1;
 
 	return 0;

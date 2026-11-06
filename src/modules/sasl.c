@@ -22,14 +22,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"sasl",
-	"5.2.1",
-	"SASL", 
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "sasl",
+    "5.2.1",
+    "SASL",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Forward declarations */
 void saslmechlist_free(ModData *m);
@@ -38,12 +37,13 @@ void saslmechlist_unserialize(const char *str, ModData *m);
 const char *sasl_capability_parameter(Client *client);
 int sasl_server_synced(Client *client);
 int sasl_account_login(Client *client, MessageTag *mtags);
+int sasl_is_handshake_finished(Client *client);
 EVENT(sasl_timeout);
 
 /* Macros */
-#define MSG_AUTHENTICATE "AUTHENTICATE"
-#define MSG_SASL "SASL"
-#define AGENT_SID(agent_p)	(agent_p->user != NULL ? agent_p->user->server : agent_p->name)
+#define MSG_AUTHENTICATE   "AUTHENTICATE"
+#define MSG_SASL           "SASL"
+#define AGENT_SID(agent_p) (agent_p->user != NULL ? agent_p->user->server : agent_p->name)
 
 /* Variables */
 long CAP_SASL = 0L;
@@ -73,17 +73,16 @@ int sasl_account_login(Client *client, MessageTag *mtags)
 	if (IsLoggedIn(client))
 	{
 		sendnumeric(client, RPL_LOGGEDIN,
-			BadPtr(client->name) ? "*" : client->name,
-			BadPtr(client->user->username) ? "*" : client->user->username,
-			BadPtr(client->user->realhost) ? "*" : client->user->realhost,
-			client->user->account, client->user->account);
-	}
-	else
+		            BadPtr(client->name) ? "*" : client->name,
+		            BadPtr(client->user->username) ? "*" : client->user->username,
+		            BadPtr(client->user->realhost) ? "*" : client->user->realhost,
+		            client->user->account, client->user->account);
+	} else
 	{
 		sendnumeric(client, RPL_LOGGEDOUT,
-			BadPtr(client->name) ? "*" : client->name,
-			BadPtr(client->user->username) ? "*" : client->user->username,
-			BadPtr(client->user->realhost) ? "*" : client->user->realhost);
+		            BadPtr(client->name) ? "*" : client->name,
+		            BadPtr(client->user->username) ? "*" : client->user->username,
+		            BadPtr(client->user->realhost) ? "*" : client->user->realhost);
 	}
 	return 0;
 }
@@ -92,7 +91,7 @@ void _sasl_succeeded(Client *client)
 {
 	client->local->sasl_sent_time = 0;
 	client->local->sasl_complete++;
-	RunHookReturn(HOOKTYPE_SASL_RESULT, !=0, client, 1);
+	RunHookReturn(HOOKTYPE_SASL_RESULT, != 0, client, 1);
 	sendnumeric(client, RPL_SASLSUCCESS);
 }
 
@@ -100,7 +99,7 @@ void _sasl_failed(Client *client)
 {
 	client->local->sasl_sent_time = 0;
 	add_fake_lag(client, 7000); /* bump fakelag due to failed authentication attempt */
-	RunHookReturn(HOOKTYPE_SASL_RESULT, !=0, client, 0);
+	RunHookReturn(HOOKTYPE_SASL_RESULT, != 0, client, 0);
 	sendnumeric(client, ERR_SASLFAIL);
 }
 
@@ -184,18 +183,22 @@ CMD_FUNC(cmd_sasl)
 
 		if (*parv[3] == 'C')
 		{
-			RunHookReturn(HOOKTYPE_SASL_CONTINUATION, !=0, target, parv[4]);
+			RunHookReturn(HOOKTYPE_SASL_CONTINUATION, != 0, target, parv[4]);
 			sendto_one(target, NULL, "AUTHENTICATE %s", parv[4]);
-		}
-		else if (*parv[3] == 'D')
+		} else if (*parv[3] == 'D')
 		{
 			*target->local->sasl_agent = '\0';
 			if (*parv[4] == 'F')
 				sasl_failed(target);
 			else if (*parv[4] == 'S')
 				sasl_succeeded(target);
-		}
-		else if (*parv[3] == 'M')
+			/* Now that SASL response came in, check if user is unregistered and handshake finished now */
+			if (!IsUser(target) && is_handshake_finished(target))
+			{
+				register_user(target);
+				/* User MAY be killed now, that's okay, we don't deal with 'target' below */
+			}
+		} else if (*parv[3] == 'M')
 			sendnumeric(target, RPL_SASLMECHS, parv[4]);
 
 		return;
@@ -203,7 +206,7 @@ CMD_FUNC(cmd_sasl)
 
 	/* not for us; propagate. */
 	sendto_server(client, 0, 0, NULL, ":%s SASL %s %s %c %s %s",
-	    client->name, parv[1], parv[2], *parv[3], parv[4], parc > 5 ? parv[5] : "");
+	              client->name, parv[1], parv[2], *parv[3], parv[4], parc > 5 ? parv[5] : "");
 }
 
 /*
@@ -249,16 +252,17 @@ CMD_FUNC(cmd_authenticate)
 		{
 			/* We are the SASL server (some module handling auth) */
 			RunHook(HOOKTYPE_SASL_AUTHENTICATE, client, 1, parv[1]);
-		} else {
+		} else
+		{
 			sendto_server(NULL, 0, 0, NULL, ":%s SASL %s %s H %s %s",
-			    me.name, SASL_SERVER, client->id, addr, addr);
+			              me.name, SASL_SERVER, client->id, addr, addr);
 
 			if (certfp)
 				sendto_server(NULL, 0, 0, NULL, ":%s SASL %s %s S %s %s",
-				    me.name, SASL_SERVER, client->id, parv[1], certfp);
+				              me.name, SASL_SERVER, client->id, parv[1], certfp);
 			else
 				sendto_server(NULL, 0, 0, NULL, ":%s SASL %s %s S %s",
-				    me.name, SASL_SERVER, client->id, parv[1]);
+				              me.name, SASL_SERVER, client->id, parv[1]);
 		}
 	} else
 	{
@@ -266,9 +270,10 @@ CMD_FUNC(cmd_authenticate)
 		{
 			/* We are the SASL server (some module handling auth) */
 			RunHook(HOOKTYPE_SASL_AUTHENTICATE, client, 0, parv[1]);
-		} else {
+		} else
+		{
 			sendto_server(NULL, 0, 0, NULL, ":%s SASL %s %s C %s",
-			    me.name, AGENT_SID(agent_p), client->id, parv[1]);
+			              me.name, AGENT_SID(agent_p), client->id, parv[1]);
 		}
 	}
 }
@@ -290,7 +295,7 @@ static int abort_sasl(Client *client)
 		if (agent_p != NULL)
 		{
 			sendto_server(NULL, 0, 0, NULL, ":%s SASL %s %s D A",
-			    me.name, AGENT_SID(agent_p), client->id);
+			              me.name, AGENT_SID(agent_p), client->id);
 			return 0;
 		}
 	}
@@ -398,14 +403,15 @@ MOD_INIT()
 
 	MARK_AS_OFFICIAL_MODULE(modinfo);
 
-	CommandAdd(modinfo->handle, MSG_SASL, cmd_sasl, MAXPARA, CMD_USER|CMD_SERVER);
-	CommandAdd(modinfo->handle, MSG_AUTHENTICATE, cmd_authenticate, MAXPARA, CMD_UNREGISTERED|CMD_USER);
+	CommandAdd(modinfo->handle, MSG_SASL, cmd_sasl, MAXPARA, CMD_USER | CMD_SERVER);
+	CommandAdd(modinfo->handle, MSG_AUTHENTICATE, cmd_authenticate, MAXPARA, CMD_UNREGISTERED | CMD_USER);
 
 	HookAdd(modinfo->handle, HOOKTYPE_LOCAL_CONNECT, 0, sasl_connect);
 	HookAdd(modinfo->handle, HOOKTYPE_LOCAL_QUIT, 0, sasl_quit);
 	HookAdd(modinfo->handle, HOOKTYPE_SERVER_QUIT, 0, sasl_server_quit);
 	HookAdd(modinfo->handle, HOOKTYPE_SERVER_SYNCED, 0, sasl_server_synced);
 	HookAdd(modinfo->handle, HOOKTYPE_ACCOUNT_LOGIN, 0, sasl_account_login);
+	HookAdd(modinfo->handle, HOOKTYPE_IS_HANDSHAKE_FINISHED, 0, sasl_is_handshake_finished);
 
 	memset(&cap, 0, sizeof(cap));
 	cap.name = "sasl";
@@ -471,6 +477,14 @@ const char *sasl_capability_parameter(Client *client)
 	}
 
 	return NULL;
+}
+
+int sasl_is_handshake_finished(Client *client)
+{
+	if (client->local->sasl_sent_time && !client->local->sasl_complete)
+		return 0; /* We are in the middle of SASL */
+
+	return 1;
 }
 
 EVENT(sasl_timeout)

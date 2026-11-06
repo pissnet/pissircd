@@ -22,14 +22,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"echo-message",
-	"5.0",
-	"echo-message CAP",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "echo-message",
+    "5.0",
+    "echo-message CAP",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 /* Variables */
 long CAP_ECHO_MESSAGE = 0L;
@@ -66,20 +65,23 @@ MOD_UNLOAD()
 
 int em_chanmsg(Client *client, Channel *channel, int sendflags, const char *prefix, const char *target, MessageTag *mtags, const char *text, SendType sendtype)
 {
+	if (echo_message_inhibit)
+		return 0;
 	if (MyUser(client) && HasCapabilityFast(client, CAP_ECHO_MESSAGE))
 	{
 		if (sendtype != SEND_TYPE_TAGMSG)
 		{
 			sendto_prefix_one(client, client, mtags, ":%s %s %s :%s",
-				client->name,
-				sendtype_to_cmd(sendtype),
-				target,
-				text);
-		} else {
+			                  client->name,
+			                  sendtype_to_cmd(sendtype),
+			                  target,
+			                  text);
+		} else
+		{
 			sendto_prefix_one(client, client, mtags, ":%s %s %s",
-				client->name,
-				sendtype_to_cmd(sendtype),
-				target);
+			                  client->name,
+			                  sendtype_to_cmd(sendtype),
+			                  target);
 		}
 	}
 	return 0;
@@ -87,20 +89,23 @@ int em_chanmsg(Client *client, Channel *channel, int sendflags, const char *pref
 
 int em_usermsg(Client *client, Client *to, MessageTag *mtags, const char *text, SendType sendtype)
 {
+	if (echo_message_inhibit)
+		return 0;
 	if (MyUser(client) && HasCapabilityFast(client, CAP_ECHO_MESSAGE))
 	{
 		if (sendtype != SEND_TYPE_TAGMSG)
 		{
 			sendto_prefix_one(client, client, mtags, ":%s %s %s :%s",
-				client->name,
-				sendtype_to_cmd(sendtype),
-				to->name,
-				text);
-		} else {
+			                  client->name,
+			                  sendtype_to_cmd(sendtype),
+			                  to->name,
+			                  text);
+		} else
+		{
 			sendto_prefix_one(client, client, mtags, ":%s %s %s",
-				client->name,
-				sendtype_to_cmd(sendtype),
-				to->name);
+			                  client->name,
+			                  sendtype_to_cmd(sendtype),
+			                  to->name);
 		}
 	}
 	return 0;

@@ -23,26 +23,26 @@
 
 typedef struct AuthTypeList AuthTypeList;
 struct AuthTypeList {
-	char			*name;
-	AuthenticationType	type;
+	char *name;
+	AuthenticationType type;
 };
 
 /** The list of authentication types that we support. */
 AuthTypeList MODVAR AuthTypeLists[] = {
-	{"plain",           AUTHTYPE_PLAINTEXT},
-	{"plaintext",       AUTHTYPE_PLAINTEXT},
-	{"crypt",           AUTHTYPE_UNIXCRYPT},
-	{"unixcrypt",       AUTHTYPE_UNIXCRYPT},
-	{"bcrypt",          AUTHTYPE_BCRYPT},
-	{"cert",            AUTHTYPE_TLS_CLIENTCERT},
-	{"sslclientcert",   AUTHTYPE_TLS_CLIENTCERT},
-	{"tlsclientcert",   AUTHTYPE_TLS_CLIENTCERT},
-	{"certfp",          AUTHTYPE_TLS_CLIENTCERTFP},
-	{"sslclientcertfp", AUTHTYPE_TLS_CLIENTCERTFP},
-	{"tlsclientcertfp", AUTHTYPE_TLS_CLIENTCERTFP},
-	{"spkifp",          AUTHTYPE_SPKIFP},
-	{"argon2",          AUTHTYPE_ARGON2},
-	{NULL,              0}
+    {"plain", AUTHTYPE_PLAINTEXT},
+    {"plaintext", AUTHTYPE_PLAINTEXT},
+    {"crypt", AUTHTYPE_UNIXCRYPT},
+    {"unixcrypt", AUTHTYPE_UNIXCRYPT},
+    {"bcrypt", AUTHTYPE_BCRYPT},
+    {"cert", AUTHTYPE_TLS_CLIENTCERT},
+    {"sslclientcert", AUTHTYPE_TLS_CLIENTCERT},
+    {"tlsclientcert", AUTHTYPE_TLS_CLIENTCERT},
+    {"certfp", AUTHTYPE_TLS_CLIENTCERTFP},
+    {"sslclientcertfp", AUTHTYPE_TLS_CLIENTCERTFP},
+    {"tlsclientcertfp", AUTHTYPE_TLS_CLIENTCERTFP},
+    {"spkifp", AUTHTYPE_SPKIFP},
+    {"argon2", AUTHTYPE_ARGON2},
+    {NULL, 0},
 };
 
 /* Forward declarations */
@@ -58,15 +58,15 @@ static int parsepass(const char *str, char **salt, char **hash)
 	/* Syntax: $<salt>$<hash> */
 	if (*str != '$')
 		return 0;
-	p = strchr(str+1, '$');
-	if (!p || (p == str+1) || !p[1])
+	p = strchr(str + 1, '$');
+	if (!p || (p == str + 1) || !p[1])
 		return 0;
 
 	max = p - str;
 	if (max > sizeof(saltbuf))
 		max = sizeof(saltbuf);
-	strlcpy(saltbuf, str+1, max);
-	strlcpy(hashbuf, p+1, sizeof(hashbuf));
+	strlcpy(saltbuf, str + 1, max);
+	strlcpy(hashbuf, p + 1, sizeof(hashbuf));
 	*salt = saltbuf;
 	*hash = hashbuf;
 	return 1;
@@ -116,13 +116,13 @@ int Auth_AutoDetectHashType(const char *hash)
     112 |         if ((*hash != '$') || !strchr(hash+1, '$'))
  */
 #if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstringop-overread"
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wstringop-overread"
 #endif
-	if ((*hash != '$') || !strchr(hash+1, '$'))
+	if ((*hash != '$') || !strchr(hash + 1, '$'))
 		return AUTHTYPE_PLAINTEXT;
 #if defined(__GNUC__)
-#pragma GCC diagnostic pop
+ #pragma GCC diagnostic pop
 #endif
 
 	if (!strncmp(hash, "$2a$", 4) || !strncmp(hash, "$2b$", 4) || !strncmp(hash, "$2y$", 4))
@@ -182,13 +182,13 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 	if (!ce->value)
 	{
 		config_error("%s:%i: authentication module failure: missing parameter",
-			ce->file->filename, ce->line_number);
+		             ce->file->filename, ce->line_number);
 		return -1;
 	}
 	if (ce->items && ce->items->next)
 	{
 		config_error("%s:%i: you may not have multiple authentication methods",
-			ce->file->filename, ce->line_number);
+		             ce->file->filename, ce->line_number);
 		return -1;
 	}
 
@@ -196,8 +196,8 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 	if (type == -1)
 	{
 		config_error("%s:%i: authentication module failure: %s is not an implemented/enabled authentication method",
-			ce->file->filename, ce->line_number,
-			ce->items->name);
+		             ce->file->filename, ce->line_number,
+		             ce->items->name);
 		return -1;
 	}
 
@@ -208,13 +208,13 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 			{
 				const char *hashedpass = mkpass_argon2(ce->value);
 				unreal_log(ULOG_ADVICE, "config", "BEST_PRACTICES_HASHED_PASSWORDS", NULL,
-					   "$file:$line_number: $config_item: Advice: it is not recommended to use plaintext passwords in the config file. "
-					    "You can replace this password with the following password hash:\n"
-					    "password \"$hashed_password\";",
-					    log_data_string("config_item", config_item_name(ce)),
-					    log_data_string("file", ce->file->filename),
-					    log_data_integer("line_number", ce->line_number),
-					    log_data_string("hashed_password", hashedpass));
+				           "$file:$line_number: $config_item: Advice: it is not recommended to use plaintext passwords in the config file. "
+				           "You can replace this password with the following password hash:\n"
+				           "password \"$hashed_password\";",
+				           log_data_string("config_item", config_item_name(ce)),
+				           log_data_string("file", ce->file->filename),
+				           log_data_integer("line_number", ce->line_number),
+				           log_data_string("hashed_password", hashedpass));
 				bestpractices.hashed_passwords_hits++;
 			}
 			break;
@@ -223,7 +223,7 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 			if (strlen(ce->value) < 2)
 			{
 				config_error("%s:%i: authentication module failure: AUTHTYPE_UNIXCRYPT: no salt (crypt strings will always be >2 in length)",
-					ce->file->filename, ce->line_number);
+				             ce->file->filename, ce->line_number);
 				return -1;
 			}
 			break;
@@ -232,7 +232,7 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 			if (!(x509_f = fopen(ce->value, "r")))
 			{
 				config_error("%s:%i: authentication module failure: AUTHTYPE_TLS_CLIENTCERT: error opening file %s: %s",
-					ce->file->filename, ce->line_number, ce->value, strerror(errno));
+				             ce->file->filename, ce->line_number, ce->value, strerror(errno));
 				return -1;
 			}
 			x509_filecert = PEM_read_X509(x509_f, NULL, NULL, NULL);
@@ -240,12 +240,12 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 			if (!x509_filecert)
 			{
 				config_error("%s:%i: authentication module failure: AUTHTYPE_TLS_CLIENTCERT: PEM_read_X509 errored in file %s (format error?)",
-					ce->file->filename, ce->line_number, ce->value);
+				             ce->file->filename, ce->line_number, ce->value);
 				return -1;
 			}
 			X509_free(x509_filecert);
 			break;
-		default: ;
+		default:;
 	}
 
 	/* Unix crypt is a bit more complicated: most types are outright 'bad',
@@ -263,13 +263,13 @@ int Auth_CheckError(ConfigEntry *ce, int warn_on_plaintext)
 		config_warn("%s:%i: Using simple crypt for authentication is not recommended. "
 		            "Consider using the more secure auth-type 'argon2' instead. "
 		            "See https://www.unrealircd.org/docs/Authentication_types for the complete list.",
-                            ce->file->filename, ce->line_number);
+		            ce->file->filename, ce->line_number);
 		/* do not return, not an error. */
 	}
 	if ((type == AUTHTYPE_PLAINTEXT) && (strlen(ce->value) > PASSWDLEN))
 	{
 		config_error("%s:%i: passwords length may not exceed %d",
-			ce->file->filename, ce->line_number, PASSWDLEN);
+		             ce->file->filename, ce->line_number, PASSWDLEN);
 		return -1;
 	}
 	return 1;
@@ -310,8 +310,8 @@ void Auth_FreeAuthConfig(AuthConfig *as)
  * and REAL salt length (after b64_encode, including terminating nul),
  * used for reserving memory.
  */
-#define RAWSALTLEN		6
-#define REALSALTLEN		12
+#define RAWSALTLEN  6
+#define REALSALTLEN 12
 
 static int authcheck_argon2(Client *client, AuthConfig *as, const char *para)
 {
@@ -411,7 +411,7 @@ static int authcheck_tls_clientcert_fingerprint(Client *client, AuthConfig *as, 
 	/* Check colon version, so that we keep in line with
 	 * previous versions, based on Nath's patch -dboyz
 	 */
-	for (i=0, k=0; i<strlen(fp); i++)
+	for (i = 0, k = 0; i < strlen(fp); i++)
 	{
 		if (i != 0 && i % 2 == 0)
 			hexcolon[k++] = ':';
@@ -474,8 +474,8 @@ int Auth_Check(Client *client, AuthConfig *as, const char *para)
 				if (!strcmp(as->data, "changemeplease") && !strcmp(para, as->data))
 				{
 					unreal_log(ULOG_INFO, "auth", "AUTH_REJECT_DEFAULT_PASSWORD", client,
-						   "Rejecting default password 'changemeplease'. "
-						   "Please change the password in the configuration file.");
+					           "Rejecting default password 'changemeplease'. "
+					           "Please change the password in the configuration file.");
 					return 0;
 				}
 				/* plain text compare */
@@ -526,11 +526,11 @@ int Auth_Check(Client *client, AuthConfig *as, const char *para)
 	return 0;
 }
 
-#define UNREALIRCD_ARGON2_DEFAULT_TIME_COST             2
-#define UNREALIRCD_ARGON2_DEFAULT_MEMORY_COST           6144
-#define UNREALIRCD_ARGON2_DEFAULT_PARALLELISM_COST      2
-#define UNREALIRCD_ARGON2_DEFAULT_HASH_LENGTH           32
-#define UNREALIRCD_ARGON2_DEFAULT_SALT_LENGTH           (128/8)
+#define UNREALIRCD_ARGON2_DEFAULT_TIME_COST        2
+#define UNREALIRCD_ARGON2_DEFAULT_MEMORY_COST      6144
+#define UNREALIRCD_ARGON2_DEFAULT_PARALLELISM_COST 2
+#define UNREALIRCD_ARGON2_DEFAULT_HASH_LENGTH      32
+#define UNREALIRCD_ARGON2_DEFAULT_SALT_LENGTH      (128 / 8)
 
 static char *mkpass_argon2(const char *para)
 {
@@ -542,7 +542,7 @@ static char *mkpass_argon2(const char *para)
 		return NULL;
 
 	/* Initialize salt */
-	for (i=0; i < sizeof(salt); i++)
+	for (i = 0; i < sizeof(salt); i++)
 		salt[i] = getrandom8();
 
 	*buf = '\0';
@@ -579,7 +579,7 @@ static char *mkpass_bcrypt(const char *para)
 
 	memset(data, 0, sizeof(data));
 
-	for (i=0; i<sizeof(random_data); i++)
+	for (i = 0; i < sizeof(random_data); i++)
 		random_data[i] = getrandom8();
 
 	saltstr = _crypt_gensalt_blowfish_rn("$2y", 9, random_data, sizeof(random_data), salt, sizeof(salt));
@@ -616,4 +616,62 @@ const char *Auth_Hash(AuthenticationType type, const char *text)
 		default:
 			return NULL;
 	}
+}
+
+/** Check if the argon2 library actually works on this machine.
+ * We run it in a forked child, because a libargon2 that was built for
+ * another CPU dies with SIGILL instead of returning an error.
+ */
+void check_argon2(void)
+{
+#ifndef _WIN32
+	struct rlimit corelim;
+	char buf[128];
+	pid_t p;
+	int status = 0;
+
+	p = fork();
+	if (p < 0)
+		return; /* Can't fork? Then just skip this check */
+
+	if (p == 0)
+	{
+		/* No core dumps */
+		corelim.rlim_cur = corelim.rlim_max = 0;
+		setrlimit(RLIMIT_CORE, &corelim);
+		/* Now the actual call that may crash */
+		argon2id_hash_encoded(1, 8, 1, "x", 1, "12345678", 8, 4, buf, sizeof(buf));
+		_exit(0);
+	}
+
+	while ((waitpid(p, &status, 0) < 0) && (errno == EINTR))
+		;
+
+	if (WIFSIGNALED(status))
+	{
+		fprintf(stderr,
+		        "** ERROR **\n"
+		        "The argon2 library crashed during startup (%s).\n"
+		        "Usually this happens when an UnrealIRCd installation is copied from\n"
+		        "one machine to another. That is not supported. For example, we optimize\n"
+		        "the argon2 library for the CPU of the machine you compile on.\n"
+		        "\n",
+		        strsignal(WTERMSIG(status)));
+		if (file_exists(BUILDDIR))
+		{
+			fprintf(stderr,
+			        "To fix this, compile and install UnrealIRCd on THIS machine:\n"
+			        "cd %s && ./Config && make && make install\n"
+			        "\n",
+			        BUILDDIR);
+		} else
+		{
+			fprintf(stderr,
+			        "To fix this you need to compile and install UnrealIRCd on THIS machine.\n"
+			        "See: https://www.unrealircd.org/docs/Installing_from_source\n"
+			        "\n");
+		}
+		exit(-1);
+	}
+#endif
 }

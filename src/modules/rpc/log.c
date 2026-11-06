@@ -5,13 +5,12 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-= {
-	"rpc/log",
-	"1.0.2",
-	"log.* RPC calls",
-	"UnrealIRCd Team",
-	"unrealircd-6",
+ModuleHeader MOD_HEADER = {
+    "rpc/log",
+    "1.0.2",
+    "log.* RPC calls",
+    "UnrealIRCd Team",
+    "unrealircd-6",
 };
 
 /* Forward declarations */
@@ -212,7 +211,7 @@ void rpc_log_send(Client *client, json_t *request, json_t *params)
 	json_t *result;
 	json_error_t *jerr;
 	const char *msg, *level, *subsystem, *event_id, *log_source, *timestamp;
-	const char *serialized;
+	char *serialized;
 	MessageTag *mtags = NULL;
 
 	REQUIRE_PARAM_STRING("msg", msg);
@@ -221,8 +220,6 @@ void rpc_log_send(Client *client, json_t *request, json_t *params)
 	REQUIRE_PARAM_STRING("event_id", event_id);
 	OPTIONAL_PARAM_STRING("timestamp", timestamp);
 
-	new_message(&me, NULL, &mtags);
-
 	serialized = json_dumps(params, JSON_COMPACT);
 	if (!serialized)
 	{
@@ -230,24 +227,28 @@ void rpc_log_send(Client *client, json_t *request, json_t *params)
 		           "Received malformed JSON in RPC log message (log.send) from $client.name");
 		return;
 	}
-	
-	MessageTag *json_mtag = safe_alloc(sizeof(MessageTag)); 
+
+	new_message(&me, NULL, &mtags);
+
+	MessageTag *json_mtag = safe_alloc(sizeof(MessageTag));
 	safe_strdup(json_mtag->name, "unrealircd.org/json-log");
 	safe_strdup(json_mtag->value, serialized);
 	AddListItem(json_mtag, mtags);
 
+	safe_free(serialized);
+
 	const char *cmd_params[6] = {
-		me.name,
-		level,
-		subsystem,
-		event_id,
-		msg,
-		NULL
+	    me.name,
+	    level,
+	    subsystem,
+	    event_id,
+	    msg,
+	    NULL,
 	};
 
 	do_cmd(&me, mtags, "SLOG", 5, cmd_params);
 	safe_free_message_tags(mtags);
-	
+
 	/* Simply return success */
 	result = json_boolean(1);
 	rpc_response(client, request, result);

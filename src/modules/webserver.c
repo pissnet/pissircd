@@ -3,17 +3,16 @@
  * (C)Copyright 2016 Bram Matthys and the UnrealIRCd team
  * License: GPLv2 or later
  */
-   
+
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"webserver",
-	"1.0.0",
-	"Webserver",
-	"UnrealIRCd Team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "webserver",
+    "1.0.0",
+    "Webserver",
+    "UnrealIRCd Team",
+    "unrealircd-6",
+};
 
 #if CHAR_MIN < 0
  #error "In UnrealIRCd char should always be unsigned. Check your compiler"
@@ -25,11 +24,21 @@ ModuleHeader MOD_HEADER
 /* The "Server: xyz" in the response */
 #define WEB_SOFTWARE "UnrealIRCd"
 
+/* Limits on incoming HTTP request headers */
+#define WEBSERVER_MAX_HEADERS             64    /* max number of headers */
+#define WEBSERVER_MAX_HEADER_LINE_LENGTH  8192  /* max length of one header line */
+#define WEBSERVER_MAX_HEADER_TOTAL_LENGTH 32768 /* max length of the entire request header */
+
 /* Macros */
-#define WEB(client)		((WebRequest *)moddata_local_client(client, webserver_md).ptr)
-#define WEBSERVER(client)	((client->local && client->local->listener) ? client->local->listener->webserver : NULL)
-#define reset_handshake_timeout(client, delta)  do { client->local->creationtime = TStime() - iConf.handshake_timeout + delta; } while(0)
-#define WSU(client)     ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
+#define WEB(client)       ((WebRequest *)moddata_local_client(client, webserver_md).ptr)
+#define WEBSERVER(client) ((client->local && client->local->listener) ? client->local->listener->webserver : NULL)
+#define WSU(client)       ((WebSocketUser *)moddata_client(client, websocket_md).ptr)
+
+#define reset_handshake_timeout(client, delta) \
+	do \
+	{ \
+		client->local->creationtime = TStime() - iConf.handshake_timeout + delta; \
+	} while (0)
 
 /* Forward declarations */
 int webserver_packet_out(Client *from, Client *to, Client *intended_to, char **msg, int *length);
@@ -170,6 +179,9 @@ int webserver_packet_in(Client *client, const char *readbuf, int *length)
 	if (!WEB(client))
 		return 1; /* "normal" IRC client */
 
+	if (IsDead(client) || IsDeadSocket(client))
+		return -1; /* client is being terminated, don't process any data */
+
 	if (!WEBSERVER(client))
 		return 0; /* handler is gone!? */
 
@@ -233,15 +245,13 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 			if (*p == ' ')
 			{
 				*p = '\0'; /* terminate before "HTTP/1.X" part */
-			}
-			else if (*p == '\r')
+			} else if (*p == '\r')
 			{
 				*p = '\0'; /* eat silently, but don't consider EOL */
-			}
-			else if (*p == '\n')
+			} else if (*p == '\n')
 			{
 				*p = '\0';
-				nextptr = p+1; /* safe, there is data or at least a \0 there */
+				nextptr = p + 1; /* safe, there is data or at least a \0 there */
 				break;
 			}
 		}
@@ -293,8 +303,8 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 		if (*p == ':')
 		{
 			*p++ = '\0';
-			if (*p++ != ' ')
-				break; /* missing mandatory space after ':' */
+			/* Optional whitespace before the value (RFC 9112) */
+			skip_whitespace(&p);
 
 			v = p; /* SET VALUE */
 			nextptr = NULL; /* set to "we are done" in case next for loop fails */
@@ -303,14 +313,14 @@ int webserver_handshake_helper(char *buffer, int len, char **key, char **value, 
 				if (*p == '\r')
 				{
 					*p = '\0'; /* eat silently, but don't consider EOL */
-				}
-				else if (*p == '\n')
+				} else if (*p == '\n')
 				{
 					*p = '\0';
-					nextptr = p+1; /* safe, there is data or at least a \0 there */
+					nextptr = p + 1; /* safe, there is data or at least a \0 there */
 					break;
 				}
 			}
+			strip_trailing_whitespace(v);
 			/* A key-value pair was succesfully parsed, return it */
 			*key = k;
 			*value = v;
@@ -338,15 +348,14 @@ char *find_end_of_request(char *header, int totalsize, int *remaining_bytes)
 		if (nextframe1 < nextframe2)
 		{
 			nextframe = nextframe1 + 4;
-		} else {
+		} else
+		{
 			nextframe = nextframe2 + 2;
 		}
-	} else
-	if (nextframe1)
+	} else if (nextframe1)
 	{
 		nextframe = nextframe1 + 4;
-	} else
-	if (nextframe2)
+	} else if (nextframe2)
 	{
 		nextframe = nextframe2 + 2;
 	}
@@ -370,13 +379,22 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 	int lastloc_len = 0;
 	int totalsize;
 
+	/* Very early: check maximum request header size */
+	if (WEB(client)->header_bytes > WEBSERVER_MAX_HEADER_TOTAL_LENGTH - *length)
+	{
+		webserver_send_response(client, 431, "Request header too large");
+		return -1; /* dead */
+	}
+	WEB(client)->header_bytes += *length;
+
 	totalsize = WEB(client)->lefttoparselen + *length;
-	netbuf = safe_alloc(totalsize+1);
+	netbuf = safe_alloc(totalsize + 1);
 	if (WEB(client)->lefttoparse)
 	{
 		memcpy(netbuf, WEB(client)->lefttoparse, WEB(client)->lefttoparselen);
 		memcpy(netbuf + WEB(client)->lefttoparselen, readbuf, *length);
-	} else {
+	} else
+	{
 		memcpy(netbuf, readbuf, *length);
 	}
 	safe_free(WEB(client)->lefttoparse);
@@ -397,16 +415,31 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 			safe_strdup(WEB(client)->uri, value);
 		} else
 		{
+			/* A header line is too long or there are too many headers */
+			if ((WEB(client)->num_headers >= WEBSERVER_MAX_HEADERS) ||
+			    (strlen(key) + strlen(value) > WEBSERVER_MAX_HEADER_LINE_LENGTH))
+			{
+				webserver_send_response(client, 431, "Request header too large");
+				safe_free(netbuf);
+				return -1; /* dead */
+			}
 			if (!strcasecmp(key, "Content-Length"))
 			{
+				/* Only digits, and only one Content-Length header (RFC 9110 section 8.6) */
+				if (!str_is_all_digits(value) || (strlen(value) > 18) || (WEB(client)->content_length >= 0))
+				{
+					webserver_send_response(client, 400, "Invalid Content-Length");
+					safe_free(netbuf);
+					return -1; /* dead */
+				}
 				WEB(client)->content_length = atoll(value);
-			} else
-			if (!strcasecmp(key, "Transfer-Encoding"))
+			} else if (!strcasecmp(key, "Transfer-Encoding"))
 			{
 				if (!strcasecmp(value, "chunked"))
 					WEB(client)->transfer_encoding = TRANSFER_ENCODING_CHUNKED;
 			}
 			add_nvplist(&WEB(client)->headers, WEB(client)->num_headers, key, value);
+			WEB(client)->num_headers++;
 		}
 	}
 
@@ -437,7 +470,7 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 			safe_free(netbuf);
 			return n; /* byebye */
 		}
-		
+
 		/* There could be data directly after the request header (eg for
 		 * a POST or PUT), check for it here so it isn't lost.
 		 */
@@ -454,6 +487,13 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 
 	if (lastloc && lastloc_len)
 	{
+		/* An unterminated header line that exceeds size */
+		if (lastloc_len > WEBSERVER_MAX_HEADER_LINE_LENGTH)
+		{
+			webserver_send_response(client, 431, "Request header too large");
+			safe_free(netbuf);
+			return -1; /* dead */
+		}
 		/* Last line was cut somewhere, save it for next round. */
 		WEB(client)->lefttoparselen = lastloc_len;
 		WEB(client)->lefttoparse = safe_alloc(lastloc_len);
@@ -461,6 +501,36 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 	}
 	safe_free(netbuf);
 	return 0; /* don't let UnrealIRCd process this */
+}
+
+/** Returns the HTTP status code text, eg "Not Found" for 404 */
+static const char *webserver_status_code_text(int status)
+{
+	switch (status)
+	{
+		case 200:
+			return "OK";
+		case 201:
+			return "Created";
+		case 400:
+			return "Bad Request";
+		case 401:
+			return "Unauthorized";
+		case 403:
+			return "Forbidden";
+		case 404:
+			return "Not Found";
+		case 416:
+			return "Range Not Satisfiable";
+		case 431:
+			return "Request Header Fields Too Large";
+		case 500:
+			return "Internal Server Error";
+		case 501:
+			return "Not Implemented";
+		default:
+			return "???";
+	}
 }
 
 /** Send a HTTP(S) response.
@@ -472,28 +542,10 @@ int webserver_handle_request_header(Client *client, const char *readbuf, int *le
 void _webserver_send_response(Client *client, int status, char *msg)
 {
 	char buf[512];
-	char *statusmsg = "???";
-
-	if (status == 200)
-		statusmsg = "OK";
-	else if (status == 201)
-		statusmsg = "Created";
-	else if (status == 500)
-		statusmsg = "Internal Server Error";
-	else if (status == 400)
-		statusmsg = "Bad Request";
-	else if (status == 401)
-		statusmsg = "Unauthorized";
-	else if (status == 403)
-		statusmsg = "Forbidden";
-	else if (status == 404)
-		statusmsg = "Not Found";
-	else if (status == 416)
-		statusmsg = "Range Not Satisfiable";
 
 	snprintf(buf, sizeof(buf),
-		"HTTP/1.1 %d %s\r\nServer: %s\r\nConnection: close\r\n\r\n",
-		status, statusmsg, WEB_SOFTWARE);
+	         "HTTP/1.1 %d %s\r\nServer: %s\r\nConnection: close\r\n\r\n",
+	         status, webserver_status_code_text(status), WEB_SOFTWARE);
 	if (msg)
 	{
 		strlcat(buf, msg, sizeof(buf));
@@ -513,7 +565,8 @@ void _webserver_close_client(Client *client)
 	{
 		exit_client(client, NULL, "End of request");
 		//dead_socket(client, "");
-	} else {
+	} else
+	{
 		send_queued(client);
 		reset_handshake_timeout(client, WEB_CLOSE_TIME);
 	}
@@ -548,11 +601,11 @@ int webserver_handle_body_append_buffer(Client *client, const char *buf, int len
 			/* We would overflow */
 			unreal_log(ULOG_WARNING, "webserver", "HTTP_BODY_TOO_LARGE", client,
 			           "[webserver] Client $client: request body too large ($length)",
-			           log_data_integer("length", len+1));
+			           log_data_integer("length", len + 1));
 			dead_socket(client, "");
 			return 0;
 		}
-		WEB(client)->request_buffer = malloc(len+1);
+		WEB(client)->request_buffer = malloc(len + 1);
 	}
 	memcpy(WEB(client)->request_buffer + WEB(client)->request_buffer_size, buf, len);
 	WEB(client)->request_buffer_size += len;
@@ -570,12 +623,19 @@ int webserver_handle_body_append_buffer(Client *client, const char *buf, int len
 int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf, int pktsize)
 {
 	char *buf;
-	long long n;
+	long long n, remaining;
 	char *free_this_buffer = NULL;
 
 	if (WEB(client)->transfer_encoding == TRANSFER_ENCODING_NONE)
 	{
-		if (!webserver_handle_body_append_buffer(client, readbuf, pktsize))
+		if (WEB(client)->content_length >= 0)
+		{
+			/* Don't read beyond Content-Length, anything after it is ignored */
+			remaining = WEB(client)->content_length - WEB(client)->request_buffer_size;
+			if (pktsize > remaining)
+				pktsize = remaining;
+		}
+		if ((pktsize > 0) && !webserver_handle_body_append_buffer(client, readbuf, pktsize))
 			return 0;
 
 		if ((WEB(client)->content_length >= 0) &&
@@ -594,10 +654,11 @@ int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf,
 		n = WEB(client)->lefttoparselen + pktsize;
 		free_this_buffer = buf = safe_alloc(n);
 		memcpy(buf, WEB(client)->lefttoparse, WEB(client)->lefttoparselen);
-		memcpy(buf+WEB(client)->lefttoparselen, readbuf, pktsize);
+		memcpy(buf + WEB(client)->lefttoparselen, readbuf, pktsize);
 		safe_free(WEB(client)->lefttoparse);
 		WEB(client)->lefttoparselen = 0;
-	} else {
+	} else
+	{
 		n = pktsize;
 		free_this_buffer = buf = safe_alloc(n);
 		memcpy(buf, readbuf, n);
@@ -631,8 +692,7 @@ int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf,
 			{
 				buf += 2;
 				n -= 2;
-			} else
-			if ((n >= 1) && !strncmp(buf, "\n", 1))
+			} else if ((n >= 1) && !strncmp(buf, "\n", 1))
 			{
 				buf++;
 				n--;
@@ -642,7 +702,7 @@ int _webserver_handle_body(Client *client, WebRequest *web, const char *readbuf,
 			 * this is or example '7f' + newline.
 			 * So first, check if we have a newline at all.
 			 */
-			for (i=0; i < n; i++)
+			for (i = 0; i < n; i++)
 			{
 				if (buf[i] == '\n')
 				{
@@ -734,8 +794,7 @@ void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded
 				 *    may also cut off the optional local port,
 				 *    but that is fine: we don't use it.
 				 */
-			} else
-			if ((x = strchr(value, ':')))
+			} else if ((x = strchr(value, ':')))
 			{
 				/* For non-IPv6 ip:port, cut off at the ':',
 				 * so we only have IP.
@@ -743,8 +802,7 @@ void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded
 				*x = '\0';
 			}
 			strlcpy(forwarded->ip, value, sizeof(forwarded->ip));
-		} else
-		if (!strcasecmp(name, "proto"))
+		} else if (!strcasecmp(name, "proto"))
 		{
 			if (!strcasecmp(value, "https"))
 			{
@@ -768,13 +826,26 @@ void do_parse_forwarded_header(const char *input, HTTPForwardedHeader *forwarded
 void do_parse_x_forwarded_for_header(const char *input, HTTPForwardedHeader *forwarded)
 {
 	char *buf = NULL;
-	char *name, *value, *p = NULL;
+	char *name, *value, *p = NULL, *x;
 
 	safe_strdup(buf, input);
 
 	for (name = strtoken(&p, buf, ","); name; name = strtoken(&p, NULL, ","))
 	{
 		skip_whitespace(&name);
+		if ((*name == '[') && (x = strchr(name, ']')))
+		{
+			/* IPv6 between brackets, we cut off at the ']' */
+			name++;
+			*x = '\0';
+		} else if ((x = strchr(name, ':')) && !strchr(x + 1, ':'))
+		{
+			/* A string with only one ':', so not IPv6 (which always has more).
+			 * This can only mean an IPv4 address with a port, eg 192.0.2.10:51200.
+			 * Cut off the port part, we only care about the IP.
+			 */
+			*x = '\0';
+		}
 		strlcpy(forwarded->ip, name, sizeof(forwarded->ip));
 	}
 
@@ -783,9 +854,9 @@ void do_parse_x_forwarded_for_header(const char *input, HTTPForwardedHeader *for
 
 void do_parse_x_forwarded_proto_header(const char *value, HTTPForwardedHeader *forwarded)
 {
-	if (!strcmp(value, "https"))
+	if (!strcasecmp(value, "https") || !strcasecmp(value, "wss"))
 		forwarded->secure = 1;
-	else if (!strcmp(value, "http"))
+	else if (!strcasecmp(value, "http") || !strcasecmp(value, "ws"))
 		forwarded->secure = 0;
 }
 
@@ -798,7 +869,8 @@ void webserver_handle_proxy(Client *client, ConfigItem_proxy *proxy)
 	if (WEB(client)->forwarded == NULL)
 	{
 		WEB(client)->forwarded = safe_alloc(sizeof(HTTPForwardedHeader));
-	} else {
+	} else
+	{
 		memset(WEB(client)->forwarded, 0, sizeof(HTTPForwardedHeader));
 	}
 	forwarded = WEB(client)->forwarded;
@@ -810,15 +882,13 @@ void webserver_handle_proxy(Client *client, ConfigItem_proxy *proxy)
 		{
 			if (!strcasecmp(header->name, "Forwarded"))
 				do_parse_forwarded_header(header->value, forwarded);
-		} else
-		if (proxy->type == PROXY_X_FORWARDED)
+		} else if (proxy->type == PROXY_X_FORWARDED)
 		{
 			if (!strcasecmp(header->name, "X-Forwarded-For"))
 				do_parse_x_forwarded_for_header(header->value, forwarded);
 			else if (!strcasecmp(header->name, "X-Forwarded-Proto"))
 				do_parse_x_forwarded_proto_header(header->value, forwarded);
-		} else
-		if (proxy->type == PROXY_CLOUDFLARE)
+		} else if (proxy->type == PROXY_CLOUDFLARE)
 		{
 			/* This is a mix of CF-Connecting-IP and X-Forwarded-Proto */
 			if (!strcasecmp(header->name, "CF-Connecting-IP"))

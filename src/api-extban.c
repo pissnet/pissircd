@@ -42,7 +42,7 @@ Extban *findmod_by_bantype_raw(const char *str, int ban_name_length)
 {
 	Extban *e;
 
-	for (e=extbans; e; e = e->next)
+	for (e = extbans; e; e = e->next)
 	{
 		if ((ban_name_length == 1) && (e->letter == str[0]))
 			return e;
@@ -54,7 +54,7 @@ Extban *findmod_by_bantype_raw(const char *str, int ban_name_length)
 		}
 	}
 
-	 return NULL;
+	return NULL;
 }
 
 Extban *findmod_by_bantype(const char *str, const char **remainder)
@@ -69,10 +69,10 @@ Extban *findmod_by_bantype(const char *str, const char **remainder)
 		return NULL;
 	}
 	if (remainder)
-		*remainder = p+1;
+		*remainder = p + 1;
 
 	ban_name_length = p - str - 1;
-	return findmod_by_bantype_raw(str+1, ban_name_length);
+	return findmod_by_bantype_raw(str + 1, ban_name_length);
 }
 
 /* Check if this is a valid extended ban name */
@@ -125,6 +125,12 @@ static void extban_add_sorted(Extban *n)
 	}
 }
 
+/** Register an extended ban.
+ * @param module	The module registering the extended ban
+ * @param req		The ExtbanInfo request struct (name, callbacks, etc.)
+ * @returns The Extban pointer, or NULL on failure.
+ * @note Call this from MOD_INIT().
+ */
 Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 {
 	Extban *e;
@@ -135,8 +141,8 @@ Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 	{
 		module->errorcode = MODERR_INVALID;
 		unreal_log(ULOG_ERROR, "module", "EXTBANADD_API_ERROR", NULL,
-			   "ExtbanAdd(): name must be specified for ban (new in U6). Module: $module_name",
-			   log_data_string("module_name", module->header->name));
+		           "ExtbanAdd(): name must be specified for ban (new in U6). Module: $module_name",
+		           log_data_string("module_name", module->header->name));
 		return NULL;
 	}
 
@@ -144,9 +150,9 @@ Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 	{
 		module->errorcode = MODERR_INVALID;
 		unreal_log(ULOG_ERROR, "module", "EXTBANADD_API_ERROR", NULL,
-			   "ExtbanAdd(): module must indicate via .is_banned_events on which BANCHK_* "
-			   "events to listen on (new in U6). Module: $module_name",
-			   log_data_string("module_name", module->header->name));
+		           "ExtbanAdd(): module must indicate via .is_banned_events on which BANCHK_* "
+		           "events to listen on (new in U6). Module: $module_name",
+		           log_data_string("module_name", module->header->name));
 		return NULL;
 	}
 
@@ -175,12 +181,12 @@ Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 	{
 		module->errorcode = MODERR_INVALID;
 		unreal_log(ULOG_ERROR, "module", "EXTBANADD_API_ERROR", NULL,
-			   "ExtbanAdd(): conv_param event missing. Module: $module_name",
-			   log_data_string("module_name", module->header->name));
+		           "ExtbanAdd(): conv_param event missing. Module: $module_name",
+		           log_data_string("module_name", module->header->name));
 		return NULL;
 	}
 
-	for (e=extbans; e; e = e->next)
+	for (e = extbans; e; e = e->next)
 	{
 		if (e->letter == req.letter)
 		{
@@ -190,8 +196,7 @@ Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 				e->unloaded = 0;
 				existing = 1;
 				break;
-			} else
-			if ((module->flags == MODFLAG_TESTING) && e->preregistered)
+			} else if ((module->flags == MODFLAG_TESTING) && e->preregistered)
 			{
 				/* We are in MOD_INIT (yeah confusing, isn't it?)
 				 * and the extban already exists and it was preregistered.
@@ -200,8 +205,7 @@ Extban *ExtbanAdd(Module *module, ExtbanInfo req)
 				e->preregistered = 0;
 				existing = 1;
 				break;
-			} else
-			if (module->flags == MODFLAG_NONE)
+			} else if (module->flags == MODFLAG_NONE)
 			{
 				/* Better don't touch it, as we may still fail at this stage
 				 * and if we would set .conv_param etc to this and the new module
@@ -268,7 +272,7 @@ void unload_all_unused_extbans(void)
 {
 	Extban *e, *e_next;
 
-	for (e=extbans; e; e = e_next)
+	for (e = extbans; e; e = e_next)
 	{
 		e_next = e->next;
 		if (e->letter && e->unloaded)
@@ -276,9 +280,13 @@ void unload_all_unused_extbans(void)
 			unload_extban_commit(e);
 		}
 	}
-
 }
 
+/** Delete an extended ban.
+ * @param e	The extended ban to delete
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 void ExtbanDel(Extban *e)
 {
 	/* Always free the module object */
@@ -303,7 +311,15 @@ void ExtbanDel(Extban *e)
 		unload_extban_commit(e);
 }
 
-/** General is_ok for n!u@h stuff that also deals with recursive extbans.
+/** is_ok handler that accepts nick!user@host patterns and stacked extbans.
+ * Use this as your extban's is_ok callback when your extban matches
+ * against nick!user@host masks and you want to allow stacking with
+ * other extbans (e.g. ~yourextban:~account:someone).
+ *
+ * Example usage:
+ * @code
+ * req.is_ok = extban_is_ok_nuh_extban;
+ * @endcode
  */
 int extban_is_ok_nuh_extban(BanContext *b)
 {
@@ -326,17 +342,6 @@ int extban_is_ok_nuh_extban(BanContext *b)
 		if (extban_is_ok_recursion)
 			return 0; /* Rule #1 violation (more than one stacked extban) */
 
-		if ((b->is_ok_check == EXBCHK_PARAM) && RESTRICT_EXTENDEDBANS && !ValidatePermissionsForPath("immune:restrict-extendedbans",b->client,NULL,b->channel,NULL))
-		{
-			/* Test if this specific extban has been disabled.
-			 * (We can be sure RESTRICT_EXTENDEDBANS is not *. Else this extended ban wouldn't be happening at all.)
-			 */
-			if (strchr(RESTRICT_EXTENDEDBANS, b->banstr[1]))
-			{
-				sendnotice(b->client, "Setting/removing of extended bantypes '%s' has been disabled.", RESTRICT_EXTENDEDBANS);
-				return 0; /* Fail */
-			}
-		}
 		extban = findmod_by_bantype(b->banstr, &nextbanstr);
 		if (!extban)
 		{
@@ -366,31 +371,46 @@ int extban_is_ok_nuh_extban(BanContext *b)
 	return 1; /* Either not an extban, or extban has NULL is_ok. Good to go. */
 }
 
-/** Some kind of general conv_param routine,
- * to ensure the parameter is nick!user@host.
- * most of the code is just copied from clean_ban_mask.
+/** conv_param handler that normalizes the parameter as nick!user@host.
+ * For example, "foo" becomes "foo!*@*". Does NOT allow stacking with
+ * other extbans. If you want to support stacking, use
+ * extban_conv_param_nuh_or_extban() instead.
+ *
+ * Example usage:
+ * @code
+ * req.conv_param = extban_conv_param_nuh;
+ * @endcode
  */
 const char *extban_conv_param_nuh(BanContext *b, Extban *extban)
 {
-	char tmpbuf[USERLEN + NICKLEN + HOSTLEN + 32];
-	static char retbuf[USERLEN + NICKLEN + HOSTLEN + 32];
+	char tmpbuf[USERLEN + NICKLEN + HOSTLEN + 3];
+	static char retbuf[USERLEN + NICKLEN + HOSTLEN + 3];
 
 	/* Work on a copy */
 	strlcpy(tmpbuf, b->banstr, sizeof(retbuf));
 	return convert_regular_ban(tmpbuf, retbuf, sizeof(retbuf));
 }
 
-/** conv_param to deal with stacked extbans.
+/** conv_param handler that normalizes nick!user@host and allows stacked extbans.
+ * If the parameter is a plain mask like "foo", it is normalized to "foo!*@*".
+ * If the parameter is another extban like "~account:someone", the inner
+ * extban's conv_param is called and the result is reassembled.
+ * This is the most commonly used conv_param handler.
+ *
+ * Example usage:
+ * @code
+ * req.is_ok = extban_is_ok_nuh_extban;
+ * req.conv_param = extban_conv_param_nuh_or_extban;
+ * @endcode
  */
 const char *extban_conv_param_nuh_or_extban(BanContext *b, Extban *self_extban)
 {
-#if (USERLEN + NICKLEN + HOSTLEN + 32) > 256
- #error "wtf?"
+#if (NICKLEN + USERLEN + HOSTLEN + 32) > MAXBANLEN
+ #error "MAXBANLEN is not sufficient to hold n!u@h plus some extra for extban prefixes. wtf?"
 #endif
-	static char retbuf[256];
-	static char printbuf[256];
+	static char retbuf[MAXBANLEN + 1];
 	char *mask;
-	char tmpbuf[USERLEN + NICKLEN + HOSTLEN + 32];
+	char tmpbuf[MAXBANLEN + 1];
 	const char *ret = NULL;
 	const char *nextbanstr;
 	Extban *extban = NULL;
@@ -405,7 +425,7 @@ const char *extban_conv_param_nuh_or_extban(BanContext *b, Extban *self_extban)
 	 * 2) The second item may never be an action modifier, nor have the
 	 *    EXTBOPT_NOSTACKCHILD letter set (for things like a textban).
 	 */
-	 
+
 	/* Rule #1. Yes the recursion check is also in extban_is_ok_nuh_extban,
 	 * but it's possible to get here without the is_ok() function ever
 	 * being called (think: non-local client). And no, don't delete it
@@ -438,6 +458,26 @@ const char *extban_conv_param_nuh_or_extban(BanContext *b, Extban *self_extban)
 	return ret;
 }
 
+/** Reassemble an extban string by prepending the extban prefix to a parameter.
+ * This is used in custom conv_param handlers for extbans that support stacking.
+ * After calling the inner extban's conv_param to get the cleaned parameter,
+ * call this to reconstruct the full ban string (e.g. "~quiet:someone!*@*").
+ * Automatically uses named or letter form based on server configuration.
+ * @param remainder	The cleaned parameter from the inner conv_param (may be NULL)
+ * @param b		The ban context
+ * @param extban	The inner extban
+ * @param buf		Buffer to store the result
+ * @param buflen	Size of the buffer
+ * @returns The assembled ban string in buf, or NULL if remainder was NULL
+ *
+ * Example usage in a custom conv_param handler (from timedban):
+ * @code
+ * Extban *extban = findmod_by_bantype(mask, &nextbanstr);
+ * newb->banstr = nextbanstr;
+ * ret = extban->conv_param(newb, extban);
+ * ret = prefix_with_extban(ret, newb, extban, retbuf, sizeof(retbuf));
+ * @endcode
+ */
 char *prefix_with_extban(const char *remainder, BanContext *b, Extban *extban, char *buf, size_t buflen)
 {
 	/* Yes, we support this because it makes code at the caller cleaner */

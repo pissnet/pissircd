@@ -23,32 +23,32 @@
 #define UNREALCORE
 #include "unrealircd.h"
 #ifdef _WIN32
-#define RTLD_NOW 0
+ #define RTLD_NOW 0
 #elif defined(HPUX)
-#include <dl.h>
-#define RTLD_NOW BIND_IMMEDIATE
+ #include <dl.h>
+ #define RTLD_NOW BIND_IMMEDIATE
 #else
-#include <dlfcn.h>
+ #include <dlfcn.h>
 #endif
 #ifndef RTLD_NOW
-#define RTLD_NOW RTLD_LAZY
+ #define RTLD_NOW RTLD_LAZY
 #endif
 #include "modversion.h"
 
-Hook	   	*Hooks[MAXHOOKTYPES];
-Hooktype	Hooktypes[MAXCUSTOMHOOKS];
-Callback	*Callbacks[MAXCALLBACKS];	/* Callback objects for modules, used for rehashing etc (can be multiple) */
-Callback	*RCallbacks[MAXCALLBACKS];	/* 'Real' callback function, used for callback function calls */
-MODVAR Module          *Modules = NULL;
-MODVAR Versionflag     *Versionflags = NULL;
+Hook *Hooks[MAXHOOKTYPES];
+Hooktype Hooktypes[MAXCUSTOMHOOKS];
+Callback *Callbacks[MAXCALLBACKS]; /* Callback objects for modules, used for rehashing etc (can be multiple) */
+Callback *RCallbacks[MAXCALLBACKS]; /* 'Real' callback function, used for callback function calls */
+MODVAR Module *Modules = NULL;
+MODVAR Versionflag *Versionflags = NULL;
 
-Module *Module_make(ModuleHeader *header, 
+Module *Module_make(ModuleHeader *header,
 #ifdef _WIN32
-       HMODULE mod
+                    HMODULE mod
 #else
-       void *mod
+                    void *mod
 #endif
-       );
+);
 
 #ifdef UNDERSCORE
 /* dlsym for OpenBSD */
@@ -79,7 +79,7 @@ void deletetmp(const char *path)
 
 void DeleteTempModules(void)
 {
-	char tempbuf[PATH_MAX+1];
+	char tempbuf[PATH_MAX + 1];
 #ifndef _WIN32
 	DIR *fd = opendir(TMPDIR);
 	struct dirent *dir;
@@ -87,10 +87,10 @@ void DeleteTempModules(void)
 	if (!fd) /* Ouch.. this is NOT good!! */
 	{
 		config_error("Unable to open temp directory %s: %s, please create one with the appropriate permissions",
-			TMPDIR, strerror(errno));
+		             TMPDIR, strerror(errno));
 		if (!loop.booted)
 			exit(7);
-		return; 
+		return;
 	}
 
 	while ((dir = readdir(fd)))
@@ -108,9 +108,9 @@ void DeleteTempModules(void)
 #else
 	WIN32_FIND_DATA hData;
 	HANDLE hFile;
-	
+
 	snprintf(tempbuf, sizeof(tempbuf), "%s/*", TMPDIR);
-	
+
 	hFile = FindFirstFile(tempbuf, &hData);
 	if (hFile != INVALID_HANDLE_VALUE)
 	{
@@ -128,13 +128,13 @@ void DeleteTempModules(void)
 		deletetmp(tempbuf);
 	}
 	FindClose(hFile);
-#endif	
+#endif
 }
 
 Module *Module_Find(const char *name)
 {
 	Module *p;
-	
+
 	for (p = Modules; p; p = p->next)
 	{
 		if (!(p->options & MOD_OPT_PERM) &&
@@ -146,7 +146,6 @@ Module *Module_Find(const char *name)
 		}
 	}
 	return NULL;
-	
 }
 
 int parse_modsys_version(const char *version)
@@ -165,11 +164,11 @@ void make_compiler_string(char *buf, size_t buflen, unsigned int ver)
 		strlcpy(buf, "0", buflen);
 		return;
 	}
-	
+
 	maj = ver >> 16;
 	min = (ver >> 8) & 0xff;
 	plevel = ver & 0xff;
-	
+
 	if (plevel == 0)
 		snprintf(buf, buflen, "%d.%d", maj, min);
 	else
@@ -190,7 +189,8 @@ const char *Module_TransformPath(const char *path_)
 	if ((*path_ != '/') && (*path_ != '\\') && !(*path_ && (path_[1] == ':')))
 	{
 		snprintf(path, sizeof(path), "%s/%s", MODULESDIR, path_);
-	} else {
+	} else
+	{
 		strlcpy(path, path_, sizeof(path));
 	}
 
@@ -238,7 +238,7 @@ static const char *validate_mod_header(const char *relpath, ModuleHeader *mod_he
 	if (strcmp(mod_header->name, relpath))
 	{
 		snprintf(buf, sizeof(buf), "Module has path '%s' but uses name '%s' in MOD_HEADER. These should be the same!",
-			relpath, mod_header->name);
+		         relpath, mod_header->name);
 		return buf;
 	}
 	/* This too, just to be sure.. we never ever want other characters
@@ -275,8 +275,20 @@ int module_already_in_testing(const char *relpath)
 	return 0;
 }
 
-/** Return an error string if module with 'name' should no longer be used. */
-const char *is_module_deprecated(const char *name)
+/** If a module has been renamed, return the new name, otherwise NULL */
+const char *module_renamed(const char *name)
+{
+	if (!strcmp(name, "geoip_maxmind"))
+		return "geoip_mmdb";
+	return NULL;
+}
+
+/** Return an error string if module with 'name' should no longer be used.
+ * @param name  Module
+ * @param phase What phase of loading, 0 for pre-file-exists and 1 after
+ *              trying a non-existent module.
+ */
+const char *is_module_deprecated(const char *name, int phase)
 {
 	if (!strcmp(name, "third/central-api"))
 	{
@@ -284,13 +296,25 @@ const char *is_module_deprecated(const char *name)
 		           "The central-api module has been moved from third party modules to the core.\n"
 		           "Please replace your loadmodule \"third/central-api\"; line with: loadmodule \"central-api\";");
 		return "Don't load this third party module, see error above";
-	}
-	if (!strcmp(name, "third/centralblocklist"))
+	} else if (!strcmp(name, "third/centralblocklist"))
 	{
 		unreal_log(ULOG_ERROR, "config", "CONFIG_LOAD_DEPRECATED_MODULE", NULL,
 		           "The centralblocklist module has been moved from third party modules to the core with a slightly changed name.\n"
 		           "Please replace your loadmodule \"third/centralblocklist\"; line with: loadmodule \"central-blocklist\";");
 		return "Don't load this third party module, see error above";
+	} else if (!strcmp(name, "geoip_classic") && (phase == 1))
+	{
+		unreal_log(ULOG_ERROR, "config", "CONFIG_LOAD_DEPRECATED_MODULE", NULL,
+		           "The geoip_classic module is being phased out. If you can, use the geoip_mmdb module instead. See https://www.unrealircd.org/docs/GeoIP#Settings\n"
+		           "If you insist on using geoip_classic then re-run ./Config, answer 'classic' at the GeoIP question and run make install.\n"
+		           "Note that database updates for 'geoip_classic' will stop in mid-2027.");
+		return "deprecated module not available";
+	} else if (!strcmp(name, "tls_antidos"))
+	{
+		unreal_log(ULOG_ERROR, "config", "CONFIG_LOAD_DEPRECATED_MODULE", NULL,
+		           "The tls_antidos module has been removed. It is no longer needed (TLS renegotiations are always refused).\n"
+		           "Please remove the loadmodule \"tls_antidos\"; line from your configuration.");
+		return "Module no longer exists, see error above";
 	}
 	return NULL;
 }
@@ -301,21 +325,21 @@ const char *is_module_deprecated(const char *name)
 const char *Module_Create(const char *path_)
 {
 #ifdef _WIN32
-	HMODULE 	Mod;
+	HMODULE Mod;
 #else /* _WIN32 */
-	void   		*Mod;
+	void *Mod;
 #endif /* _WIN32 */
-	int		(*Mod_Test)();
-	int		(*Mod_Init)();
-	int             (*Mod_Load)();
-	int             (*Mod_Unload)();
-	char    *Mod_Version;
-	static char 	errorbuf[1024];
-	const char	*path, *relpath, *tmppath;
-	ModuleHeader    *mod_header = NULL;
-	int		ret = 0;
-	const char	*reterr;
-	Module          *mod = NULL, **Mod_Handle = NULL;
+	int (*Mod_Test)();
+	int (*Mod_Init)();
+	int (*Mod_Load)();
+	int (*Mod_Unload)();
+	char *Mod_Version;
+	static char errorbuf[1024];
+	const char *path, *relpath, *tmppath;
+	ModuleHeader *mod_header = NULL;
+	int ret = 0;
+	const char *reterr;
+	Module *mod = NULL, **Mod_Handle = NULL;
 	char *expectedmodversion = our_mod_version;
 	long modsys_ver = 0;
 
@@ -323,7 +347,19 @@ const char *Module_Create(const char *path_)
 
 	relpath = Module_GetRelPath(path);
 
-	if ((reterr = is_module_deprecated(relpath)))
+	{
+		const char *newname;
+		if ((newname = module_renamed(relpath)))
+		{
+			config_warn("Module '%s' has been renamed to '%s'. "
+			            "Please update your loadmodule line.",
+			            relpath, newname);
+			path = Module_TransformPath(newname);
+			relpath = Module_GetRelPath(path);
+		}
+	}
+
+	if ((reterr = is_module_deprecated(relpath, 0)))
 		return reterr;
 
 	if (module_already_in_testing(relpath))
@@ -331,6 +367,8 @@ const char *Module_Create(const char *path_)
 
 	if (!file_exists(path))
 	{
+		if ((reterr = is_module_deprecated(relpath, 1)))
+			return reterr;
 		snprintf(errorbuf, sizeof(errorbuf), "Cannot open module file: %s", strerror(errno));
 		return errorbuf;
 	}
@@ -339,7 +377,8 @@ const char *Module_Create(const char *path_)
 	{
 		/* For './unrealircd configtest' we don't have to do any copying and shit */
 		tmppath = path;
-	} else {
+	} else
+	{
 		tmppath = unreal_mktemp(TMPDIR, unreal_getmodfilename(path));
 		if (!tmppath)
 			return "Unable to create temporary file!";
@@ -373,7 +412,7 @@ const char *Module_Create(const char *path_)
 		if (!Mod_Version)
 		{
 			snprintf(errorbuf, sizeof(errorbuf),
-				"Module is lacking Mod_Version. Perhaps a very old one you forgot to recompile?");
+			         "Module is lacking Mod_Version. Perhaps a very old one you forgot to recompile?");
 			irc_dlclose(Mod);
 			deletetmp(tmppath);
 			return errorbuf;
@@ -394,20 +433,20 @@ const char *Module_Create(const char *path_)
 		if (!(modsys_ver = parse_modsys_version(mod_header->modversion)))
 		{
 			snprintf(errorbuf, 1023, "Unsupported module system version '%s'",
-				   mod_header->modversion);
+			         mod_header->modversion);
 			irc_dlclose(Mod);
 			deletetmp(tmppath);
-			return(errorbuf);
+			return (errorbuf);
 		}
 		if ((reterr = validate_mod_header(relpath, mod_header)))
 		{
 			irc_dlclose(Mod);
 			deletetmp(tmppath);
-			return(reterr);
+			return (reterr);
 		}
 		if (Module_Find(mod_header->name))
 		{
-		        irc_dlclose(Mod);
+			irc_dlclose(Mod);
 			deletetmp(tmppath);
 			return (NULL);
 		}
@@ -432,7 +471,7 @@ const char *Module_Create(const char *path_)
 		if (!Mod_Load)
 		{
 			Module_free(mod);
-			return ("Unable to locate Mod_Load"); 
+			return ("Unable to locate Mod_Load");
 		}
 		irc_dlsym(Mod, "Mod_Handle", Mod_Handle);
 		if (Mod_Handle)
@@ -450,10 +489,9 @@ const char *Module_Create(const char *path_)
 				return (errorbuf);
 			}
 		}
-		mod->flags = MODFLAG_TESTING;		
+		mod->flags = MODFLAG_TESTING;
 		return NULL;
-	}
-	else
+	} else
 	{
 		/* Return the error .. */
 		return irc_dlerror();
@@ -470,16 +508,16 @@ void Module_DelayChildren(Module *m)
 	}
 }
 
-Module *Module_make(ModuleHeader *header, 
+Module *Module_make(ModuleHeader *header,
 #ifdef _WIN32
-       HMODULE mod
+                    HMODULE mod
 #else
-       void *mod
+                    void *mod
 #endif
-       )
+)
 {
 	Module *modp = NULL;
-	
+
 	modp = safe_alloc(sizeof(Module));
 	modp->header = header;
 	modp->dll = mod;
@@ -490,13 +528,13 @@ Module *Module_make(ModuleHeader *header,
 	modp->modinfo.size = sizeof(ModuleInfo);
 	modp->modinfo.module_load = 0;
 	modp->modinfo.handle = modp;
-		
+
 	return (modp);
 }
 
 void Init_all_testing_modules(void)
 {
-	
+
 	Module *mi, *next;
 	int ret;
 	iFP Mod_Init;
@@ -506,76 +544,77 @@ void Init_all_testing_modules(void)
 		if (!(mi->flags & MODFLAG_TESTING))
 			continue;
 		irc_dlsym(mi->dll, "Mod_Init", Mod_Init);
-		if ((ret = (*Mod_Init)(&mi->modinfo)) < MOD_SUCCESS) {
+		if ((ret = (*Mod_Init)(&mi->modinfo)) < MOD_SUCCESS)
+		{
 			config_error("Error loading %s: Mod_Init returned %i",
-			    mi->header->name, ret);
+			             mi->header->name, ret);
 			Module_free(mi);
 			continue;
 		}
 		mi->flags = MODFLAG_INIT;
 	}
-}	
+}
 
 void FreeModObj(ModuleObject *obj, Module *m)
 {
-	if (obj->type == MOBJ_EVENT) {
+	if (obj->type == MOBJ_EVENT)
+	{
 		EventDel(obj->object.event);
-	}
-	else if (obj->type == MOBJ_HOOK) {
+	} else if (obj->type == MOBJ_HOOK)
+	{
 		HookDel(obj->object.hook);
-	}
-	else if (obj->type == MOBJ_COMMAND) {
+	} else if (obj->type == MOBJ_COMMAND)
+	{
 		CommandDel(obj->object.command);
-	}
-	else if (obj->type == MOBJ_HOOKTYPE) {
+	} else if (obj->type == MOBJ_HOOKTYPE)
+	{
 		//HooktypeDel(obj->object.hooktype, m); -- reinstate if we audited this code
-	}
-	else if (obj->type == MOBJ_VERSIONFLAG) {
+	} else if (obj->type == MOBJ_VERSIONFLAG)
+	{
 		VersionflagDel(obj->object.versionflag, m);
-	}
-	else if (obj->type == MOBJ_UMODE) {
+	} else if (obj->type == MOBJ_UMODE)
+	{
 		UmodeDel(obj->object.umode);
-	}
-	else if (obj->type == MOBJ_CMODE) {
+	} else if (obj->type == MOBJ_CMODE)
+	{
 		CmodeDel(obj->object.cmode);
-	}
-	else if (obj->type == MOBJ_COMMANDOVERRIDE) {
+	} else if (obj->type == MOBJ_COMMANDOVERRIDE)
+	{
 		CommandOverrideDel(obj->object.cmdoverride);
-	}
-	else if (obj->type == MOBJ_EXTBAN) {
+	} else if (obj->type == MOBJ_EXTBAN)
+	{
 		ExtbanDel(obj->object.extban);
-	}
-	else if (obj->type == MOBJ_CALLBACK) {
+	} else if (obj->type == MOBJ_CALLBACK)
+	{
 		CallbackDel(obj->object.callback);
-	}
-	else if (obj->type == MOBJ_EFUNCTION) {
+	} else if (obj->type == MOBJ_EFUNCTION)
+	{
 		EfunctionDel(obj->object.efunction);
-	}
-	else if (obj->type == MOBJ_ISUPPORT) {
+	} else if (obj->type == MOBJ_ISUPPORT)
+	{
 		ISupportDel(obj->object.isupport);
-	}
-	else if (obj->type == MOBJ_MODDATA) {
+	} else if (obj->type == MOBJ_MODDATA)
+	{
 		ModDataDel(obj->object.moddata);
-	}
-	else if (obj->type == MOBJ_VALIDATOR) {
+	} else if (obj->type == MOBJ_VALIDATOR)
+	{
 		OperClassValidatorDel(obj->object.validator);
-	}
-	else if (obj->type == MOBJ_CLICAP) {
+	} else if (obj->type == MOBJ_CLICAP)
+	{
 		ClientCapabilityDel(obj->object.clicap);
-	}
-	else if (obj->type == MOBJ_MTAG) {
+	} else if (obj->type == MOBJ_MTAG)
+	{
 		MessageTagHandlerDel(obj->object.mtag);
-	}
-	else if (obj->type == MOBJ_HISTORY_BACKEND) {
+	} else if (obj->type == MOBJ_HISTORY_BACKEND)
+	{
 		HistoryBackendDel(obj->object.history_backend);
-	}
-	else if (obj->type == MOBJ_RPC) {
+	} else if (obj->type == MOBJ_RPC)
+	{
 		RPCHandlerDel(obj->object.rpc);
-	}
-	else if (obj->type == MOBJ_API_CALLBACK) {
+	} else if (obj->type == MOBJ_API_CALLBACK)
+	{
 		APICallbackDel(obj->object.apicallback);
-	}
-	else
+	} else
 	{
 		unreal_log(ULOG_FATAL, "module", "FREEMODOBJ_UNKNOWN_TYPE", NULL,
 		           "[BUG] FreeModObj() called for unknown object (type $type)",
@@ -607,17 +646,18 @@ void Unload_all_loaded_modules(void)
 				Module_DelayChildren(mi);
 			}
 		}
-		for (objs = mi->objects; objs; objs = objnext) {
+		for (objs = mi->objects; objs; objs = objnext)
+		{
 			objnext = objs->next;
 			FreeModObj(objs, mi);
 		}
 		for (child = mi->children; child; child = childnext)
 		{
 			childnext = child->next;
-			DelListItem(child,mi->children);
+			DelListItem(child, mi->children);
 			safe_free(child);
 		}
-		DelListItem(mi,Modules);
+		DelListItem(mi, Modules);
 		irc_dlclose(mi->dll);
 		deletetmp(mi->tmp_file);
 		safe_free(mi->tmp_file);
@@ -637,17 +677,18 @@ void Unload_all_testing_modules(void)
 		next = mi->next;
 		if (!(mi->flags & MODFLAG_TESTING))
 			continue;
-		for (objs = mi->objects; objs; objs = objnext) {
+		for (objs = mi->objects; objs; objs = objnext)
+		{
 			objnext = objs->next;
 			FreeModObj(objs, mi);
 		}
 		for (child = mi->children; child; child = childnext)
 		{
 			childnext = child->next;
-			DelListItem(child,mi->children);
+			DelListItem(child, mi->children);
 			safe_free(child);
 		}
-		DelListItem(mi,Modules);
+		DelListItem(mi, Modules);
 		irc_dlclose(mi->dll);
 		deletetmp(mi->tmp_file);
 		safe_free(mi->tmp_file);
@@ -660,7 +701,7 @@ void Unload_all_testing_modules(void)
  * Returns -1 if you cannot unload due to children still alive 
  * Returns 1 if successful 
  */
-int    Module_free(Module *mod)
+int Module_free(Module *mod)
 {
 	Module *p;
 	ModuleChild *cp, *cpnext;
@@ -671,7 +712,8 @@ int    Module_free(Module *mod)
 	{
 		Module_Unload(cp->child->header->name);
 	}
-	for (objs = mod->objects; objs; objs = next) {
+	for (objs = mod->objects; objs; objs = next)
+	{
 		next = objs->next;
 		FreeModObj(objs, mod);
 	}
@@ -708,15 +750,15 @@ int    Module_free(Module *mod)
 int Module_Unload(const char *name)
 {
 	Module *m;
-	int    (*Mod_Unload)();
-	int    ret;
+	int (*Mod_Unload)();
+	int ret;
 	for (m = Modules; m; m = m->next)
 	{
 		if (!strcmp(m->header->name, name))
 		{
-		       break;
+			break;
 		}
-	}      
+	}
 	if (!m)
 		return -1;
 	irc_dlsym(m->dll, "Mod_Unload", Mod_Unload);
@@ -743,9 +785,9 @@ int Module_Unload(const char *name)
 
 void module_loadall(void)
 {
-	iFP	fp;
+	iFP fp;
 	Module *mi, *next;
-	
+
 	loop.config_status = CONFIG_STATUS_LOAD;
 
 	/* Run through all modules and check for module load */
@@ -760,28 +802,27 @@ void module_loadall(void)
 		{
 			config_status("cannot load module %s", mi->header->name);
 			Module_free(mi);
-		}
-		else
+		} else
 			mi->flags = MODFLAG_LOADED;
 	}
 }
 
-int	Module_IsAlreadyChild(Module *parent, Module *child)
+int Module_IsAlreadyChild(Module *parent, Module *child)
 {
 	ModuleChild *mcp;
-	
+
 	for (mcp = parent->children; mcp; mcp = mcp->next)
 	{
-		if (mcp->child == child) 
+		if (mcp->child == child)
 			return 1;
 	}
 	return 0;
 }
 
-void	Module_AddAsChild(Module *parent, Module *child)
+void Module_AddAsChild(Module *parent, Module *child)
 {
-	ModuleChild	*childp = NULL;
-	
+	ModuleChild *childp = NULL;
+
 	childp = safe_alloc(sizeof(ModuleChild));
 	childp->child = child;
 	AddListItem(childp, parent->children);
@@ -836,31 +877,31 @@ CMD_FUNC(cmd_module)
 			strlcat(tmp, "[PERM] ", sizeof(tmp));
 		if (!(mi->options & MOD_OPT_OFFICIAL))
 			strlcat(tmp, "[3RD] ", sizeof(tmp));
-		if (!ValidatePermissionsForPath("server:module",client,NULL,NULL,NULL))
+		if (!ValidatePermissionsForPath("server:module", client, NULL, NULL, NULL))
 			sendtxtnumeric(client, "*** %s - %s - by %s %s",
-				mi->header->name,
-				mi->header->description,
-				mi->header->author,
-				mi->options & MOD_OPT_OFFICIAL ? "" : "[3RD]");
+			               mi->header->name,
+			               mi->header->description,
+			               mi->header->author,
+			               mi->options & MOD_OPT_OFFICIAL ? "" : "[3RD]");
 		else
 			sendtxtnumeric(client, "*** %s %s - %s - by %s %s",
-				mi->header->name,
-				mi->header->version,
-				mi->header->description,
-				mi->header->author,
-				tmp);
+			               mi->header->name,
+			               mi->header->version,
+			               mi->header->description,
+			               mi->header->author,
+			               tmp);
 	}
 
 	sendtxtnumeric(client, "End of module list");
 
-	if (!ValidatePermissionsForPath("server:module",client,NULL,NULL,NULL))
+	if (!ValidatePermissionsForPath("server:module", client, NULL, NULL, NULL))
 		return;
 
 	/* The rest are extra details (oper-only)... */
 
 	tmp[0] = '\0';
 	p = tmp;
-	for (i=0; i < MAXHOOKTYPES; i++)
+	for (i = 0; i < MAXHOOKTYPES; i++)
 	{
 		if (!Hooks[i])
 			continue;
@@ -877,14 +918,14 @@ CMD_FUNC(cmd_module)
 
 	tmp[0] = '\0';
 	p = tmp;
-	for (i=0; i < 256; i++)
+	for (i = 0; i < 256; i++)
 	{
 		for (mptr = CommandHash[i]; mptr; mptr = mptr->next)
 			if (mptr->overriders)
 			{
-				ircsnprintf(p, sizeof(tmp)-strlen(tmp), "%s ", mptr->cmd);
+				ircsnprintf(p, sizeof(tmp) - strlen(tmp), "%s ", mptr->cmd);
 				p += strlen(p);
-				if (p > tmp+380)
+				if (p > tmp + 380)
 				{
 					sendtxtnumeric(client, "Override: %s", tmp);
 					tmp[0] = '\0';
@@ -897,9 +938,11 @@ CMD_FUNC(cmd_module)
 	moddatatype_dump(client);
 }
 
-Hooktype *HooktypeFind(const char *string) {
+Hooktype *HooktypeFind(const char *string)
+{
 	Hooktype *hooktype;
-	for (hooktype = Hooktypes; hooktype->string ;hooktype++) {
+	for (hooktype = Hooktypes; hooktype->string; hooktype++)
+	{
 		if (!strcasecmp(hooktype->string, string))
 			return hooktype;
 	}
@@ -917,6 +960,11 @@ Versionflag *VersionflagFind(char flag)
 	return NULL;
 }
 
+/** Add a version flag character.
+ * @param module	The module adding the version flag
+ * @param flag		The version flag character
+ * @returns The Versionflag pointer, or NULL on failure.
+ */
 Versionflag *VersionflagAdd(Module *module, char flag)
 {
 	Versionflag *vflag;
@@ -924,7 +972,8 @@ Versionflag *VersionflagAdd(Module *module, char flag)
 	if ((vflag = VersionflagFind(flag)))
 	{
 		ModuleChild *child;
-		for (child = vflag->parents; child; child = child->next) {
+		for (child = vflag->parents; child; child = child->next)
+		{
 			if (child->child == module)
 				break;
 		}
@@ -932,7 +981,8 @@ Versionflag *VersionflagAdd(Module *module, char flag)
 		{
 			parent = safe_alloc(sizeof(ModuleChild));
 			parent->child = module;
-			if (module) {
+			if (module)
+			{
 				ModuleObject *vflagobj;
 				vflagobj = safe_alloc(sizeof(ModuleObject));
 				vflagobj->type = MOBJ_VERSIONFLAG;
@@ -940,7 +990,7 @@ Versionflag *VersionflagAdd(Module *module, char flag)
 				AddListItem(vflagobj, module->objects);
 				module->errorcode = MODERR_NOERROR;
 			}
-			AddListItem(parent,vflag->parents);
+			AddListItem(parent, vflag->parents);
 		}
 		return vflag;
 	}
@@ -958,11 +1008,17 @@ Versionflag *VersionflagAdd(Module *module, char flag)
 		module->errorcode = MODERR_NOERROR;
 	}
 	flag_add(flag);
-	AddListItem(parent,vflag->parents);
+	AddListItem(parent, vflag->parents);
 	AddListItem(vflag, Versionflags);
 	return vflag;
 }
-	
+
+/** Delete a version flag.
+ * @param vflag		The version flag to delete
+ * @param module	The module that owns this version flag
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 void VersionflagDel(Versionflag *vflag, Module *module)
 {
 	ModuleChild *owner;
@@ -973,7 +1029,7 @@ void VersionflagDel(Versionflag *vflag, Module *module)
 	{
 		if (owner->child == module)
 		{
-			DelListItem(owner,vflag->parents);
+			DelListItem(owner, vflag->parents);
 			safe_free(owner);
 			break;
 		}
@@ -981,9 +1037,11 @@ void VersionflagDel(Versionflag *vflag, Module *module)
 	if (module)
 	{
 		ModuleObject *objs;
-		for (objs = module->objects; objs; objs = objs->next) {
-			if (objs->type == MOBJ_VERSIONFLAG && objs->object.versionflag == vflag) {
-				DelListItem(objs,module->objects);
+		for (objs = module->objects; objs; objs = objs->next)
+		{
+			if (objs->type == MOBJ_VERSIONFLAG && objs->object.versionflag == vflag)
+			{
+				DelListItem(objs, module->objects);
 				safe_free(objs);
 				break;
 			}
@@ -1000,8 +1058,8 @@ void VersionflagDel(Versionflag *vflag, Module *module)
 Hook *HookAddMain(Module *module, int hooktype, int priority, int (*func)(), void (*vfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
 	Hook *p;
-	
-	p = (Hook *) safe_alloc(sizeof(Hook));
+
+	p = (Hook *)safe_alloc(sizeof(Hook));
 	if (func)
 		p->func.intfunc = func;
 	if (vfunc)
@@ -1014,30 +1072,42 @@ Hook *HookAddMain(Module *module, int hooktype, int priority, int (*func)(), voi
 	p->owner = module;
 	p->priority = priority;
 
-	if (module) {
+	if (module)
+	{
 		ModuleObject *hookobj = (ModuleObject *)safe_alloc(sizeof(ModuleObject));
 		hookobj->object.hook = p;
 		hookobj->type = MOBJ_HOOK;
 		AddListItem(hookobj, module->objects);
 		module->errorcode = MODERR_NOERROR;
 	}
-	
+
 	AddListItemPrio(p, Hooks[hooktype], p->priority);
 
 	return p;
 }
 
+/** Delete a hook.
+ * @param hook		The hook to delete
+ * @returns The next Hook in the list, or NULL.
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 Hook *HookDel(Hook *hook)
 {
 	Hook *p, *q;
-	for (p = Hooks[hook->type]; p; p = p->next) {
-		if (p == hook) {
+	for (p = Hooks[hook->type]; p; p = p->next)
+	{
+		if (p == hook)
+		{
 			q = p->next;
 			DelListItem(p, Hooks[hook->type]);
-			if (p->owner) {
+			if (p->owner)
+			{
 				ModuleObject *hookobj;
-				for (hookobj = p->owner->objects; hookobj; hookobj = hookobj->next) {
-					if (hookobj->type == MOBJ_HOOK && hookobj->object.hook == p) {
+				for (hookobj = p->owner->objects; hookobj; hookobj = hookobj->next)
+				{
+					if (hookobj->type == MOBJ_HOOK && hookobj->object.hook == p)
+					{
 						DelListItem(hookobj, hook->owner->objects);
 						safe_free(hookobj);
 						break;
@@ -1053,27 +1123,40 @@ Hook *HookDel(Hook *hook)
 
 static int num_callbacks(int cbtype)
 {
-Callback *e;
-int cnt = 0;
+	Callback *e;
+	int cnt = 0;
 
 	for (e = Callbacks[cbtype]; e; e = e->next)
 		if (!e->willberemoved)
 			cnt++;
-			
+
 	return cnt;
 }
 
+/** Add a callback - internal function.
+ * Use the CallbackAdd(), CallbackAddVoid(), CallbackAddPVoid(),
+ * CallbackAddString() or CallbackAddConstString() macros instead.
+ * @param module		The module adding the callback
+ * @param cbtype		The callback type (CALLBACKTYPE_*)
+ * @param func			Function returning int (or NULL)
+ * @param vfunc			Function returning void (or NULL)
+ * @param pvfunc		Function returning void* (or NULL)
+ * @param stringfunc		Function returning char* (or NULL)
+ * @param conststringfunc	Function returning const char* (or NULL)
+ * @returns The Callback pointer, or NULL on failure.
+ * @note Only one callback per type can be registered.
+ */
 Callback *CallbackAddMain(Module *module, int cbtype, int (*func)(), void (*vfunc)(), void *(*pvfunc)(), char *(*stringfunc)(), const char *(*conststringfunc)())
 {
 	Callback *p;
-	
+
 	if (num_callbacks(cbtype) > 0)
 	{
 		if (module)
 			module->errorcode = MODERR_EXISTS;
 		return NULL;
 	}
-	
+
 	p = safe_alloc(sizeof(Callback));
 	if (func)
 		p->func.intfunc = func;
@@ -1088,7 +1171,8 @@ Callback *CallbackAddMain(Module *module, int cbtype, int (*func)(), void (*vfun
 	p->type = cbtype;
 	p->owner = module;
 	AddListItem(p, Callbacks[cbtype]);
-	if (module) {
+	if (module)
+	{
 		ModuleObject *cbobj = safe_alloc(sizeof(ModuleObject));
 		cbobj->object.callback = p;
 		cbobj->type = MOBJ_CALLBACK;
@@ -1098,19 +1182,30 @@ Callback *CallbackAddMain(Module *module, int cbtype, int (*func)(), void (*vfun
 	return p;
 }
 
+/** Delete a callback.
+ * @param cb	The callback to delete
+ * @returns The next Callback in the list, or NULL.
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 Callback *CallbackDel(Callback *cb)
 {
 	Callback *p, *q;
-	for (p = Callbacks[cb->type]; p; p = p->next) {
-		if (p == cb) {
+	for (p = Callbacks[cb->type]; p; p = p->next)
+	{
+		if (p == cb)
+		{
 			q = p->next;
 			DelListItem(p, Callbacks[cb->type]);
 			if (RCallbacks[cb->type] == p)
 				RCallbacks[cb->type] = NULL;
-			if (p->owner) {
+			if (p->owner)
+			{
 				ModuleObject *cbobj;
-				for (cbobj = p->owner->objects; cbobj; cbobj = cbobj->next) {
-					if ((cbobj->type == MOBJ_CALLBACK) && (cbobj->object.callback == p)) {
+				for (cbobj = p->owner->objects; cbobj; cbobj = cbobj->next)
+				{
+					if ((cbobj->type == MOBJ_CALLBACK) && (cbobj->object.callback == p))
+					{
 						DelListItem(cbobj, cb->owner->objects);
 						safe_free(cbobj);
 						break;
@@ -1124,18 +1219,38 @@ Callback *CallbackDel(Callback *cb)
 	return NULL;
 }
 
+/** Add a command override handler.
+ * @param module	The module adding the override
+ * @param name		The command name to override (eg: "PRIVMSG")
+ * @param priority	Priority for this override. Lower value = called first. Use 0 for normal.
+ * @param function	The override function to call
+ * @returns The CommandOverride pointer, or NULL on failure.
+ * @note Call this from MOD_LOAD() or later, not from MOD_INIT().
+ *       The command to override may not exist yet during MOD_INIT()
+ *       due to module load order.
+ */
 CommandOverride *CommandOverrideAdd(Module *module, const char *name, int priority, OverrideCmdFunc function)
 {
 	RealCommand *p;
 	CommandOverride *ovr;
-	
+
+	if (module && (loop.config_status <= CONFIG_STATUS_INIT))
+	{
+		unreal_log(ULOG_ERROR, "module", "BUG_COMMANDOVERRIDEADD_NOT_MOD_LOAD", NULL,
+		           "[BUG] CommandOverrideAdd() called by module '$module_name' before MOD_LOAD(). "
+		           "This must be in MOD_LOAD(), otherwise the command to be overridden may not exist yet.",
+		           log_data_string("module_name", module->header->name));
+		module->errorcode = MODERR_INVALID;
+		return NULL;
+	}
+
 	if (!(p = find_command_simple(name)))
 	{
 		if (module)
 			module->errorcode = MODERR_NOTFOUND;
 		return NULL;
 	}
-	for (ovr=p->overriders; ovr; ovr=ovr->next)
+	for (ovr = p->overriders; ovr; ovr = ovr->next)
 	{
 		if ((ovr->owner == module) && (ovr->func == function))
 		{
@@ -1165,6 +1280,11 @@ CommandOverride *CommandOverrideAdd(Module *module, const char *name, int priori
 	return ovr;
 }
 
+/** Delete a command override.
+ * @param cmd	The command override to delete
+ * @note Modules do not need to call this function,
+ *       it is done automatically on module unload.
+ */
 void CommandOverrideDel(CommandOverride *cmd)
 {
 	DelListItem(cmd, cmd->command->overriders);
@@ -1190,6 +1310,18 @@ void CommandOverrideDel(CommandOverride *cmd)
 	safe_free(cmd);
 }
 
+/** Call the next command override handler in the chain.
+ * Call this from your override function to pass control to the
+ * next override or the original command handler.
+ * @param ovr		The current command override
+ * @param clictx	The client context
+ * @param client	The client issuing the command
+ * @param mtags		Message tags associated with the command
+ * @param parc		Parameter count
+ * @param parv		Parameter array
+ * @note It is recommended to use the CALL_NEXT_COMMAND_OVERRIDE() macro instead,
+ *       which passes all arguments automatically and is future-proof.
+ */
 void CallCommandOverride(CommandOverride *ovr, ClientContext *clictx, Client *client, MessageTag *mtags, int parc, const char *parv[])
 {
 	if (ovr->next)
@@ -1201,7 +1333,7 @@ void CallCommandOverride(CommandOverride *ovr, ClientContext *clictx, Client *cl
 EVENT(e_unload_module_delayed)
 {
 	char *name = (char *)data;
-	int i; 
+	int i;
 	isupport_snapshot();
 	i = Module_Unload(name);
 	if (i == 1)
@@ -1220,7 +1352,7 @@ EVENT(e_unload_module_delayed)
 void unload_all_modules(void)
 {
 	Module *m;
-	int	(*Mod_Unload)();
+	int (*Mod_Unload)();
 	for (m = Modules; m; m = m->next)
 	{
 #ifdef DEBUGMODE
@@ -1243,7 +1375,8 @@ void ModuleSetOptions(Module *module, unsigned int options, int action)
 	{
 		DelListItem(module, Modules);
 		AddListItemPrio(module, Modules, action);
-	} else {
+	} else
+	{
 		/* Simple bit flag(s) */
 		if (action)
 			module->options |= options;
@@ -1263,16 +1396,16 @@ unsigned int ModuleGetError(Module *module)
 }
 
 static const char *module_error_str[] = {
-	"No error",
-	"Object already exists",
-	"No space available",
-	"Invalid parameter(s)",
-	"Object was not found"
+    "No error",
+    "Object already exists",
+    "No space available",
+    "Invalid parameter(s)",
+    "Object was not found",
 };
 
 const char *ModuleGetErrorStr(Module *module)
 {
-	if (module->errorcode >= sizeof(module_error_str)/sizeof(module_error_str[0]))
+	if (module->errorcode >= sizeof(module_error_str) / sizeof(module_error_str[0]))
 		return NULL;
 
 	return module_error_str[module->errorcode];
@@ -1283,9 +1416,9 @@ const char *ModuleGetErrorStr(Module *module)
  */
 int callbacks_check(void)
 {
-int i;
+	int i;
 
-	for (i=0; i < MAXCALLBACKS; i++)
+	for (i = 0; i < MAXCALLBACKS; i++)
 	{
 		if (num_callbacks(i) > 1)
 		{
@@ -1311,14 +1444,14 @@ int i;
 
 void callbacks_switchover(void)
 {
-Callback *e;
-int i;
+	Callback *e;
+	int i;
 
 	/* Now set the real callback, and tag the new one
 	 * as 'willberemoved' if needed.
 	 */
 
-	for (i=0; i < MAXCALLBACKS; i++)
+	for (i = 0; i < MAXCALLBACKS; i++)
 		for (e = Callbacks[i]; e; e = e->next)
 			if (!e->willberemoved)
 			{
@@ -1334,12 +1467,12 @@ const char *our_dlerror(void)
 {
 	static char errbuf[513];
 	DWORD err = GetLastError();
-	FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err,
-		0, errbuf, 512, NULL);
+	FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err,
+	              0, errbuf, 512, NULL);
 	if (err == ERROR_MOD_NOT_FOUND)
 		strlcat(errbuf, " This could be because the DLL depends on another DLL, for example if you "
-		               "are trying to load a 3rd party module which was compiled with a different compiler version.",
-		               sizeof(errbuf));
+		                "are trying to load a 3rd party module which was compiled with a different compiler version.",
+		        sizeof(errbuf));
 	return errbuf;
 }
 #endif
@@ -1396,7 +1529,8 @@ ModDataInfo *persistent_var_generic(ModuleInfo *modinfo, const char *varshortnam
 			m->unloaded = 0;
 		}
 		return m;
-	} else {
+	} else
+	{
 		ModDataInfo mreq;
 		memset(&mreq, 0, sizeof(mreq));
 		mreq.type = MODDATATYPE_LOCAL_VARIABLE;
