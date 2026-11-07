@@ -24,7 +24,7 @@
 
 ModuleHeader MOD_HEADER = {
     "labeled-response",
-    "5.0",
+    "6.2.7.1",
     "Labeled response CAP",
     "UnrealIRCd Team",
     "unrealircd-6",
@@ -375,6 +375,9 @@ void lr_new_message(Client *client, MessageTag *recv_mtags, MessageTag **mtag_li
 int labeled_response_mtag_is_ok(Client *client, const char *name, const char *value)
 {
 	if (BadPtr(value))
+		return 0;
+
+	if (strpbrk(value, " ;\\\r\n"))
 		return 0;
 
 	if (IsServer(client))
