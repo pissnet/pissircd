@@ -59,7 +59,8 @@ jobs:
         run: extras/build-tests/nix/run-tests
 
   format-check:
-    runs-on: ubuntu-latest
+    # Pinned: the clang-format install below uses the 'noble' (24.04) LLVM repo
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
