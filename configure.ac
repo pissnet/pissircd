@@ -647,7 +647,7 @@ AS_IF([test "x$PRIVATELIBDIR" != "x"], [rm -f "$PRIVATELIBDIR/"libpcre2*])],[has
 
 AS_IF([test "$has_system_pcre2" = "no"], [
 dnl REMEMBER TO CHANGE WITH A NEW PCRE2 RELEASE!
-pcre2_version="10.47"
+pcre2_version="10.49"
 AC_MSG_RESULT(extracting PCRE2 regex library)
 cur_dir=`pwd`
 cd extras
@@ -947,9 +947,11 @@ AS_IF([test "x$enable_mmdb" = "xyes"],
 dnl Set to include dir
 UNRLINCDIR="`pwd`/include"
 
-dnl This is at the end so the (potential) -std=gnu17 is not used
-dnl when compiling libraries, as their requirements may be different.
-AC_MSG_CHECKING([if explicit -std=gnu17 is needed])
+dnl This is at the end so the -std=gnu17 is not used when compiling
+dnl libraries, as their requirements may be different.
+AC_MSG_CHECKING([if the compiler supports -std=gnu17])
+save_cflags="$CFLAGS"
+CFLAGS="$CFLAGS -std=gnu17"
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 	[[#include <sys/types.h>
 	  #include <stdlib.h>
@@ -962,9 +964,9 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 	  test = exit;
 	  test(0);
 	]])],
-	[AC_MSG_RESULT(no)],
-	[CFLAGS="$CFLAGS -std=gnu17"
-	AC_MSG_RESULT(yes)])
+	[AC_MSG_RESULT(yes)],
+	[CFLAGS="$save_cflags"
+	AC_MSG_RESULT(no)])
 
 dnl Moved to the very end to ensure it doesn't affect any libs or tests.
 if test "$ac_cv_werror" = "yes" ; then

@@ -160,7 +160,8 @@ CMD_FUNC(cmd_kick)
 	Client *target;
 	Channel *channel;
 	int chasing = 0;
-	char *p = NULL, *user, *p2 = NULL, *badkick;
+	char *p = NULL, *user, *p2 = NULL;
+	const char *badkick;
 	char comment[MAXKICKLEN + 1];
 	Membership *lp;
 	Hook *h;
@@ -361,7 +362,7 @@ CMD_FUNC(cmd_kick)
 			Hook *h;
 			for (h = Hooks[HOOKTYPE_PRE_LOCAL_KICK]; h; h = h->next)
 			{
-				if ((*(h->func.intfunc))(client, target, channel, comment) > 0)
+				if ((*(h->func.conststringfunc))(client, target, channel, comment))
 				{
 					breakit = 1;
 					break;
