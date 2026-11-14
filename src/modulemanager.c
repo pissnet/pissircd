@@ -44,11 +44,11 @@ static int no_make_install = 0;
 /* Forward declarations */
 int mm_valid_module_name(char *name);
  #define safe_free_managed_module(x) \
- 	 do \
- 	 { \
- 	 	 free_managed_module(x); \
- 	 	 x = NULL; \
- 	 } while (0)
+	 do \
+	 { \
+		 free_managed_module(x); \
+		 x = NULL; \
+	 } while (0)
 void free_managed_module(ManagedModule *m);
 
 typedef enum ParseModuleHeaderStage {
@@ -90,11 +90,11 @@ int parse_quoted_string(char *buf, char *dest, size_t destlen)
 
  #undef CheckNull
  #define CheckNull(x) \
- 	 if ((!(x)->value) || (!(*((x)->value)))) \
- 	 { \
- 	 	 config_error("%s:%i: missing parameter", m->name, (x)->line_number); \
- 	 	 return 0; \
- 	 }
+	 if ((!(x)->value) || (!(*((x)->value)))) \
+	 { \
+		 config_error("%s:%i: missing parameter", m->name, (x)->line_number); \
+		 return 0; \
+	 }
 
 /** Parse a module { } line from a module (not repo!!) */
 int mm_module_file_config(ManagedModule *m, ConfigEntry *ce)
@@ -455,9 +455,6 @@ char *mm_sourceslist_file(void)
 /** Free a managed module struct */
 void free_managed_module(ManagedModule *m)
 {
-	if (!m)
-		return;
-
 	safe_free(m->repo_url);
 	safe_free(m->name);
 	safe_free(m->source);
@@ -492,11 +489,11 @@ int mm_valid_module_name(char *name)
 
  #undef CheckNull
  #define CheckNull(x) \
- 	 if ((!(x)->value) || (!(*((x)->value)))) \
- 	 { \
- 	 	 config_error("%s:%i: missing parameter", repo_url, (x)->line_number); \
- 	 	 goto fail_mm_repo_module_config; \
- 	 }
+	 if ((!(x)->value) || (!(*((x)->value)))) \
+	 { \
+		 config_error("%s:%i: missing parameter", repo_url, (x)->line_number); \
+		 goto fail_mm_repo_module_config; \
+	 }
 
 /** Parse a module { } line from a repository */
 ManagedModule *mm_repo_module_config(char *repo_url, ConfigEntry *ce)
