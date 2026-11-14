@@ -17,6 +17,12 @@ rm -rf unrealircd-tests/
 git clone -q --branch unreal60 https://github.com/unrealircd/unrealircd-tests.git unrealircd-tests
 cd unrealircd-tests
 
+# PissIRCd: the upstream tests expect "UnrealIRCd" in VERSION and CREDITS
+# output, adjust them for our branding:
+sed -i.bak 's/UnrealIRCd-/PissIRCd-/' tests/usercommands/version
+sed -i.bak 's/UnrealIRCd\.\*redits/PissIRCd.*redits/' tests/usercommands/credits
+rm -f tests/usercommands/*.bak
+
 # FreeBSD has various issues with the tests from us and others,
 # better set a flag to keep it simple:
 if uname -a|grep -q FreeBSD; then
