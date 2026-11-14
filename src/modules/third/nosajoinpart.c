@@ -22,14 +22,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-		= {
-				"third/nosajoinpart",
-				"1.0",
-				"Disables remote SAJOIN/SAPART targeted to local users",
-				"Polsaker",
-				"unrealircd-6",
-		};
+ModuleHeader MOD_HEADER = {
+    "third/nosajoinpart",
+    "1.0",
+    "Disables remote SAJOIN/SAPART targeted to local users",
+    "Polsaker",
+    "unrealircd-6",
+};
 
 
 CMD_OVERRIDE_FUNC(override_sajp);
@@ -69,7 +68,7 @@ CMD_OVERRIDE_FUNC(override_sajp)
 		sendnumeric(client, ERR_NOSUCHNICK, parv[1]);
 		return;
 	}
-	
+
 	if (MyUser(target) && !MyUser(client))
 	{
 		sendnumeric(client, ERR_YOUREBANNEDCREEP, "I don't wanna :(");

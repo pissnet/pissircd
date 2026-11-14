@@ -24,14 +24,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-		= {
-				"third/nosajoinpartmode",
-				"1.0",
-				"Disables remote SAJOIN/SAPART targeted to local users, with umode +J",
-				"chmod, Polsaker, Noisytoot",
-				"unrealircd-6",
-		};
+ModuleHeader MOD_HEADER = {
+    "third/nosajoinpartmode",
+    "1.0",
+    "Disables remote SAJOIN/SAPART targeted to local users, with umode +J",
+    "chmod, Polsaker, Noisytoot",
+    "unrealircd-6",
+};
 
 
 CMD_OVERRIDE_FUNC(override_sajoin);

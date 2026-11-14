@@ -22,14 +22,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/noglobalmsg",
-	"1.1",
-	"Disables PRIVMSG $*",
-	"Polsaker",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "third/noglobalmsg",
+    "1.1",
+    "Disables PRIVMSG $*",
+    "Polsaker",
+    "unrealircd-6",
+};
 
 
 CMD_OVERRIDE_FUNC(override_privmsg);

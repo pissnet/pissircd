@@ -124,7 +124,7 @@
  * want to give "flood access" and nothing else, and other such things.
  */
 #ifndef FAKELAG_CONFIGURABLE
-#define FAKELAG_CONFIGURABLE 1
+ #define FAKELAG_CONFIGURABLE 1
 #endif
 
 /* The default value for class::sendq */

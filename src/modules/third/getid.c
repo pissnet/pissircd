@@ -25,14 +25,13 @@
 
 CMD_FUNC(cmd_getid);
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/getid",
-	"1.0",
-	"Adds a GETID command to resolve a nick or server name to a UID or SID",
-	"Noisytoot",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "third/getid",
+    "1.0",
+    "Adds a GETID command to resolve a nick or server name to a UID or SID",
+    "Noisytoot",
+    "unrealircd-6",
+};
 
 MOD_INIT()
 {

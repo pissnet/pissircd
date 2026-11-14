@@ -21,14 +21,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/hiddenoper-tag",
-	"1.0",
-	"letspiss.net/hiddenoper message tag and capability",
-	"Noisytoot",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "third/hiddenoper-tag",
+    "1.0",
+    "letspiss.net/hiddenoper message tag and capability",
+    "Noisytoot",
+    "unrealircd-6",
+};
 
 long CAP_HIDDENOPER_TAG = 0L;
 

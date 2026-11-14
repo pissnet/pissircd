@@ -132,7 +132,8 @@ CMD_FUNC(cmd_kill)
 			}
 			if ((ret == EX_DENY) || (ret == EX_ALWAYS_DENY))
 				continue; /* reject kill for this particular user */
-		} else if(MyUser(target)) {
+		} else if (MyUser(target))
+		{
 			int ret = EX_ALLOW;
 			for (h = Hooks[HOOKTYPE_PRE_REMOTE_TO_LOCAL_KILL]; h; h = h->next)
 			{

@@ -51,8 +51,7 @@ MBList *mblist = NULL, *mblist_tail = NULL;
 
 /** Our unicode structure */
 typedef struct UList UList;
-struct UList
-{
+struct UList {
 	UList *next;
 	char32_t start, end;
 };
@@ -388,7 +387,7 @@ void charsys_reset(void)
 	/* First, reset everything */
 	for (i = 0; i < 256; i++)
 		char_atribs[i] &= ~ALLOWN;
-	
+
 	charsys_free_mblist();
 	/* Then add the default which will always be allowed */
 	charsys_addallowed("0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyzy{|}");
@@ -584,7 +583,7 @@ static int isvalidunicodenick(char32_t *unick)
 		/* Accept only a single ZWJ (U+200D) or a single VS16 (U+FE0F) potentially followed by a ZWJ.
 		 *
 		 * They always have to follow an emoji (assumed to be a U+2600 or higher code point). */
-		if ( (*uch == 0x200d || *uch == 0xfe0f) && (!puch || *puch < 0x2600 || *puch == *uch) )
+		if ((*uch == 0x200d || *uch == 0xfe0f) && (!puch || *puch < 0x2600 || *puch == *uch))
 			return 0;
 
 		/* Don't end unicode sequence on a ZWJ. */
@@ -596,20 +595,19 @@ static int isvalidunicodenick(char32_t *unick)
 		 *
 		 * [0] https://www.unicode.org/reports/tr51/#valid-emoji-tag-sequences
 		 */
-		if (*uch == 0x1f3f4) {
+		if (*uch == 0x1f3f4)
+		{
 			/* We're already in the middle of a flag sequence. */
 			if (black_flag_or_tag_count)
 				return 0;
 			black_flag_or_tag_count = 1;
-		}
-		else if ( (*uch >= 0xe0030 && *uch <= 0xe0039) || (*uch >= 0xe0061 && *uch <= 0xe007a) )
+		} else if ((*uch >= 0xe0030 && *uch <= 0xe0039) || (*uch >= 0xe0061 && *uch <= 0xe007a))
 		{
 			/* We only support latin tags after a black flag. */
 			if (black_flag_or_tag_count < 1)
 				return 0;
 			black_flag_or_tag_count++;
-		}
-		else if (*uch == 0xe007f)
+		} else if (*uch == 0xe007f)
 		{
 			/* Cancel tags only come after a black flag and at least one alphanumeric tag. */
 			if (black_flag_or_tag_count <= 2)
@@ -637,7 +635,7 @@ static int do_nick_name_multibyte(char *nick)
 {
 	int len;
 	char *ch;
-	char32_t uch, unick[NICKLEN+1], *uchp;
+	char32_t uch, unick[NICKLEN + 1], *uchp;
 	int firstmbchar = 0, utf8seq = 0, utf8width = 0;
 
 	if ((*nick == '-') || isdigit(*nick))
@@ -682,13 +680,11 @@ static int do_nick_name_multibyte(char *nick)
 				utf8seq = utf8width = 0;
 				*uchp++ = uch;
 			}
-		}
-		else if (!firstmbchar && ((*ch) & 0xf8) == 0xf0)
+		} else if (!firstmbchar && ((*ch) & 0xf8) == 0xf0)
 		{
 			utf8seq = 1;
 			utf8width = 4;
-		}
-		else if (!firstmbchar && ((*ch) & 0xf0) == 0xe0)
+		} else if (!firstmbchar && ((*ch) & 0xf0) == 0xe0)
 		{
 			utf8seq = 1;
 			utf8width = 3;
@@ -712,8 +708,7 @@ static int do_nick_name_multibyte(char *nick)
 			 * emoji unicode side of things. */
 			*uchp++ = ch[-1];
 			*uchp++ = *ch;
-		}
-		else if ((*ch) & 0x80)
+		} else if ((*ch) & 0x80)
 			firstmbchar = 1;
 		else if (!isvalid(*ch))
 			return 0;

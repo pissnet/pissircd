@@ -21,14 +21,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/oper-tag",
-	"1.0",
-	"solanum.chat/oper message tag and capability",
-	"Noisytoot",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "third/oper-tag",
+    "1.0",
+    "solanum.chat/oper message tag and capability",
+    "Noisytoot",
+    "unrealircd-6",
+};
 
 long CAP_OPER_TAG = 0L;
 

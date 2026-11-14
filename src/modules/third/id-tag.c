@@ -21,14 +21,13 @@
 
 #include "unrealircd.h"
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/id-tag",
-	"1.0",
-	"letspiss.net/id message tag and capability",
-	"Noisytoot",
-	"unrealircd-6",
-	};
+ModuleHeader MOD_HEADER = {
+    "third/id-tag",
+    "1.0",
+    "letspiss.net/id message tag and capability",
+    "Noisytoot",
+    "unrealircd-6",
+};
 
 long CAP_ID_TAG = 0L;
 

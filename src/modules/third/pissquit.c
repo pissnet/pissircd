@@ -22,18 +22,17 @@
 
 #include "unrealircd.h"
 
-#define MSG_PISSQUIT 	"PISSQUIT"
+#define MSG_PISSQUIT "PISSQUIT"
 
 CMD_FUNC(cmd_pissquit);
 
-ModuleHeader MOD_HEADER
-  = {
-	"third/pissquit",
-	"0.02",
-	"command /pissquit: Positively Identify Server to Server QUIT", 
-	"pissnet team",
-	"unrealircd-6",
-    };
+ModuleHeader MOD_HEADER = {
+    "third/pissquit",
+    "0.02",
+    "command /pissquit: Positively Identify Server to Server QUIT",
+    "pissnet team",
+    "unrealircd-6",
+};
 
 MOD_INIT()
 {

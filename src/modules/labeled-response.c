@@ -358,7 +358,8 @@ int lr_packet(Client *from, Client *to, Client *intended_to, char **msg, int *le
 void lr_new_message(Client *client, MessageTag *recv_mtags, MessageTag **mtag_list, const char *signature)
 {
 	/* Locally processed messages already have the label! */
-	if (currentcmd.client) return;
+	if (currentcmd.client)
+		return;
 	MessageTag *m;
 
 	m = find_mtag(recv_mtags, "label");
