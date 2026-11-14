@@ -760,6 +760,20 @@ CMD_OVERRIDE_FUNC(multiline_override_batch)
 		/* Save client tags from the BATCH command (spec: other client tags go here) */
 		batch->client_mtags = duplicate_mtags_excluding(recv_mtags, "batch");
 
+		/* PissIRCd: don't keep the label tag here. Our labeled-response
+		 * module copies "label" from these tags in new_message() (for
+		 * remote replies), which would leak it to every recipient.
+		 * The label is handled separately below via batch->label.
+		 */
+		{
+			MessageTag *lm = find_mtag(batch->client_mtags, "label");
+			if (lm)
+			{
+				DelListItem(lm, batch->client_mtags);
+				free_message_tags(lm);
+			}
+		}
+
 		/* For echo-message + labeled-response interaction: save the label
 		 * and clear the LR context so lr_post_command won't send a
 		 * premature ACK. The label will be placed on the echo batch's
