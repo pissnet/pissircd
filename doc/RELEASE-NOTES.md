@@ -1,30 +1,34 @@
-UnrealIRCd 6.2.8-git
-=================
+UnrealIRCd 6.2.8-rc1
+=====================
 
-This is the git version (development version) for future UnrealIRCd 6.2.8.
-This is work in progress and may not always be a stable version.
+This is the Release Candidate for future version 6.2.8. You can help us by
+testing this release and reporting bugs to https://bugs.unrealircd.org/
 
-NOTE: Current git now contains the security fixes that went into 6.2.7.1.
-But current git is not the same as 6.2.7.1, it contains more fixes, changes,
-enhancements, that will in the future be released as 6.2.8.
+IMPORTANT: If you use a webchat that connects directly to UnrealIRCd with
+websockets then you MUST add it to set::websocket::allowed-origins.
+See the first item under *Changes*.
 
 ### Enhancements:
-* A ton of spamreport changes:
+* Automatic server bans now have a "source", which shows up in the log,
+  like: `[source: blacklist]`.
+* A `WHOIS` by an IRCOp now shows the websocket origin and WEBIRC gateway
+* A ton of [spamreport](https://www.unrealircd.org/docs/Spamreport_block) changes:
   * A spamreport block can now report automatically, via the new option
     [spamreport::auto-report](https://www.unrealircd.org/docs/Spamreport_block).
-    Currently it has three sources:
+    The main sources are:
     * `spamfilter`: when a spamfilter kills or *LINEs a user.
       The spamfilter itself is included in the report.
+    * `antimixedutf8`: when antimixedutf8 takes action, eg blocks a message.
     * `server-ban`: when an online user is banned (eg /GLINE by an oper) [*]
     * `kill`: when a user is killed (eg /KILL by an oper) [*]
 
     For [Central Spamreport](https://www.unrealircd.org/docs/Central_spamreport)
-    all three on by default. For other spamreport blocks it is off by default.
+    all four on by default. For other spamreport blocks it is off by default.
     To turn it off, you put in the spamreport block: `auto-report { }`.
     You can exempt specific users from being auto reported at all through
     [set::spamreport::auto-report::except](https://www.unrealircd.org/docs/Set_block#set::spamreport).  
     [*]: Not all server bans and kills are sent in, only if the ban or kill
-    reason contain the word "spam". This can be configured via
+    reason contains the word "spam". This can be configured via
     [set::spamreport::auto-report::ban-or-kill-filter](https://www.unrealircd.org/docs/Set_block#set::spamreport).
   * The `SPAMREPORT` command now has an optional reason:  
     `SPAMREPORT <nick|ip> [name-of-spamreport-block|all] [reason]`
@@ -32,6 +36,20 @@ enhancements, that will in the future be released as 6.2.8.
     `$reason` and `$spamfilter_id` in the URL.
 
 ### Changes:
+* Websocket connections from browsers are now refused, unless the website
+  is listed in
+  [set::websocket::allowed-origins](https://www.unrealircd.org/docs/Set_block#set::websocket).
+  * If you have a webchat that connects directly to UnrealIRCd using
+    websockets, then be sure to add it through:  
+    `set { websocket { allowed-origins { webchat.example.net; } } }`  
+  * If the websocket module is loaded but no allowed-origins are configured
+    we print out a warning.
+  * Clients that are rejected show up in the log at a rate of max 1/min.
+  * Clients that do not send an Origin header are still allowed in
+    (non-browsers).
+  * We always block `Origin: null`, eg when testing from a file:// page.
+* The per-listen block `listen::options::websocket::allow-origin` moved to
+  this new setting. The old setting gives a config error.
 * Link blocks with `link::outgoing` that use a password (not spkifp/certfp/cert)
   will now raise a warning. We have already been warning about this since
   2017 at link time so this should not be a surprise for anyone.
@@ -44,6 +62,10 @@ enhancements, that will in the future be released as 6.2.8.
     to localhost, are exempt. You can also manually exempt a link block via
     link::options::no-certificate-verification. Only do so if you insist to
     link without cert validation, for example when you are linking over a VPN.
+* JSON-RPC: a connection from an IP that does not match any
+  [rpc-user block](https://www.unrealircd.org/docs/Rpc-user_block)
+  is now closed immediately, even before the TLS handshake starts.
+  This means `rpc-user::match` may only contain `ip` or `mask` items.
 * We continue the gradual transition from `geoip_classic` to `geoip_mmdb`.
   Now also for `./Config -quick` (and thus `./unrealircd upgrade`).
   This because we will stop database updates for classic in mid-2027.
@@ -51,19 +73,65 @@ enhancements, that will in the future be released as 6.2.8.
   This because `report` (and `set`) cannot happen after a user is killed.
   The correct syntax is: `action { report; gline; }`
 * Update shipped libs: PCRE2 (10.49)
+* The tkldb database now saves ban sources. The downside is that you
+  cannot downgrade to 6.2.7.1 or older without losing your tkldb.
 
 ### Fixes:
+* Crash with an alias of `type channel` (we don't ship with any by default)
+* Crash in JSON-RPC `whowas.get` with an `ip` filter
+* Crash with certain empty config values, eg `match { country ""; }`
+* `./unrealircd hot-patch` could fail after a distro upgrade that came
+  with a newer compiler.  
+  We now always compile with `-std=gnu17` if the compiler supports it.
+* On FreeBSD `./unrealircd hot-patch` did not work and (even worse)
+  it reported success.
+* Aliases like `NS` which have `type services` could deliver to an
+  ordinary user if they were called `NickServ`. Note that this was
+  only possible if Services were down and you had no Q-lines for
+  such nicks. Anope adds such Q-lines automatically.
+* If sending a DNS query failed (eg no route to the DNS server), a client
+  would hang and time out after 40 seconds. This would be rare.
+  Normal DNS failures, like a timeout or NXDOMAIN, were unaffected.
+* Channel messages to a prefix were sent to the wrong users.
+  For example, `~#channel` messages were delivered to +vhoaq, and
+  messages to `+#channel` were delivered to +hoaq.
+* [Extended server bans](https://www.unrealircd.org/docs/Extended_server_bans)
+  did not work if the value contained a `@` (eg `~realname:*@*`) or
+  when the value was an actual IP address (eg `~realname:1.2.3.4`).
+  Note that if you add such bans now, they won't work on 6.2.7 or
+  older servers that are linked.
+* Clients on a UNIX socket listener (eg for Tor or I2P) never got a
+  registration timeout, keeping many unregistered connections open.
 * In 6.2.x every server ban was accidentally reported to all spamreport
   blocks (including Central Spamreport). That could have been especially
   bad if you had a spamreport block with type `dronebl`.
 
 ### Developers and protocol:
-* In JSON-RPC an except in spamfilter objects previously showed as
-  `match` (which is super confusing). That's now under `except`.
+* Numeric 350 (RPL_WHOISGATEWAY) now shows the websocket origin and
+  WEBIRC gateway to IRCOps, similar to InspIRCd:  
+  `:irc.example.net 350 x whoisuser * * :is connecting from WebSocket origin webchat.example.net`  
+  `:irc.example.net 350 x whoisuser gw.example.org 192.0.2.1 :is connecting via WebIRC gateway kiwiirc`
+* JSON-RPC:
+  * An exception in spamfilter objects previously showed as `match`
+    (which is super confusing). It is now under `except`.
+  * TKL entries now have a `source` for automatic server bans.
+* In JSON-logging with DEBUGMODE, the file field in the log is now
+  `source_code` instead of `source`. This so it does not conflict
+  with the TKL `source`.
 * New hook `HOOKTYPE_KILLED_CLIENT`, called when a local user is killed.
 * In `HOOKTYPE_BANNED_CLIENT` there is now a `TKL *tkl` parameter (this
   is NULL when a ban is not a TKL, such as a realname ban).
 * The function `take_action()` changed and has two more parameters.
+  And, `take_action_ex()` which was added in 6.2.6 is removed again.
+* New functions that may be useful for module coders:
+  `find_user_on_server()`, `read_name_list_file()`, `cleanline()`,
+  `strip_trailing_whitespace()`, `str_is_all_digits()`,
+  `unreal_encodespace_r()` and `unreal_decodespace_r()`.
+* S2S: the websocket origin and the WEBIRC gateway name, IP and host are
+  synced via (early) moddata.
+* S2S: we now communicate the TKL source through the `s2s-tkl/source`
+  message tag.
+
 
 UnrealIRCd 6.2.7.1
 -------------------
